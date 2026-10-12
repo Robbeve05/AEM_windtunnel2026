@@ -7,8 +7,12 @@ if [[ "$APP_DIR" != "$HOME/HMI" ]]; then
   exit 1
 fi
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m pip install -r requirements-desktop.txt
+if [[ "${RUN_TESTS:-0}" == "1" ]]; then
+  .venv/bin/python -m unittest discover -s tests -v
+else
+  echo 'Skipping backend tests; set RUN_TESTS=1 to run them before installation.'
+fi
 mkdir -p "$HOME/.config/systemd/user" "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.config/autostart"
 install -m 755 deploy/start-hmi.sh "$HOME/.local/bin/windtunnel-hmi"
 cat > "$HOME/.config/systemd/user/windtunnel-hmi.service" <<'EOF'

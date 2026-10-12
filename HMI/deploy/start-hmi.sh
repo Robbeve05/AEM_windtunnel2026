@@ -14,7 +14,4 @@ for attempt in range(120):
 else:
     raise SystemExit('HMI server did not become ready; inspect journalctl --user -u windtunnel-hmi')
 PY
-exec /usr/bin/chromium --app=http://127.0.0.1:8000/ --start-maximized \
-  --no-first-run --noerrdialogs --disable-gpu \
-  --disable-session-crashed-bubble \
-  --user-data-dir="$HOME/.local/share/windtunnel-hmi/chromium"
+exec "$HOME/HMI/.venv/bin/python" "$HOME/HMI/desktop.py"

@@ -10,8 +10,8 @@
 - Application menu and desktop shortcut: **Windtunnel HMI**.
 - Desktop autostart: `~/.config/autostart/windtunnel-hmi.desktop`.
 - Existing desktop auto-login retained. No reboot performed during installation.
-- Chromium uses a separate profile at `~/.local/share/windtunnel-hmi/chromium`.
-- The Pi launcher now starts Chromium in app-window mode (no browser tabs or address bar), maximized rather than kiosk-fullscreen. Run the updated `deploy/install-pi.sh` on the Pi to install the updated launcher.
+- The native desktop UI is a PySide6/Qt application. It connects to the local Python service and does not use Chromium or the web UI.
+- Run the updated `deploy/install-pi.sh` on the Pi to install PySide6 and the native application launcher.
 
 Close the app window with **Alt+F4**. Reopen using the launcher or the desktop application.
 The application remains in simulation mode until ESP32 integration is commissioned.
@@ -24,5 +24,6 @@ systemctl --user restart windtunnel-hmi
 systemctl --user stop windtunnel-hmi
 ```
 
-`install-pi.sh` is reusable from `~/HMI`, after `python3-venv` and Chromium are installed.
-It runs tests, installs the service and creates desktop launchers without requiring sudo.
+`install-pi.sh` is reusable from `~/HMI`, after `python3-venv` is installed.
+It installs the service and creates desktop launchers without requiring sudo. To run the
+backend tests before installation, set `RUN_TESTS=1` when invoking the script.
