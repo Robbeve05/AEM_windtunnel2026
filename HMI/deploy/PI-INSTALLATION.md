@@ -27,3 +27,14 @@ systemctl --user stop windtunnel-hmi
 `install-pi.sh` is reusable from `~/HMI`, after `python3-venv` is installed.
 It installs the service and creates desktop launchers without requiring sudo. To run the
 backend tests before installation, set `RUN_TESTS=1` when invoking the script.
+
+After committing and pushing changes to the public `RaspberryPi` branch from a development
+computer, update the Pi by closing the HMI window and running:
+
+```bash
+cd ~/AEM_windtunnel2026 && bash HMI/deploy/update-pi.sh
+```
+
+The updater preserves `HMI/config/config.json` and `HMI/data/`, pulls the latest code,
+reinstalls dependencies and launchers, and restarts the local service. Reopen the desktop
+application after the update completes.

@@ -90,7 +90,17 @@ curl -fsSL https://raw.githubusercontent.com/Robbeve05/AEM_windtunnel2026/Raspbe
 
 The script uses the public GitHub repository without logging into GitHub. It installs Git and Python prerequisites, clones the `RaspberryPi` branch into `~/AEM_windtunnel2026`, and links `~/HMI` to its `HMI` project folder. If an older `~/HMI` or `~/AEM_windtunnel2026` already exists, it is renamed to a timestamped backup first. The existing `config/config.json` and all files in `data/` are copied into the new installation. It then installs the Python environment and creates the local service, **Windtunnel HMI** desktop/menu launcher, and desktop-session autostart. `sudo` may ask for the Pi's normal system password to install prerequisites; no GitHub credentials are needed.
 
-After installation, start **Windtunnel HMI** from the desktop menu. It opens as a native Qt window; close it with **Alt+F4**. The local service listens on `127.0.0.1` and is not exposed to the network. To update later, paste the same `curl ... && bash ...` installer command again; it backs up the current folders and preserves `config/config.json` and `data/`.
+After installation, start **Windtunnel HMI** from the desktop menu. It opens as a native Qt window; close it with **Alt+F4**. The local service listens on `127.0.0.1` and is not exposed to the network.
+
+### Updating after programming on another computer
+
+On the development computer, commit and push your changes to the public `RaspberryPi` branch. On the Pi, close the HMI window, open a terminal, and run:
+
+```bash
+cd ~/AEM_windtunnel2026 && bash HMI/deploy/update-pi.sh
+```
+
+This pulls the latest code, reinstalls updated Python dependencies and desktop launchers, and restarts the backend service. The updater preserves the Pi's `HMI/config/config.json` and measurement files in `HMI/data/`; it stops with an error instead of overwriting other uncommitted source changes. Reopen **Windtunnel HMI** from the desktop menu after it finishes. The initial setup command is only needed once.
 
 For a browser-only/server deployment instead, copy this directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
 
