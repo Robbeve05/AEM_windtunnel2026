@@ -1,0 +1,13 @@
+{
+  "simulation": false,
+  "sample_rate_hz": 25,
+  "air_density": 1.225,
+  "max_airspeed_ms": 42,
+  "serial_port": "auto",
+  "baud_rate": 115200,
+  "data_directory": "data/measurements",
+  "usb_mount_path": "",
+  "simulate_usb": true,
+  "pressure_taps": [],
+  "flow_metrics_enabled": true
+}

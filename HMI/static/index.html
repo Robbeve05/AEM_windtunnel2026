@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Avans Windtunnel · HMI</title><link rel="stylesheet" href="/static/css/style.css"></head>
+<body>
+<aside class="navigation" id="navigation">
+ <a class="brand" href="/" aria-label="Avans Windtunnel home">
+   <img class="avans-logo" src="/static/avans-wordmark.svg" alt="Avans Hogeschool">
+   <span class="brand-project nav-label">WINDTUNNEL <small>AEROSPACE ENGINEERING</small></span>
+ </a>
+ <button id="collapse" class="collapse" aria-label="Collapse sidebar">☰ <span class="nav-label">Workspace</span></button>
+ <nav aria-label="Main navigation">
+  <button data-page="overview" aria-label="Overview" class="active"><span>◫</span><span class="nav-label">Overview</span></button>
+  <button data-page="raw" aria-label="Raw Data"><span>≡</span><span class="nav-label">Raw Data</span></button>
+  <button data-page="cp" aria-label="Cp Analysis"><span>⌁</span><span class="nav-label">Cp Analysis</span></button>
+  <button data-page="measurements" aria-label="Measurements"><span>▤</span><span class="nav-label">Measurements</span></button>
+  <button data-page="storage" aria-label="Storage"><span>▱</span><span class="nav-label">Storage</span></button>
+  <button data-page="settings" aria-label="Settings"><span>⚙</span><span class="nav-label">Settings</span></button>
+ </nav>
+ <div class="nav-bottom">
+   <button id="exit-hmi" class="exit-hmi-button" type="button" title="Close HMI and return to desktop"><span aria-hidden="true">⏻</span><span class="nav-label">Exit HMI</span></button>
+   <div class="nav-label"><span class="tag" id="hardware-mode-badge">ARDUINO USB</span><p>Avans windtunnel test facility</p><small>SUPERVISORY HMI · 2026</small></div>
+ </div>
+</aside>
+<div class="workspace">
+ <header><div class="breadcrumb"><b>AVANS HOGESCHOOL</b> <span>/</span> AEROSPACE ENGINEERING <span>/</span> WINDTUNNEL 2026</div><div class="header-status"><span id="connection" class="tag amber">CONNECTING</span><time id="clock"></time></div></header>
+ <main>
+  <div class="page-heading"><div><div class="eyebrow">FLIGHT DECK / <span id="section-number">01</span></div><h1 id="page-title">Tunnel overview</h1><p id="page-description">A clear view of your flow. Every parameter, in real time.</p></div><span class="tag amber" id="mode-tag">WAITING FOR ARDUINO</span></div>
+  <section id="page-overview" class="page active" data-view="flow">
+   <div class="overview-tabs" aria-label="Overview panels"><button data-overview="flow" aria-pressed="true">Flow</button><button data-overview="record" aria-pressed="false">Recording</button><button data-overview="section" aria-pressed="false">Test section</button></div>
+   <div class="metrics">
+    <article class="card metric featured"><div class="label">AIRSPEED <span>↗</span></div><div class="number"><span id="airspeed">0.00</span><small>m/s</small></div><div class="metric-foot"><span class="dot"></span> Pitot-derived velocity</div></article>
+    <article class="card metric"><div class="label">DYNAMIC PRESSURE</div><div class="number"><span id="dynamic">0.0</span><small>Pa</small></div><div class="metric-foot">q∞ · differential pressure</div></article>
+    <article class="card metric"><div class="label">FLOW STABILITY</div><div class="number"><span id="stability">—</span><small>%</small></div><div class="metric-foot" id="stability-note">5 s rolling window · flow &gt; 1 m/s</div></article>
+    <article class="card metric"><div class="label">TEMPERATURE</div><div class="number"><span id="temperature">—</span><small>°C</small></div><div class="metric-foot">Test section ambient</div></article>
+   </div>
+   <article class="card chart-card"><div class="panel-heading"><div><h2>Flow velocity</h2><p>Live pitot-tube airspeed with 5 s rolling mean</p></div><div class="legend"><span class="cyan-dot">Actual</span><span class="gray-dot">5 s mean</span><span class="tag muted">LAST 60 S</span></div></div><div class="chart-wrap"><canvas id="velocity-chart" role="img" aria-label="Live airspeed and setpoint over the last 60 seconds"></canvas></div><div class="chart-footer"><span>VELOCITY <b>m/s</b></span><span id="stream-note">Waiting for telemetry</span></div></article>
+   <div class="overview-bottom"><article class="card recording"><div class="panel-heading"><div><div class="eyebrow">EXPERIMENT MANAGER</div><h2>Measurement recording</h2></div><span id="measurement-badge" class="tag muted">IDLE</span></div><label for="measurement-name">Measurement name</label><input id="measurement-name" placeholder="e.g. NACA0012_AOA5_Run01" maxlength="80" autocomplete="off"><p class="hint">Recording is independent of tunnel operation.</p><div class="record-stats"><div><span>ELAPSED</span><b id="elapsed">00:00</b></div><div><span>SAMPLES</span><b id="samples">0</b></div><div><span>LOG RATE</span><b id="sample-rate">20 Hz</b></div></div><div class="button-row"><button id="record-start" class="primary" disabled>● Start measurement</button><button id="record-stop" disabled>■ Stop & save</button></div><div id="file-status" class="hint">Enter a name and connect the Arduino to record.</div></article>
+   <article class="card operating"><div class="eyebrow">OPERATING POINT</div><h2>Current pitot measurement</h2><svg class="airfoil" viewBox="0 0 360 125" role="img" aria-label="Windtunnel airfoil"><defs><linearGradient id="foil"><stop stop-color="#c8291e" stop-opacity=".28"/><stop offset="1" stop-color="#c8291e" stop-opacity=".03"/></linearGradient></defs><g stroke="#d5d5d1" fill="none"><path d="M0 24 Q100 28 180 16 T360 24"/><path d="M0 46 Q110 45 165 32 T360 46"/><path d="M0 89 Q110 92 180 105 T360 89"/><path d="M0 112 Q150 116 360 112"/></g><path d="M45 73 Q95 23 315 68 Q132 95 45 73Z" fill="url(#foil)" stroke="#c8291e" stroke-width="1.5"/><path d="M25 73 H334" stroke="#92928d" stroke-dasharray="4 6" opacity=".35"/></svg><div class="operating-grid"><div><span>5 S MEAN</span><strong id="flow-mean">—<small> m/s</small></strong></div><div><span>VARIATION σ</span><strong id="flow-std">—<small> m/s</small></strong></div><div><span>5 S MIN / MAX</span><strong id="flow-range">—</strong></div><div><span>ANGLE OF ATTACK</span><strong class="development-value">IN DEVELOPMENT</strong></div><div><span>FAN / VFD CONTROL</span><strong class="development-value">IN DEVELOPMENT</strong></div><div><span>REYNOLDS NUMBER</span><strong class="development-value">IN DEVELOPMENT</strong></div></div><p class="hint">Live values are derived from the single USB-connected pitot sensor.</p></article></div>
+  </section>
+  <section id="page-raw" class="page">
+   <div id="raw-empty-state" class="empty-state">
+    <div class="empty-state-icon">USB</div>
+    <h3>NO SENSOR DATA</h3>
+    <p>Arduino Uno not connected</p>
+    <small>Connect the Arduino Uno via USB to start live pitot measurements.</small>
+   </div>
+   <div id="raw-data-content" hidden>
+    <article class="card"><div class="panel-heading"><div><h2>Sensor telemetry</h2><p>Live Arduino Uno / ASPD-4525 pitot telemetry</p></div><span class="tag">LIVE</span></div><div class="table-wrap"><table><thead><tr><th>Channel</th><th>Raw value</th><th>Calibrated</th><th>Unit</th><th>Host timestamp</th><th>Status</th></tr></thead><tbody id="raw-table"></tbody></table></div></article>
+    <article class="card"><h2>Complete incoming frame</h2><pre id="raw-json"></pre></article>
+   </div>
+  </section>
+  <section id="page-cp" class="page">
+   <div class="empty-state development-empty">
+    <div class="empty-state-icon">Cp</div>
+    <h3>IN DEVELOPMENT</h3>
+    <p>Pressure tap system not connected</p>
+    <small>Cp analysis will become available when the multi-point pressure manifold and channel switching hardware are installed.</small>
+    <span id="cp-source" class="tag amber">PRESSURE SYSTEM OFFLINE</span>
+   </div>
+   <input id="density" type="hidden" value="1.225">
+  </section>
+  <section id="page-measurements" class="page">
+   <article class="card"><div class="panel-heading"><div><h2>Measurement library</h2><p>Stored locally · full CSV and JSON preserved per run</p></div><button id="refresh-measurements">↻ Refresh</button></div>
+    <div id="empty-measurements" class="empty-state compact-empty">
+     <div class="empty-state-icon">REC</div>
+     <h3>NO MEASUREMENTS YET</h3>
+     <p>No recorded datasets are available</p>
+     <small>Connect the Arduino Uno and start a measurement from the overview to create your first dataset.</small>
+    </div>
+    <div id="measurement-table-wrap" class="table-wrap" hidden><table><thead><tr><th>Experiment</th><th>Timestamp</th><th>Duration</th><th>Avg. m/s</th><th>Samples</th><th>Export</th></tr></thead><tbody id="measurement-table"></tbody></table></div>
+   </article>
+   <article class="card" id="measurement-detail" hidden><h2>Run details</h2><p class="hint">Select a measurement to inspect metadata, raw pitot data and processed flow statistics.</p></article>
+  </section>
+  <section id="page-storage" class="page"><div class="metrics storage-metrics"><article class="card metric"><div class="label">LOCAL FREE SPACE</div><div class="number" id="local-space">—</div><p class="hint">Primary recording destination</p></article><article class="card metric"><div class="label">USB STORAGE</div><div class="number" id="usb-space">—</div><p id="usb-label" class="hint"></p></article><article class="card metric"><div class="label">AWAITING EXPORT</div><div class="number" id="unexported">0</div><p class="hint">Completed local measurements</p></article></div><article class="card"><h2>Export measurements</h2><p>Copy complete experiment folders to USB. Local copies are always retained.</p><label>Select measurement<select id="export-select"><option value="">Choose a completed run</option></select></label><div class="button-row"><button class="primary" id="export-selected">Export selected</button><button id="export-all">Export all unexported</button><button id="eject">Safe eject</button><button id="reconnect-usb">Reconnect simulated USB</button></div><progress id="export-progress" max="100" value="0"></progress><p id="export-message" class="hint">Ready to export</p></article></section>
+  <section id="page-settings" class="page"><article class="card"><h2>System configuration</h2><p>Live acquisition settings for the Raspberry Pi HMI.</p><div class="setting-toggle"><div><strong>5 s flow statistics</strong><span>Flow stability, rolling mean, standard deviation and min/max. The live airspeed itself is never additionally filtered on the Pi.</span></div><label class="switch"><input id="flow-metrics-toggle" type="checkbox"><span class="slider"></span></label></div><div id="settings-grid" class="settings-grid"></div><h3>Pressure-tap system</h3><div class="development-banner compact"><strong>IN DEVELOPMENT</strong><span>Multi-point Cp hardware is not connected yet.</span></div><tbody id="tap-settings" hidden></tbody><p class="notice">Current hardware: Arduino Uno + ASPD-4525 differential pressure sensor over USB serial. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned.</p></article></section>
+  <footer><span><strong>AVANS HOGESCHOOL</strong> <b>/</b> WINDTUNNEL 2026</span><span>AEROSPACE ENGINEERING · LOCAL DATA ACQUISITION</span></footer>
+ </main>
+</div>
+<aside class="right-sidebar">
+ <div class="control-heading"><span class="eyebrow">SYSTEM & DEVELOPMENT</span><span class="dot"></span></div>
+ <h2>Wind tunnel</h2><div class="tunnel-state"><span id="tunnel-state" class="tag amber">IN DEVELOPMENT</span><span class="hint">Fan / VFD control</span></div>
+ <div class="development-control"><span>AIRSPEED SETPOINT</span><strong>IN DEVELOPMENT</strong><small>Manual fan operation only for now</small></div>
+ <form id="setpoint-form" hidden><input id="setpoint" type="number" value="0"><button id="apply-setpoint" type="submit">Apply</button></form>
+ <div class="control-readings"><div><span>LIVE AIRSPEED</span><b id="control-speed">— <small>m/s</small></b></div><div><span>FLOW STABILITY</span><b id="control-stability">— <small>%</small></b></div></div>
+ <button id="tunnel-start" hidden>Start tunnel</button><button id="tunnel-stop" hidden>Stop tunnel</button><span id="control-fan" hidden></span><span id="fan" hidden></span><span id="aoa" hidden></span><i id="fan-meter" hidden></i>
+ <p class="safety-note">Data acquisition is active.<br>Fan control remains manual until commissioned.</p>
+ <details id="status-panel" open><summary>System status & events</summary><div class="status-content">
+ <div class="sidebar-section"><h3>System health <span id="health-count" class="tag">HW</span></h3><div id="system-health"></div><div class="health-row"><span>USB storage</span><b id="usb-health">CHECKING</b></div></div>
+ <div class="sidebar-section"><h3>Warnings & development</h3><div id="warnings" class="notice">Waiting for Arduino pitot data</div></div>
+ <div class="sidebar-section events"><h3>Event log <span class="hint">LATEST</span></h3><div id="event-log"></div></div>
+ </div></details>
+</aside>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/static/js/app.js"></script>
+</body></html>
+
