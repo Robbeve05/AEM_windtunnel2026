@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
@@ -133,6 +133,42 @@ class FlowChart(QWidget):
                 else:
                     previous = current
         painter.restore()
+
+
+class AirfoilDiagram(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(82)
+        self.setMaximumHeight(112)
+        self.setMinimumWidth(240)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        width, height = self.width(), self.height()
+        for start, first, second, end in (
+            ((0, .18), (.28, .22), (.48, .10), (1, .18)),
+            ((0, .36), (.30, .37), (.48, .27), (1, .36)),
+            ((0, .70), (.32, .72), (.50, .84), (1, .70)),
+            ((0, .89), (.36, .92), (.66, .88), (1, .89)),
+        ):
+            path = QPainterPath()
+            path.moveTo(start[0] * width, start[1] * height)
+            path.cubicTo(first[0] * width, first[1] * height,
+                         second[0] * width, second[1] * height,
+                         end[0] * width, end[1] * height)
+            painter.setPen(QPen(QColor("#d5d5d1"), 1))
+            painter.drawPath(path)
+
+        foil = QPainterPath()
+        foil.moveTo(.12 * width, .59 * height)
+        foil.cubicTo(.26 * width, .20 * height, .73 * width, .40 * height, .91 * width, .56 * height)
+        foil.cubicTo(.68 * width, .67 * height, .35 * width, .77 * height, .12 * width, .59 * height)
+        painter.setPen(QPen(QColor(RED), 1.5))
+        painter.setBrush(QColor(200, 41, 30, 24))
+        painter.drawPath(foil)
+        painter.setPen(QPen(QColor("#92928d"), 1, Qt.PenStyle.DashLine))
+        painter.drawLine(int(.06 * width), int(.60 * height), int(.95 * width), int(.60 * height))
 
 
 class HMIWindow(QMainWindow):
@@ -364,17 +400,6 @@ class HMIWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        self.overview_tabs = []
-        tabs = QHBoxLayout()
-        for index, title in enumerate(("Flow", "Recording", "Test section")):
-            button = QPushButton(title)
-            button.setCheckable(True)
-            button.setChecked(index == 0)
-            button.clicked.connect(lambda checked=False, name=title.lower().replace(" ", ""): self._select_overview_tab(name))
-            tabs.addWidget(button)
-            self.overview_tabs.append(button)
-        tabs.addStretch(1)
-        layout.addLayout(tabs)
         self.metrics_widget = QWidget()
         metrics = QHBoxLayout(self.metrics_widget)
         metrics.setContentsMargins(0, 0, 0, 0)
@@ -398,10 +423,22 @@ class HMIWindow(QMainWindow):
         self.overview_bottom = QWidget()
         bottom = QHBoxLayout(self.overview_bottom)
         bottom.setContentsMargins(0, 0, 0, 0)
-        self.recording_card, recording = self._card(bottom, "Measurement recording", "EXPERIMENT MANAGER")
+        bottom.setSpacing(12)
+        self.recording_card = Card()
+        recording = QVBoxLayout(self.recording_card)
+        recording.setContentsMargins(16, 14, 16, 14)
+        recording.setSpacing(8)
+        recording_heading = QHBoxLayout()
+        recording_eyebrow = QLabel("EXPERIMENT MANAGER")
+        recording_eyebrow.setObjectName("eyebrow")
+        recording_heading.addWidget(recording_eyebrow)
         self.measurement_badge = QLabel("IDLE")
         self.measurement_badge.setObjectName("tagMuted")
-        recording.addWidget(self.measurement_badge)
+        recording_heading.addStretch(1)
+        recording_heading.addWidget(self.measurement_badge)
+        recording.addLayout(recording_heading)
+        recording.addWidget(self._heading("Measurement recording"))
+        bottom.addWidget(self.recording_card, 6)
         recording.addWidget(QLabel("Measurement name"))
         self.measurement_name = QLineEdit()
         self.measurement_name.setPlaceholderText("e.g. NACA0012_AOA5_Run01")
@@ -431,25 +468,49 @@ class HMIWindow(QMainWindow):
         self.file_status.setObjectName("hint")
         recording.addWidget(self.file_status)
 
-        self.operating_card, operating = self._card(bottom, "Current pitot measurement", "OPERATING POINT")
-        operating.addWidget(QLabel("ANGLE OF ATTACK       FAN / VFD CONTROL       REYNOLDS NUMBER"))
-        dev = QLabel("IN DEVELOPMENT             IN DEVELOPMENT             IN DEVELOPMENT")
-        dev.setObjectName("developmentText")
-        operating.addWidget(dev)
-        self.flow_summary = QLabel("5 s mean     — m/s      VARIATION σ     — m/s      5 s MIN / MAX     —")
-        operating.addWidget(self.flow_summary)
-        layout.addWidget(self.overview_bottom, 1)
+        self.operating_card = Card()
+        operating = QVBoxLayout(self.operating_card)
+        operating.setContentsMargins(16, 14, 16, 14)
+        operating.setSpacing(7)
+        eyebrow = QLabel("OPERATING POINT")
+        eyebrow.setObjectName("eyebrow")
+        operating.addWidget(eyebrow)
+        operating.addWidget(self._heading("Current pitot measurement"))
+        operating.addWidget(AirfoilDiagram())
+        self.operating_grid = QGridLayout()
+        self.operating_grid.setHorizontalSpacing(14)
+        self.operating_grid.setVerticalSpacing(6)
+        self.operating_values = {}
+        fields = (
+            ("5 S MEAN", "— m/s"),
+            ("VARIATION σ", "— m/s"),
+            ("5 S MIN / MAX", "—"),
+            ("ANGLE OF ATTACK", "IN DEVELOPMENT"),
+            ("FAN / VFD CONTROL", "IN DEVELOPMENT"),
+            ("REYNOLDS NUMBER", "IN DEVELOPMENT"),
+        )
+        for index, (title, text) in enumerate(fields):
+            cell = QVBoxLayout()
+            label = QLabel(title)
+            label.setObjectName("smallLabel")
+            value = QLabel(text)
+            value.setObjectName("developmentText" if text == "IN DEVELOPMENT" else "operatingValue")
+            cell.addWidget(label)
+            cell.addWidget(value)
+            self.operating_grid.addLayout(cell, index // 2, index % 2)
+            self.operating_values[title] = value
+        operating.addLayout(self.operating_grid)
+        hint = QLabel("Live values are derived from the single USB-connected pitot sensor.")
+        hint.setObjectName("hint")
+        operating.addWidget(hint)
+        self.flow_summary = self.operating_values["5 S MEAN"]
+        self.flow_summary_std = self.operating_values["VARIATION σ"]
+        self.flow_summary_range = self.operating_values["5 S MIN / MAX"]
+        bottom.addWidget(self.operating_card, 5)
+        layout.addWidget(self.overview_bottom, 4)
+        layout.setStretch(1, 3)
+        layout.setStretch(2, 4)
         self.pages.addWidget(page)
-
-    def _select_overview_tab(self, name):
-        for index, button in enumerate(self.overview_tabs):
-            button.setChecked(button.text().lower().replace(" ", "") == name)
-        flow = name == "flow"
-        self.metrics_widget.setVisible(flow)
-        self.chart_card.setVisible(flow)
-        self.recording_card.setVisible(flow or name == "recording")
-        self.operating_card.setVisible(flow or name == "testsection")
-        self.flow_summary.setVisible(name != "recording")
 
     def _build_raw(self):
         page = QWidget()
@@ -590,6 +651,7 @@ class HMIWindow(QMainWindow):
             #chartCard {{ border-top:3px solid {RED}; }}
             #cardHeading {{ font-size:15px; font-weight:700; }}
             #smallLabel {{ color:#727272; font-size:9px; font-weight:800; letter-spacing:1px; }}
+            #operatingValue {{ font-size:13px; font-weight:700; }}
             #metricValue, #metricValueRed {{ font-size:27px; font-weight:700; }}
             #metricValueRed {{ color:{RED}; }}
             #tagAmber, #tagMuted {{ padding:5px 8px; border-radius:3px; background:#fff1d8; color:#975900; font-size:9px; font-weight:800; }}
@@ -722,10 +784,10 @@ class HMIWindow(QMainWindow):
             self.chart.set_points(self.history, self.config.get("max_airspeed_ms", 45))
             self.side_speed.setText(f"{self._fixed(speed)} m/s")
             self.side_stability.setText(f"{self._fixed(stability, 1)} %" if enabled else "OFF")
-            self.flow_summary.setText(
-                f"5 s mean  {self._fixed(sample.get('flow_mean_ms'))} m/s     "
-                f"VARIATION σ  {self._fixed(sample.get('flow_std_ms'), 3)} m/s     "
-                f"5 s MIN / MAX  {self._fixed(sample.get('flow_min_ms'))} / {self._fixed(sample.get('flow_max_ms'))}"
+            self.flow_summary.setText(f"{self._fixed(sample.get('flow_mean_ms'))} m/s")
+            self.flow_summary_std.setText(f"{self._fixed(sample.get('flow_std_ms'), 3)} m/s")
+            self.flow_summary_range.setText(
+                f"{self._fixed(sample.get('flow_min_ms'))} / {self._fixed(sample.get('flow_max_ms'))} m/s"
             )
             self.stream_note.setText(f"LIVE SENSOR · {self._fixed(data.get('sample_age_s'), 1)} s sample age" if live else "Waiting for telemetry")
         self.measurement_badge.setText(measurement.get("state", "IDLE"))
@@ -927,7 +989,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Avans Windtunnel HMI")
     window = HMIWindow()
-    window.show()
+    window.showMaximized()
     return app.exec()
 
 
