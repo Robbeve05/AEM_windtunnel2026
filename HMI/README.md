@@ -80,11 +80,20 @@ The browser reconnects automatically with bounded exponential backoff and detect
 
 ## Raspberry Pi OS 64-bit
 
-Copy this HMI directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
+The Pi can run the HMI as a desktop app window: Chromium opens the local HMI without browser tabs or an address bar. It is still a web-based HMI internally, not a native compiled program. Install the desktop browser and Python tools, then place this directory at `~/HMI` (do not copy a Windows `.venv`):
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-venv python3-pip
+sudo apt install python3 python3-venv python3-pip chromium
+cd ~/HMI
+bash deploy/install-pi.sh
+```
+
+The installer creates the local server service, a **Windtunnel HMI** desktop/menu launcher, and desktop-session autostart. Launch it from the desktop menu; it opens maximized in its own app-style window. Close it with **Alt+F4**. The web server listens on `127.0.0.1`, so the HMI is not exposed to the network.
+
+For a browser-only/server deployment instead, copy this directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
+
+```bash
 cd /home/pi/windtunnel-hmi
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt

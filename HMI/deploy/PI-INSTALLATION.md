@@ -11,9 +11,9 @@
 - Desktop autostart: `~/.config/autostart/windtunnel-hmi.desktop`.
 - Existing desktop auto-login retained. No reboot performed during installation.
 - Chromium uses a separate profile at `~/.local/share/windtunnel-hmi/chromium`.
-- Three backend tests passed on the Pi; server HTTP status verified; Chromium kiosk process started.
+- The Pi launcher now starts Chromium in app-window mode (no browser tabs or address bar), maximized rather than kiosk-fullscreen. Run the updated `deploy/install-pi.sh` on the Pi to install the updated launcher.
 
-Close the kiosk with **Alt+F4**. Reopen using the launcher or the desktop application.
+Close the app window with **Alt+F4**. Reopen using the launcher or the desktop application.
 The application remains in simulation mode until ESP32 integration is commissioned.
 
 Service commands on the Pi:
