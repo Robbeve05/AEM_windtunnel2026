@@ -80,16 +80,17 @@ The browser reconnects automatically with bounded exponential backoff and detect
 
 ## Raspberry Pi OS 64-bit
 
-The Pi can run the HMI as a Python desktop application. Its interface is built with PySide6/Qt and reuses the Python acquisition and storage service; it does not open Chromium or render the web interface. The native interface follows the same navigation, colors, status panels, charts and measurement workflow. Place this directory at `~/HMI` (do not copy a Windows `.venv`):
+The Pi can run the HMI as a Python desktop application. Its interface is built with PySide6/Qt and reuses the Python acquisition and storage service; it does not open Chromium or render the web interface. The native interface follows the same navigation, colors, status panels, charts and measurement workflow.
+
+To install or replace the old manually copied version, paste this **single command** into the Pi terminal:
 
 ```bash
-sudo apt update
-sudo apt install python3 python3-venv python3-pip
-cd ~/HMI
-bash deploy/install-pi.sh
+curl -fsSL https://raw.githubusercontent.com/Robbeve05/AEM_windtunnel2026/RaspberryPi/HMI/deploy/setup-pi-from-github.sh -o /tmp/setup-windtunnel-hmi.sh && bash /tmp/setup-windtunnel-hmi.sh
 ```
 
-The installer creates the local Python service, a **Windtunnel HMI** desktop/menu launcher, and desktop-session autostart. Launch it from the desktop menu; it opens as a native Qt window. Close it with **Alt+F4**. The local service listens on `127.0.0.1` and is not exposed to the network.
+The script uses the public GitHub repository without logging into GitHub. It installs Git and Python prerequisites, clones the `RaspberryPi` branch into `~/AEM_windtunnel2026`, and links `~/HMI` to its `HMI` project folder. If an older `~/HMI` or `~/AEM_windtunnel2026` already exists, it is renamed to a timestamped backup first. The existing `config/config.json` and all files in `data/` are copied into the new installation. It then installs the Python environment and creates the local service, **Windtunnel HMI** desktop/menu launcher, and desktop-session autostart. `sudo` may ask for the Pi's normal system password to install prerequisites; no GitHub credentials are needed.
+
+After installation, start **Windtunnel HMI** from the desktop menu. It opens as a native Qt window; close it with **Alt+F4**. The local service listens on `127.0.0.1` and is not exposed to the network. To update later, paste the same `curl ... && bash ...` installer command again; it backs up the current folders and preserves `config/config.json` and `data/`.
 
 For a browser-only/server deployment instead, copy this directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
 
