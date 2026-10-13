@@ -2,6 +2,8 @@
 
 FastAPI, vanilla JavaScript and offline canvas charts for the Avans wind tunnel. Runs without hardware on Windows and Raspberry Pi OS 64-bit. All six pages work without internet access. No frontend build step or CDN.
 
+**Nederlandstalige stap-voor-stap installatie vanaf een lege Pi, inclusief Arduino-firmware:** [HANDLEIDING-NEDERLANDS.md](./HANDLEIDING-NEDERLANDS.md).
+
 ## Start on Windows
 
 Open PowerShell in this **HMI** folder. Install Python 3.11 or newer if needed.
