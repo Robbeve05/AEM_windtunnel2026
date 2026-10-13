@@ -6,8 +6,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
@@ -228,9 +228,12 @@ class HMIWindow(QMainWindow):
         nav_layout.addWidget(workspace_label)
         self.nav_buttons = {}
         for key, icon, title, _heading, _description in PAGES:
-            button = QPushButton(f"{icon}    {title}")
+            button = QPushButton(title)
             button.setObjectName("navButton")
             button.setCheckable(True)
+            button.setAccessibleName(title)
+            button.setIcon(self._navigation_icon(icon))
+            button.setIconSize(QSize(20, 20))
             button.clicked.connect(lambda checked=False, name=key: self._show_page(name))
             nav_layout.addWidget(button)
             self.nav_buttons[key] = button
@@ -239,7 +242,12 @@ class HMIWindow(QMainWindow):
         self.exit_button.setObjectName("exitButton")
         self.exit_button.clicked.connect(self.close)
         nav_layout.addWidget(self.exit_button)
-        nav_layout.addWidget(QLabel("Avans windtunnel test facility\nSUPERVISORY HMI · 2026"))
+        self.hardware_mode_badge = QLabel("ARDUINO USB")
+        self.hardware_mode_badge.setObjectName("hardwareModeBadge")
+        nav_layout.addWidget(self.hardware_mode_badge)
+        facility_label = QLabel("Avans windtunnel test facility\nSUPERVISORY HMI · 2026")
+        facility_label.setObjectName("facilityLabel")
+        nav_layout.addWidget(facility_label)
         layout.addWidget(self.navigation)
 
         center = QWidget()
@@ -299,8 +307,8 @@ class HMIWindow(QMainWindow):
         self.right.setObjectName("rightSidebar")
         self.right.setFixedWidth(304)
         right_layout = QVBoxLayout(self.right)
-        right_layout.setContentsMargins(18, 20, 18, 18)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(9)
         eyebrow = QLabel("SYSTEM & DEVELOPMENT")
         eyebrow.setObjectName("eyebrow")
         right_layout.addWidget(eyebrow)
@@ -339,8 +347,17 @@ class HMIWindow(QMainWindow):
         right_layout.addLayout(readings)
         self.health_card = Card()
         self.health_card.setGraphicsEffect(None)
+        self.health_card.setProperty("section", True)
         health_layout = QVBoxLayout(self.health_card)
-        health_layout.addWidget(self._heading("System health"))
+        health_layout.setContentsMargins(0, 10, 0, 0)
+        health_layout.setSpacing(8)
+        health_heading = QHBoxLayout()
+        health_heading.addWidget(self._heading("System health"))
+        health_heading.addStretch(1)
+        hardware_badge = QLabel("HW")
+        hardware_badge.setObjectName("hardwareBadge")
+        health_heading.addWidget(hardware_badge)
+        health_layout.addLayout(health_heading)
         self.health_labels = {}
         for key, label in (
             ("host", "Host / Raspberry Pi"), ("arduino", "Arduino Uno"), ("serial", "USB serial"),
@@ -348,7 +365,11 @@ class HMIWindow(QMainWindow):
             ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
         ):
             row = QHBoxLayout()
-            row.addWidget(QLabel(label))
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(0)
+            description = QLabel(label)
+            description.setObjectName("healthLabel")
+            row.addWidget(description)
             value = QLabel("CHECKING")
             value.setObjectName("healthValue")
             value.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -356,25 +377,52 @@ class HMIWindow(QMainWindow):
             health_layout.addLayout(row)
             self.health_labels[key] = value
         self.usb_health = QLabel("USB storage  ·  CHECKING")
+        self.usb_health.setObjectName("healthLabel")
         health_layout.addWidget(self.usb_health)
         right_layout.addWidget(self.health_card)
         warning_card = Card()
         warning_card.setGraphicsEffect(None)
-        warning_card.setProperty("warning", True)
+        warning_card.setProperty("section", True)
         warning_layout = QVBoxLayout(warning_card)
+        warning_layout.setContentsMargins(0, 10, 0, 0)
+        warning_layout.setSpacing(8)
         warning_layout.addWidget(self._heading("Warnings & development"))
+        warning_notice = QFrame()
+        warning_notice.setObjectName("warningNotice")
+        notice_layout = QVBoxLayout(warning_notice)
+        notice_layout.setContentsMargins(8, 7, 8, 7)
+        notice_layout.setSpacing(0)
         self.warnings = QLabel("Waiting for Arduino pitot data")
+        self.warnings.setObjectName("warningText")
         self.warnings.setWordWrap(True)
-        warning_layout.addWidget(self.warnings)
+        notice_layout.addWidget(self.warnings)
+        warning_layout.addWidget(warning_notice)
         right_layout.addWidget(warning_card)
         event_card = Card()
         event_card.setGraphicsEffect(None)
+        event_card.setProperty("section", True)
         event_layout = QVBoxLayout(event_card)
-        event_layout.addWidget(self._heading("Event log · latest"))
-        self.event_log = QLabel("Waiting for events")
-        self.event_log.setWordWrap(True)
-        self.event_log.setAlignment(Qt.AlignmentFlag.AlignTop)
-        event_layout.addWidget(self.event_log)
+        event_layout.setContentsMargins(0, 10, 0, 0)
+        event_layout.setSpacing(8)
+        event_heading = QHBoxLayout()
+        event_heading.addWidget(self._heading("Event log"))
+        event_heading.addStretch(1)
+        latest_events = QLabel("LATEST")
+        latest_events.setObjectName("sidebarHint")
+        event_heading.addWidget(latest_events)
+        event_layout.addLayout(event_heading)
+        self.event_list = QWidget()
+        self.event_list.setObjectName("eventList")
+        self.event_list_layout = QVBoxLayout(self.event_list)
+        self.event_list_layout.setContentsMargins(3, 0, 0, 0)
+        self.event_list_layout.setSpacing(0)
+        self.event_list_layout.addStretch(1)
+        event_scroll = QScrollArea()
+        event_scroll.setObjectName("eventScroll")
+        event_scroll.setWidgetResizable(True)
+        event_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        event_scroll.setWidget(self.event_list)
+        event_layout.addWidget(event_scroll, 1)
         right_layout.addWidget(event_card, 1)
         layout.addWidget(self.right)
         self._show_page("overview")
@@ -383,6 +431,24 @@ class HMIWindow(QMainWindow):
         label = QLabel(text)
         label.setObjectName("cardHeading")
         return label
+
+    @staticmethod
+    def _navigation_icon(glyph):
+        icon = QIcon()
+        for color, state in (
+            (QColor("#ffffff"), QIcon.State.Off),
+            (QColor(RED), QIcon.State.On),
+        ):
+            pixmap = QPixmap(24, 24)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setFont(QFont("Arial", 16))
+            painter.setPen(color)
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
+            painter.end()
+            icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
+        return icon
 
     def _side_reading(self, layout, title):
         box = QVBoxLayout()
@@ -483,6 +549,7 @@ class HMIWindow(QMainWindow):
         self.stream_note = QLabel("Waiting for telemetry")
         self.stream_note.setObjectName("hint")
         chart_layout.addWidget(self.stream_note)
+        layout.addWidget(self.chart_card)
 
         self.overview_bottom = QWidget()
         bottom = QHBoxLayout(self.overview_bottom)
@@ -698,15 +765,18 @@ class HMIWindow(QMainWindow):
             #navigation QLabel {{ color:white; }}
             #brandLogo {{ font-size:17px; font-weight:800; padding:4px 7px; }}
             #brand {{ font-size:12px; font-weight:800; letter-spacing:1px; padding:4px 7px 18px; border-bottom:1px solid rgba(255,255,255,.35); }}
-            #navSection {{ color:rgba(255,255,255,.78); font-size:9px; letter-spacing:1px; padding:8px 10px; }}
+            #navSection {{ color:rgba(255,255,255,.82); font-size:9px; letter-spacing:1.5px; padding:8px 10px; }}
             QPushButton {{ background:white; color:{INK}; border:1px solid #c8c8c4; border-radius:4px; padding:8px 12px; font-weight:600; }}
             QPushButton:hover {{ background:#f1f1ee; border-color:#adada8; }}
             QPushButton:disabled {{ color:#999; }}
-            #navigation QPushButton {{ background:transparent; color:rgba(255,255,255,.86); border:0; border-radius:4px; text-align:left; padding:11px 10px; }}
+            #navigation QPushButton {{ background:transparent; color:rgba(255,255,255,.86); border:0; border-radius:4px; text-align:left; padding:11px 10px; font-weight:600; }}
             #navigation QPushButton:hover {{ background:rgba(255,255,255,.11); }}
             #navigation QPushButton:checked {{ background:white; color:{RED}; font-weight:700; }}
-            #exitButton {{ background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.25); text-align:left; }}
+            #navigation QPushButton {{ text-align:left; }}
+            #exitButton {{ background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.22); border-radius:4px; text-align:left; padding:10px 11px; font-weight:700; }}
             #exitButton:hover {{ background:white; color:#202225; }}
+            #hardwareModeBadge {{ background:#e6f3ed; color:#16865f; border:1px solid #badbca; border-radius:3px; padding:4px 6px; font-size:8px; font-weight:800; }}
+            #facilityLabel {{ color:rgba(255,255,255,.86); font-size:11px; }}
             #primaryButton {{ background:{RED}; border-color:{RED}; color:white; font-weight:700; }}
             #primaryButton:hover {{ background:#9f2018; border-color:#9f2018; }}
             #header {{ background:white; border-bottom:1px solid {LINE}; min-height:50px; max-height:50px; }}
@@ -726,23 +796,32 @@ class HMIWindow(QMainWindow):
             #metricValueRed {{ color:{RED}; }}
             #tagAmber, #tagMuted {{ padding:4px 7px; border:1px solid #ead0a2; border-radius:3px; background:#fff1d8; color:#975900; font-size:8px; font-weight:800; }}
             #tagMuted {{ background:#efefec; border-color:#d7d7d2; color:#6f6f6c; }}
+            #tagSuccess {{ padding:4px 7px; border:1px solid #badbca; border-radius:3px; background:#e6f3ed; color:#16865f; font-size:8px; font-weight:800; }}
             #rightSidebar {{ background:{PANEL}; color:#f5f5f5; border-left:1px solid #303236; }}
             #rightSidebar QLabel {{ color:#eee; }}
-            #rightSidebar #card {{ background:transparent; border:0; border-top:1px solid #3a3d42; border-radius:0; }}
-            #rightSidebar #card[warning="true"] {{ background:#3a3022; border:1px solid #5b482c; border-radius:4px; }}
-            #rightSidebar #card[warning="true"] QLabel {{ color:#ffd695; font-size:10px; }}
-            #rightSidebar #card[warning="true"] #cardHeading {{ color:white; font-size:12px; }}
-            #rightSidebar #cardHeading {{ color:white; }}
+            #rightSidebar #card[section="true"] {{ background:transparent; border:0; border-top:1px solid #3a3d42; border-radius:0; }}
+            #rightSidebar #cardHeading {{ color:white; font-size:12px; }}
             #rightSidebar #smallLabel {{ color:#bbb; }}
             #rightSidebar #eyebrow {{ color:#ff776e; }}
-            #sidebarTitle {{ color:white; font-size:18px; }}
-            #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
+            #rightSidebar #sidebarTitle {{ color:white; font-size:18px; }}
+            #rightSidebar #tagAmber {{ background:#fff1d8; border-color:#ead0a2; color:#975900; }}
+            #rightSidebar #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
+            #rightSidebar #healthLabel {{ color:#bdc0c4; font-size:10px; }}
+            #rightSidebar #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
+            #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
             #sideValue {{ font-size:19px; font-weight:700; }}
             #development {{ background:#292c30; border:1px solid #444; border-radius:4px; }}
             #rightSidebar #developmentText {{ color:#ffd58a; background:transparent; border:0; padding:0; font-size:11px; font-weight:700; }}
             #rightSidebar #hint {{ color:#9da1a6; font-size:9px; }}
             #safetyNote {{ color:#92969a; font-size:9px; }}
             #developmentText {{ color:#9a6100; background:#fff4dd; border:1px solid #ead0a2; border-radius:4px; padding:4px 6px; font-size:9px; font-weight:700; }}
+            #warningNotice {{ background:#3a3022; border:1px solid #5b482c; border-radius:4px; }}
+            #rightSidebar #warningText {{ color:#ffd695; font-size:10px; }}
+            #rightSidebar #sidebarHint {{ color:#7f858c; font-size:9px; }}
+            #eventScroll, #eventList {{ background:transparent; border:0; }}
+            #eventEntry {{ background:transparent; border:0; border-left:2px solid #5c6065; }}
+            #rightSidebar #eventTime {{ color:#7f858c; font-size:9px; }}
+            #rightSidebar #eventMessage {{ color:#c6c8cb; font-size:10px; }}
             #actualLegendLine {{ background:{RED}; }}
             #meanLegendLine {{ background:#2f3338; }}
             #chartCard #cardHeading {{ font-size:16px; }}
@@ -837,6 +916,9 @@ class HMIWindow(QMainWindow):
                 self.connection.style().polish(self.connection)
                 return
             self.connection.setText("● HMI ONLINE")
+            self.connection.setObjectName("tagSuccess")
+            self.connection.style().unpolish(self.connection)
+            self.connection.style().polish(self.connection)
             self._on_status(data, None)
 
         self._get("status", done)
@@ -848,6 +930,7 @@ class HMIWindow(QMainWindow):
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
+        self.hardware_mode_badge.setText("ARDUINO CONNECTED" if live else "ARDUINO USB")
         self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ARDUINO")
         self.airspeed.setText(f"{self._fixed(sample.get('airspeed_ms'))} m/s")
         self.dynamic.setText(f"{self._fixed(sample.get('dynamic_pressure_pa'), 1)} Pa")
@@ -898,9 +981,30 @@ class HMIWindow(QMainWindow):
         signature = json.dumps(events, sort_keys=True)
         if signature != self.last_events:
             self.last_events = signature
-            self.event_log.setText("\n".join(
-                f"{self._time(event.get('timestamp'))}  {event.get('message', '')}" for event in events
-            ) or "No events")
+            while self.event_list_layout.count():
+                item = self.event_list_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+            for event in events:
+                entry = QFrame()
+                entry.setObjectName("eventEntry")
+                entry_layout = QVBoxLayout(entry)
+                entry_layout.setContentsMargins(9, 0, 0, 12)
+                entry_layout.setSpacing(2)
+                timestamp = QLabel(self._time(event.get("timestamp")))
+                timestamp.setObjectName("eventTime")
+                message = QLabel(event.get("message", ""))
+                message.setObjectName("eventMessage")
+                message.setWordWrap(True)
+                entry_layout.addWidget(timestamp)
+                entry_layout.addWidget(message)
+                self.event_list_layout.addWidget(entry)
+            self.event_list_layout.addStretch(1)
+            if not events:
+                empty = QLabel("No events")
+                empty.setObjectName("eventMessage")
+                self.event_list_layout.insertWidget(0, empty)
         if self.page_key == "raw":
             self._render_raw(sample, live)
         if time.monotonic() - self.last_refresh > 3 and self.page_key in ("measurements", "storage"):
