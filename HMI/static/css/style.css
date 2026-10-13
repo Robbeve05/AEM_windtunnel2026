@@ -338,6 +338,7 @@ body.collapsed{grid-template-columns:72px minmax(0,1fr) 304px}
 @media(max-width:1000px){.operating-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.run-summary{grid-template-columns:1fr}}
 
 .setting-toggle{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 0;border-bottom:1px solid var(--line,#ddd);margin-bottom:18px}.setting-toggle div{display:flex;flex-direction:column;gap:5px}.setting-toggle span{font-size:.86rem;color:var(--muted,#6f6f6a);max-width:650px}.switch{position:relative;display:inline-block;width:54px;height:30px;flex:0 0 auto}.switch input{opacity:0;width:0;height:0}.slider{position:absolute;inset:0;cursor:pointer;background:#b9b9b4;border-radius:30px;transition:.2s}.slider:before{content:"";position:absolute;width:22px;height:22px;left:4px;top:4px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 4px #0003}.switch input:checked+.slider{background:#c8291e}.switch input:checked+.slider:before{transform:translateX(24px)}
+.recording-fields{display:flex;justify-content:space-between;align-items:center;gap:12px}.recording-fields label{display:flex;align-items:center;gap:8px}.recording-fields select{min-width:82px}.download-link{display:inline-flex;align-items:center;background:#fff;border:1px solid var(--border);border-radius:4px;padding:8px 12px;color:var(--ink);font-weight:600;text-decoration:none}.download-link:hover{background:#f1f1ee}
 
 /* Empty states for hardware/data that is not available yet */
 [hidden]{display:none!important}

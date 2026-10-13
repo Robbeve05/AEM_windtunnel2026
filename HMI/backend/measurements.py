@@ -27,6 +27,9 @@ class Measurements:
         self.files = []
         self.elapsed = 0.0
         self.total_speed = 0.0
+        self.first_recorded_monotonic = None
+        self.last_recorded_monotonic = None
+        self.last_flush_monotonic = None
         self.error = None
         # A previous process may have ended before closing a run.
         for path in root.glob('*/experiment.json'):
@@ -36,15 +39,25 @@ class Measurements:
                 save_json(path, metadata)
 
     def status(self):
-        return dict(state=self.state, name=self.meta['name'] if self.meta else '',
-                    samples=self.meta['samples'] if self.meta else 0,
-                    elapsed_s=time.monotonic() - self.started if self.state == 'RECORDING' else self.elapsed,
-                    sample_rate_hz=self.config.sample_rate_hz, error=self.error,
-                    file_status='Writing locally' if self.state == 'RECORDING' else self.state)
+        elapsed = time.monotonic() - self.started if self.state == 'RECORDING' else self.elapsed
+        samples = self.meta['samples'] if self.meta else 0
+        return dict(
+            state=self.state,
+            name=self.meta['name'] if self.meta else '',
+            samples=samples,
+            elapsed_s=elapsed,
+            sample_rate_hz=self.config.sample_rate_hz,
+            recording_rate_hz=self.meta.get('recording_rate_hz') if self.meta else None,
+            actual_sample_rate_hz=self._actual_sample_rate_hz(),
+            error=self.error,
+            file_status='Writing locally' if self.state == 'RECORDING' else self.state,
+        )
 
-    def start(self, name: str):
+    def start(self, name: str, recording_rate_hz: int = 25):
         if self.state in ('RECORDING', 'SAVING'):
             raise ValueError('A measurement is already active')
+        if not 1 <= recording_rate_hz <= 100:
+            raise ValueError('Recording sample frequency must be between 1 and 100 Hz')
         clean = re.sub(r'[^A-Za-z0-9_-]+', '_', name).strip('_')[:80]
         if not clean:
             raise ValueError('Enter a valid measurement name')
@@ -54,8 +67,12 @@ class Measurements:
         self.folder.mkdir()
         self.meta = dict(id=identifier, name=name, timestamp=now.isoformat(), state='RECORDING',
                          samples=0, duration_s=0, average_airspeed_ms=0, exported=False,
+                         recording_rate_hz=recording_rate_hz,
                          pressure_reference='pitot differential Pa', sensor='ASPD-4525 via Arduino Uno', config=self.config.model_dump())
         self.started = time.monotonic()
+        self.first_recorded_monotonic = None
+        self.last_recorded_monotonic = None
+        self.last_flush_monotonic = self.started
         self.elapsed = self.total_speed = 0.0
         self.error = None
         try:
@@ -81,9 +98,16 @@ class Measurements:
         writer.writeheader()
         return writer
 
-    def append(self, sample: dict):
+    def append(self, sample: dict, received_at: float | None = None):
         if self.state != 'RECORDING':
-            return
+            return False
+        now = time.monotonic() if received_at is None else received_at
+        minimum_interval = 1.0 / self.meta['recording_rate_hz']
+        if (
+            self.last_recorded_monotonic is not None
+            and now - self.last_recorded_monotonic + 1e-9 < minimum_interval
+        ):
+            return False
         row = {key: sample.get(key) for key in self.raw.fieldnames}
         row['pressure_pa'] = json.dumps(sample.get('pressure_pa', []))
         row['errors'] = json.dumps(sample.get('errors', []))
@@ -91,9 +115,26 @@ class Measurements:
         self.processed.writerow({key: sample.get(key) for key in self.processed.fieldnames})
         self.meta['samples'] += 1
         self.total_speed += sample['airspeed_ms']
-        if self.meta['samples'] % max(1, int(self.config.sample_rate_hz)) == 0:
+        if self.first_recorded_monotonic is None:
+            self.first_recorded_monotonic = now
+        self.last_recorded_monotonic = now
+        if now - self.last_flush_monotonic >= 1.0:
             for stream in self.files:
                 stream.flush()
+            save_json(self.folder / 'experiment.json', self.meta)
+            self.last_flush_monotonic = now
+        return True
+
+    def _actual_sample_rate_hz(self) -> float:
+        if (
+            not self.meta
+            or self.meta['samples'] < 2
+            or self.first_recorded_monotonic is None
+            or self.last_recorded_monotonic is None
+        ):
+            return 0.0
+        sample_span = self.last_recorded_monotonic - self.first_recorded_monotonic
+        return (self.meta['samples'] - 1) / sample_span if sample_span > 0 else 0.0
 
     def _close(self):
         failure = None
@@ -126,7 +167,8 @@ class Measurements:
             self._close()
             self.elapsed = time.monotonic() - self.started
             self.meta.update(state='COMPLETED', duration_s=self.elapsed,
-                             average_airspeed_ms=self.total_speed / max(1, self.meta['samples']))
+                             average_airspeed_ms=self.total_speed / max(1, self.meta['samples']),
+                             actual_sample_rate_hz=self._actual_sample_rate_hz())
             save_json(self.folder / 'experiment.json', self.meta)
             # Cp processing is intentionally deferred until the pressure-tap hardware is commissioned.
             self.state = 'COMPLETED'

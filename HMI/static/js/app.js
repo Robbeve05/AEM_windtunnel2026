@@ -34,6 +34,7 @@ function updateControls(){
   $('measurement-name').disabled=recording;
   $('record-start').disabled=!connected || !state?.sensor_fresh || recording || !valid;
   $('record-stop').disabled=!connected || !recording;
+  $('recording-rate').disabled=recording;
 }
 const pages={overview:['Tunnel overview','Live flow data from the USB-connected pitot measurement node.'],raw:['Raw sensor data','Inspect the Arduino Uno / ASPD-4525 telemetry frame.'],cp:['Cp analysis','Multi-point pressure distribution is the next measurement subsystem.'],measurements:['Measurements','Record and review real pitot-tube measurements.'],storage:['Storage & export','Keep data local and export complete runs when needed.'],settings:['System settings','Current acquisition configuration and hardware status.']};
 function showPage(name){page=name;document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id==='page-'+name));document.querySelectorAll('[data-page]').forEach(el=>el.classList.toggle('active',el.dataset.page===name));$('page-title').textContent=pages[name][0];$('page-description').textContent=pages[name][1];$('section-number').textContent=String(Object.keys(pages).indexOf(name)+1).padStart(2,'0');if(['measurements','storage'].includes(name))refresh().catch(e=>toast(e.message,true));renderPage();velocity.draw();}
@@ -41,7 +42,7 @@ document.querySelectorAll('[data-page]').forEach(el=>el.addEventListener('click'
 $('collapse').addEventListener('click',()=>document.body.classList.toggle('collapsed'));
 action('exit-hmi',async()=>{if(!window.confirm('Close the Windtunnel HMI and return to the Raspberry Pi desktop?'))return;$('exit-hmi').textContent='Closing…';await api('system/exit-hmi',{});});
 $('measurement-name').addEventListener('input',updateControls);
-action('record-start',async()=>{await api('measurement/start',{name:$('measurement-name').value.trim()});toast('Recording started · live pitot data');});
+action('record-start',async()=>{await api('measurement/start',{name:$('measurement-name').value.trim(),recording_rate_hz:Number($('recording-rate').value)});toast('Recording started · live pitot data');});
 action('record-stop',async()=>{await api('measurement/stop',{});toast('Measurement saved');await refresh();});
 action('refresh-measurements',refresh);
 action('export-selected',async()=>{if(!$('export-select').value)throw new Error('Select a completed measurement');await api('storage/export/'+encodeURIComponent($('export-select').value),{});toast('Measurement exported');await refresh();});
@@ -98,7 +99,7 @@ function onFrame(frame){
     $('stream-note').textContent=`LIVE ARDUINO USB · ${frame.sample_age_s===null?'—':frame.sample_age_s.toFixed(1)} s sample age`;
   }
   badge('tunnel-state','IN DEVELOPMENT');badge('measurement-badge',m.state);
-  $('elapsed').textContent=duration(m.elapsed_s);$('samples').textContent=m.samples.toLocaleString();$('sample-rate').textContent=`≈ ${config?.sample_rate_hz||5} Hz`;
+  $('elapsed').textContent=duration(m.elapsed_s);$('samples').textContent=m.samples.toLocaleString();$('sample-rate').textContent=m.actual_sample_rate_hz?`${Number(m.actual_sample_rate_hz).toFixed(1)} Hz`:`Target ${m.recording_rate_hz||'—'} Hz`;
   $('file-status').textContent=m.error||(m.name?`${m.file_status} · ${m.name}`:(frame.sensor_fresh?'Ready · enter a measurement name':'Connect Arduino Uno via USB to record.'));
   if(m.state==='RECORDING')$('measurement-name').value=m.name;
   const labels={host:'Host / Raspberry Pi',arduino:'Arduino Uno',serial:'USB serial',pitot:'Pitot sensor',pressure_sensors:'Cp pressure taps',vfd:'Fan / VFD',logger:'Measurement logger',storage:'Storage'};
@@ -107,6 +108,14 @@ function onFrame(frame){
   const eventSignature=JSON.stringify(frame.events);if(eventSignature!==lastEvents){$('event-log').innerHTML=frame.events.slice(0,8).map(e=>`<div class="event"><time>${clock(e.timestamp)}</time>${escape(e.message)}</div>`).join('');lastEvents=eventSignature;}
   $('mode-tag').textContent=frame.sensor_fresh?'● LIVE HARDWARE':'WAITING FOR ARDUINO';$('mode-tag').className='tag '+(frame.sensor_fresh?'':'amber');
   $('hardware-mode-badge').textContent=frame.sensor_fresh?'ARDUINO CONNECTED':'ARDUINO USB';
+  const filter=frame.arduino_filter;
+  if(filter){
+    $('filter-status').textContent=filter.confirmed
+      ?`Arduino confirms ${Number(filter.configured_cutoff_hz).toFixed(1)} Hz.`
+      :filter.reported_cutoff_hz!==null&&filter.reported_cutoff_hz!==undefined
+        ?`Waiting for ${Number(filter.configured_cutoff_hz).toFixed(1)} Hz; Arduino reports ${Number(filter.reported_cutoff_hz).toFixed(1)} Hz.`
+        :frame.hardware_mode?'Waiting for Arduino firmware to confirm the filter setting.':'Simulation mode · the setting will be sent when Arduino hardware connects.';
+  }
   updateControls();renderPage();
 }
 async function refresh(){
@@ -129,13 +138,26 @@ function renderStorage(storage){
 async function loadDetail(id){
   const data=await api('measurements/'+encodeURIComponent(id));
   const table=rows=>rows.length?`<div class="table-wrap"><table><thead><tr>${Object.keys(rows[0]).map(k=>`<th>${escape(k)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${Object.values(row).map(v=>`<td>${escape(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:'<p class="hint">No data available</p>';
-  $('measurement-detail').innerHTML=`<div class="panel-heading"><h2>${escape(data.metadata.name)}</h2><span class="tag">${data.metadata.exported?'EXPORTED':'LOCAL COPY'}</span></div><div class="run-summary"><div><span>AVERAGE AIRSPEED</span><strong>${fixed(data.metadata.average_airspeed_ms,2)} m/s</strong></div><div><span>DURATION</span><strong>${duration(data.metadata.duration_s)}</strong></div><div><span>SAMPLES</span><strong>${data.metadata.samples}</strong></div></div><details><summary>Experiment metadata</summary><pre>${escape(JSON.stringify(data.metadata,null,2))}</pre></details><details><summary>Raw pitot data · first 200 samples</summary>${table(data.raw)}</details><details><summary>Processed flow data · first 200 samples</summary>${table(data.processed)}</details><div class="development-banner compact"><strong>CP ANALYSIS · IN DEVELOPMENT</strong><span>Pressure-tap hardware is not connected yet.</span></div>`;
+  const rawUrl=`/api/measurements/${encodeURIComponent(id)}/files/raw_data.csv`,processedUrl=`/api/measurements/${encodeURIComponent(id)}/files/processed_data.csv`;
+  $('measurement-detail').innerHTML=`<div class="panel-heading"><h2>${escape(data.metadata.name)}</h2><span class="tag">${data.metadata.exported?'EXPORTED':'LOCAL COPY'}</span></div><div class="run-summary"><div><span>AVERAGE AIRSPEED</span><strong>${fixed(data.metadata.average_airspeed_ms,2)} m/s</strong></div><div><span>DURATION</span><strong>${duration(data.metadata.duration_s)}</strong></div><div><span>SAMPLES</span><strong>${data.metadata.samples}</strong></div><div><span>TARGET RATE</span><strong>${data.metadata.recording_rate_hz??'—'} Hz</strong></div><div><span>ACTUAL RATE</span><strong>${fixed(data.metadata.actual_sample_rate_hz,1)} Hz</strong></div></div><p class="hint">The tables below are previews of the first 200 rows. Download the full CSV for every recorded sample.</p><div class="button-row"><a class="download-link" href="${rawUrl}" download>Download complete raw CSV</a><a class="download-link" href="${processedUrl}" download>Download complete processed CSV</a></div><details><summary>Experiment metadata</summary><pre>${escape(JSON.stringify(data.metadata,null,2))}</pre></details><details><summary>Raw pitot data · preview</summary>${table(data.raw)}</details><details><summary>Processed flow data · preview</summary>${table(data.processed)}</details><div class="development-banner compact"><strong>CP ANALYSIS · IN DEVELOPMENT</strong><span>Pressure-tap hardware is not connected yet.</span></div>`;
 }
 async function init(){
   config=await api('config');$('density').value=config.air_density;
   const flowToggle=$('flow-metrics-toggle');flowToggle.checked=flowMetricsEnabled();flowToggle.addEventListener('change',async()=>{flowToggle.disabled=true;try{const result=await api('settings/flow-metrics',{enabled:flowToggle.checked});config.flow_metrics_enabled=result.enabled;history.forEach(p=>p.mean=null);toast(result.enabled?'5 s flow statistics enabled':'5 s flow statistics disabled');if(state)onFrame(state);}catch(e){flowToggle.checked=!flowToggle.checked;toast(e.message,true);}finally{flowToggle.disabled=false;}});velocity.setYRange(0,Math.max(45,Math.ceil(config.max_airspeed_ms/5)*5));
-  const fields={simulation:'Simulation mode',sample_rate_hz:'Expected pitot rate · Hz',air_density:'Air density · kg/m³',max_airspeed_ms:'Graph maximum airspeed · m/s',serial_port:'Arduino serial port',baud_rate:'Baud rate',data_directory:'Local data directory',usb_mount_path:'USB mount path',simulate_usb:'Simulated USB export'};
+  const fields={simulation:'Simulation mode',sample_rate_hz:'Expected pitot rate · Hz',filter_cutoff_hz:'Arduino filter cutoff · Hz',air_density:'Air density · kg/m³',max_airspeed_ms:'Graph maximum airspeed · m/s',serial_port:'Arduino serial port',baud_rate:'Baud rate',data_directory:'Local data directory',usb_mount_path:'USB mount path',simulate_usb:'Simulated USB export'};
   $('settings-grid').innerHTML=Object.entries(fields).map(([key,label])=>`<div class="setting"><span>${label}</span>${escape(String(config[key]??'')||'Not configured')}</div>`).join('');
+  $('filter-cutoff').value=Number(config.filter_cutoff_hz??5).toFixed(1);
+  $('apply-filter').addEventListener('click',async()=>{
+    const button=$('apply-filter'),cutoff=Number($('filter-cutoff').value);
+    button.disabled=true;
+    try{
+      const result=await api('settings/arduino-filter',{cutoff_hz:cutoff});
+      config.filter_cutoff_hz=result.cutoff_hz;
+      $('filter-status').textContent=result.device_confirmed?'Arduino confirmed the new filter setting.':result.command_sent?'Command sent; waiting for Arduino telemetry confirmation.':'Setting saved; it will be sent when Arduino connects.';
+      toast(`Arduino pressure filter set to ${result.cutoff_hz.toFixed(1)} Hz`);
+    }catch(e){toast(e.message,true);}
+    finally{button.disabled=false;}
+  });
   const initial=await api('status');onFrame(initial);
   new LiveConnection(onFrame,online=>{connected=online;badge('connection',online?'● HMI ONLINE':'RECONNECTING');$('connection').classList.toggle('amber',!online);document.body.classList.toggle('offline',!online);if(!online)$('stream-note').textContent='HMI websocket disconnected · values may be stale';updateControls();});
   await refresh();

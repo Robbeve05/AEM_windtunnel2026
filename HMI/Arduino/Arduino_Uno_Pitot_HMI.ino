@@ -1,5 +1,7 @@
 #include <Wire.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 const uint8_t ASPD_ADDRESS = 0x28;
 const float AIR_DENSITY = 1.225f;
@@ -9,8 +11,42 @@ const float P_MIN_PSI = -1.0f;
 const int ZERO_SAMPLES = 200;
 const int FILTER_SAMPLES = 10;
 const float PRESSURE_DEADBAND = 5.0f;
+const float DEFAULT_FILTER_HZ = 5.0f;
+const float MIN_FILTER_HZ = 0.1f;
+const float MAX_FILTER_HZ = 10.0f;
 
 float pressureOffsetPa = 0.0f;
+float filterCutoffHz = DEFAULT_FILTER_HZ;
+float filteredPressurePa = 0.0f;
+bool pressureFilterInitialized = false;
+uint32_t lastPressureSampleUs = 0;
+char serialCommand[40];
+uint8_t serialCommandLength = 0;
+
+void processSerialCommands()
+{
+    while (Serial.available() > 0) {
+        char incoming = (char)Serial.read();
+        if (incoming == '\r') continue;
+        if (incoming == '\n') {
+            serialCommand[serialCommandLength] = '\0';
+            const char prefix[] = "FILTER_HZ=";
+            if (strncmp(serialCommand, prefix, sizeof(prefix) - 1) == 0) {
+                char *end;
+                float requestedHz = (float)strtod(serialCommand + sizeof(prefix) - 1, &end);
+                if (*end == '\0' && isfinite(requestedHz)
+                    && requestedHz >= MIN_FILTER_HZ && requestedHz <= MAX_FILTER_HZ) {
+                    filterCutoffHz = requestedHz;
+                }
+            }
+            serialCommandLength = 0;
+        } else if (serialCommandLength < sizeof(serialCommand) - 1) {
+            serialCommand[serialCommandLength++] = incoming;
+        } else {
+            serialCommandLength = 0;
+        }
+    }
+}
 
 bool readASPD(float &pressurePa, float &temperatureC)
 {
@@ -76,8 +112,20 @@ void setup()
 
 void loop()
 {
+    processSerialCommands();
     float pressurePa, temperatureC;
     if (getFilteredPressure(pressurePa, temperatureC)) {
+        uint32_t sampleUs = micros();
+        if (!pressureFilterInitialized) {
+            filteredPressurePa = pressurePa;
+            pressureFilterInitialized = true;
+        } else {
+            float elapsedSeconds = (sampleUs - lastPressureSampleUs) / 1000000.0f;
+            float alpha = 1.0f - expf(-2.0f * PI * filterCutoffHz * elapsedSeconds);
+            filteredPressurePa += alpha * (pressurePa - filteredPressurePa);
+        }
+        lastPressureSampleUs = sampleUs;
+        pressurePa = filteredPressurePa;
         if (fabs(pressurePa) < PRESSURE_DEADBAND) pressurePa = 0.0f;
         float pressureForSpeed = fabs(pressurePa);
         float airspeedMs = pressureForSpeed > 0.0f
@@ -93,7 +141,9 @@ void loop()
         Serial.print(",airspeed_ms=");
         Serial.print(airspeedMs, 2);
         Serial.print(",airspeed_kmh=");
-        Serial.println(airspeedKmh, 2);
+        Serial.print(airspeedKmh, 2);
+        Serial.print(",filter_hz=");
+        Serial.println(filterCutoffHz, 1);
     }
     delay(20);
 }

@@ -17,7 +17,10 @@ class WorkflowTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
         (self.base / 'config').mkdir()
-        (self.base / 'config/config.json').write_text((main.BASE / 'config/config.json').read_text())
+        config = json.loads((main.BASE / 'config/config.json').read_text())
+        config['simulation'] = True
+        config['simulate_usb'] = True
+        (self.base / 'config/config.json').write_text(json.dumps(config))
         self.controller = main.Controller(self.base)
         self.patch = patch.object(main, 'Controller', return_value=self.controller)
         self.patch.start()
@@ -34,9 +37,11 @@ class WorkflowTests(unittest.TestCase):
         return result.json()
 
     def test_full_workflow_and_independent_controls(self):
+        self.controller.simulation = False
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'Test'}).status_code, 400)
         self.assertEqual(self.client.post('/api/tunnel/setpoint', json={'airspeed_ms':31}).status_code, 400)
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'../bad'}).status_code, 422)
+        self.controller.simulation = True
         self.post('tunnel/setpoint', {'airspeed_ms':1})
         self.post('tunnel/start')
         # Drive the physics deterministically rather than waiting for spin-up.
@@ -75,6 +80,81 @@ class WorkflowTests(unittest.TestCase):
                 frame = socket.receive_json()
                 self.assertIn('measurement',frame)
                 self.assertTrue(frame['simulation'])
+
+    def test_arduino_filter_setting_persists_and_validates(self):
+        result = self.post('settings/arduino-filter', {'cutoff_hz':2.5})
+        self.assertEqual(result, {'cutoff_hz':2.5, 'command_sent':False, 'device_confirmed':False})
+        self.assertEqual(self.controller.config.filter_cutoff_hz, 2.5)
+        saved = json.loads((self.base / 'config/config.json').read_text())
+        self.assertEqual(saved['filter_cutoff_hz'], 2.5)
+        self.assertEqual(self.client.get('/api/status').json()['arduino_filter']['configured_cutoff_hz'], 2.5)
+        self.assertEqual(self.client.post('/api/settings/arduino-filter', json={'cutoff_hz':10.1}).status_code, 422)
+        self.assertEqual(self.controller.config.filter_cutoff_hz, 2.5)
+
+    def test_arduino_serial_filter_command_and_telemetry(self):
+        from backend.arduino import ArduinoPitotSerial
+
+        class SerialStub:
+            is_open = True
+
+            def __init__(self):
+                self.writes = []
+
+            def write(self, value):
+                self.writes.append(value)
+
+            def flush(self):
+                pass
+
+        reader = ArduinoPitotSerial()
+        reader.connection = SerialStub()
+        self.assertTrue(reader.set_filter_cutoff_hz(3.2))
+        self.assertEqual(reader.connection.writes, [b'FILTER_HZ=3.2\n'])
+        sample = reader._parse(
+            'pressure_pa=12.3,temperature_c=21.0,airspeed_ms=4.5,airspeed_kmh=16.2,filter_hz=3.2'
+        )
+        self.assertEqual(sample['filter_hz'], 3.2)
+        self.assertEqual(reader.reported_filter_cutoff_hz, 3.2)
+
+    def test_recording_rate_limits_only_saved_samples(self):
+        measurements = self.controller.measurements
+        measurements.start('Rate_Limited', 1)
+        sample = {'airspeed_ms': 2.0, 'pressure_pa': [], 'errors': []}
+        self.assertTrue(measurements.append(sample, 10.0))
+        self.assertFalse(measurements.append(sample, 10.5))
+        self.assertTrue(measurements.append(sample, 11.0))
+        result = measurements.stop()
+        self.assertEqual(result['samples'], 2)
+        self.assertEqual(result['recording_rate_hz'], 1)
+        self.assertAlmostEqual(result['actual_sample_rate_hz'], 1.0)
+
+    def test_complete_csv_download_includes_more_than_preview_rows(self):
+        measurements = self.controller.measurements
+        started = measurements.start('Complete_CSV', 100)
+        sample = {'airspeed_ms': 2.0, 'pressure_pa': [], 'errors': []}
+        timestamp = time.monotonic()
+        for index in range(205):
+            self.assertTrue(measurements.append(sample, timestamp + index * 0.04))
+        result = measurements.stop()
+        self.assertAlmostEqual(result['actual_sample_rate_hz'], 25.0)
+
+        response = self.client.get(
+            f"/api/measurements/{started['id']}/files/raw_data.csv"
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.text.splitlines()), 206)
+        self.controller.storage.export(started['id'])
+        exported = self.controller.storage.usb / started['id'] / 'raw_data.csv'
+        self.assertEqual(len(exported.read_text(encoding='utf-8').splitlines()), 206)
+
+    def test_recording_rate_validation(self):
+        self.assertEqual(
+            self.client.post(
+                '/api/measurement/start',
+                json={'name': 'Invalid_Rate', 'recording_rate_hz': 101},
+            ).status_code,
+            422,
+        )
 
     def test_cp_and_recovery(self):
         tap = [{'name':'P1','surface':'upper','x_c':.2}]

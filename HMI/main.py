@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.arduino import ArduinoPitotSerial
 from backend.measurements import Measurements
-from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint
+from backend.models import ArduinoFilterSetting, Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint
 from backend.simulator import Simulator
 from backend.storage import Storage
 
@@ -24,10 +24,13 @@ BASE = Path(__file__).resolve().parent
 
 class Controller:
     def __init__(self, base=BASE):
+        self.base = Path(base)
         self.config = Config.model_validate_json((base / 'config/config.json').read_text(encoding='utf-8'))
         self.simulation = self.config.simulation
         self.tunnel = Simulator(self.config) if self.simulation else None
-        self.arduino = None if self.simulation else ArduinoPitotSerial(self.config.serial_port, self.config.baud_rate)
+        self.arduino = None if self.simulation else ArduinoPitotSerial(
+            self.config.serial_port, self.config.baud_rate, self.config.filter_cutoff_hz
+        )
         self.measurements = Measurements(base / self.config.data_directory, self.config)
         self.storage = Storage(base, self.config, self.measurements)
         self.events = deque(maxlen=80)
@@ -66,6 +69,7 @@ class Controller:
         velocity = max(0.0, float(raw['airspeed_ms']))
         differential = float(raw['pressure_pa'])
         metrics = self._flow_metrics(velocity, now)
+        measurement = self.measurements.status()
         return dict(
             timestamp_ms=int((now - self.started_monotonic) * 1000),
             state='MEASURING',
@@ -112,13 +116,28 @@ class Controller:
                 detail = self.arduino.last_error if self.arduino and self.arduino.last_error else 'Waiting for Arduino pitot data'
                 warnings.append(detail)
             warnings += ['Pressure-tap Cp system in development', 'Fan/VFD control in development', 'Angle-of-attack sensing in development']
+        arduino_filter = {
+            'configured_cutoff_hz': self.config.filter_cutoff_hz,
+            'reported_cutoff_hz': self.arduino.reported_filter_cutoff_hz if self.arduino else None,
+            'confirmed': bool(
+                self.arduino
+                and self.arduino.reported_filter_cutoff_hz is not None
+                and math.isclose(
+                    self.arduino.reported_filter_cutoff_hz,
+                    self.config.filter_cutoff_hz,
+                    abs_tol=0.06,
+                )
+            ),
+        }
+        measurement = self.measurements.status()
         return dict(
             sample=self.sample,
             setpoint=self.setpoint,
             tunnel_state=self.tunnel_state,
-            measurement=self.measurements.status(),
+            measurement=measurement,
             simulation=self.simulation,
             hardware_mode=not self.simulation,
+            arduino_filter=arduino_filter,
             sensor_fresh=self.sensor_fresh() if not self.simulation else True,
             sample_age_s=age,
             events=list(self.events),
@@ -139,7 +158,7 @@ class Controller:
                     self.sample['airspeed_kmh'] = self.sample['airspeed_ms'] * 3.6
                     self.sample['differential_pressure_pa'] = self.sample['dynamic_pressure_pa']
                     self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
-                    await asyncio.to_thread(self.measurements.append, self.sample.copy())
+                    await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
                 last = now
                 await asyncio.sleep(max(0.001, 1 / self.config.sample_rate_hz - (time.monotonic() - now)))
             return
@@ -160,7 +179,7 @@ class Controller:
                 self.sample = self._hardware_sample(raw, now)
                 self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
                 try:
-                    await asyncio.to_thread(self.measurements.append, self.sample.copy())
+                    await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
                 except Exception as exc:
                     logging.exception('Measurement logger failed')
                     await asyncio.to_thread(self.measurements.fail, str(exc))
@@ -230,10 +249,33 @@ async def set_flow_metrics(body: FlowMetricsSetting):
     c = control()
     c.config.flow_metrics_enabled = body.enabled
     c.speed_window.clear()
-    config_path = BASE / 'config/config.json'
+    config_path = c.base / 'config/config.json'
     config_path.write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
     c.event('5 s flow statistics enabled.' if body.enabled else '5 s flow statistics disabled.')
     return {'enabled': c.config.flow_metrics_enabled}
+
+
+@app.post('/api/settings/arduino-filter')
+async def set_arduino_filter(body: ArduinoFilterSetting):
+    c = control()
+    c.config.filter_cutoff_hz = body.cutoff_hz
+    config_path = c.base / 'config/config.json'
+    config_path.write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
+    command_sent = bool(c.arduino and c.arduino.set_filter_cutoff_hz(body.cutoff_hz))
+    c.event(
+        f'Arduino pressure low-pass filter set to {body.cutoff_hz:.1f} Hz.'
+        if command_sent else
+        f'Arduino pressure low-pass filter saved at {body.cutoff_hz:.1f} Hz; awaiting Arduino connection.'
+    )
+    return {
+        'cutoff_hz': c.config.filter_cutoff_hz,
+        'command_sent': command_sent,
+        'device_confirmed': bool(
+            c.arduino
+            and c.arduino.reported_filter_cutoff_hz is not None
+            and math.isclose(c.arduino.reported_filter_cutoff_hz, body.cutoff_hz, abs_tol=0.06)
+        ),
+    }
 
 
 @app.post('/api/tunnel/start')
@@ -274,7 +316,9 @@ async def start_measurement(body: MeasurementRequest):
     async with c.lock:
         if not c.simulation and not c.sensor_fresh():
             raise ValueError('No live Arduino pitot data. Connect the Uno before recording.')
-        result = await asyncio.to_thread(c.measurements.start, body.name.strip())
+        result = await asyncio.to_thread(
+            c.measurements.start, body.name.strip(), body.recording_rate_hz
+        )
         c.event('Recording started: ' + body.name)
         return result
 
@@ -296,6 +340,18 @@ async def measurements():
 @app.get('/api/measurements/{identifier}')
 async def measurement(identifier: str):
     return await asyncio.to_thread(control().measurements.detail, identifier)
+
+
+@app.get('/api/measurements/{identifier}/files/{filename}')
+async def measurement_file(identifier: str, filename: str):
+    if filename not in {'raw_data.csv', 'processed_data.csv', 'experiment.json'}:
+        raise ValueError('Measurement file is not available')
+    folder = control().measurements.folder_for(identifier)
+    path = folder / filename
+    if not path.is_file():
+        raise ValueError('Measurement file is not available')
+    media_type = 'text/csv' if filename.endswith('.csv') else 'application/json'
+    return FileResponse(path, media_type=media_type, filename=f'{identifier}_{filename}')
 
 
 @app.post('/api/measurements/{identifier}/cp')

@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QIODevice, QSize, Qt, QTimer, QUrl, QSaveFile
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtSvgWidgets import QSvgWidget
@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -44,7 +47,7 @@ CREAM = "#f6f6f4"
 PANEL = "#1e2023"
 
 PAGES = (
-    ("overview", "◫", "Overview", "Tunnel overview", "Live flow data from the USB-connected pitot measurement node."),
+    ("overview", "◫", "Overview", "Tunnel overview", "A clear view of your flow. Every parameter, in real time."),
     ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the Arduino Uno / ASPD-4525 telemetry frame."),
     ("cp", "⌁", "Cp Analysis", "Cp analysis", "Multi-point pressure distribution is the next measurement subsystem."),
     ("measurements", "▤", "Measurements", "Measurements", "Record and review real pitot-tube measurements."),
@@ -69,7 +72,7 @@ class Card(QFrame):
 class FlowChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.points = []
         self.y_max = 45.0
@@ -144,8 +147,8 @@ class FlowChart(QWidget):
 class AirfoilDiagram(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(82)
-        self.setMaximumHeight(112)
+        self.setMinimumHeight(70)
+        self.setMaximumHeight(70)
         self.setMinimumWidth(240)
 
     def paintEvent(self, _event):
@@ -192,6 +195,7 @@ class HMIWindow(QMainWindow):
         self.last_events = None
         self.last_refresh = 0.0
         self.last_sample_timestamp = None
+        self.selected_run_id = None
         self._build_ui()
         self._apply_style()
         self.timer = QTimer(self)
@@ -280,6 +284,7 @@ class HMIWindow(QMainWindow):
         self.page_title.setObjectName("pageTitle")
         self.page_description = QLabel(PAGES[0][4])
         self.page_description.setObjectName("muted")
+        heading_left.setSpacing(0)
         heading_left.addWidget(self.section_number)
         heading_left.addWidget(self.page_title)
         heading_left.addWidget(self.page_description)
@@ -298,6 +303,7 @@ class HMIWindow(QMainWindow):
         self._build_settings()
         main_layout.addWidget(self.pages, 1)
         footer = QLabel("AVANS HOGESCHOOL   /   WINDTUNNEL 2026                         AEROSPACE ENGINEERING · LOCAL DATA ACQUISITION")
+        self.footer = footer
         footer.setObjectName("footer")
         main_layout.addWidget(footer)
         center_layout.addWidget(main, 1)
@@ -477,17 +483,26 @@ class HMIWindow(QMainWindow):
 
     def _metric(self, parent_layout, title, unit, key, accent=False):
         card = Card(accent=accent)
-        card.setMinimumHeight(98)
         box = QVBoxLayout(card)
-        box.setContentsMargins(14, 12, 14, 10)
+        box.setContentsMargins(17, 12, 17, 10)
+        box.setSpacing(4)
         label = QLabel(title.upper())
         label.setObjectName("smallLabel")
-        value = QLabel(f"— {unit}")
+        value = QLabel("—")
         value.setObjectName("metricValueRed" if accent else "metricValue")
+        value_row = QHBoxLayout()
+        value_row.setSpacing(6)
+        value_row.addWidget(value, 0, Qt.AlignmentFlag.AlignVCenter)
+        if unit:
+            unit_label = QLabel(unit)
+            unit_label.setObjectName("metricUnit")
+            value_row.addWidget(unit_label, 0, Qt.AlignmentFlag.AlignVCenter)
+            setattr(self, f"{key}_unit", unit_label)
+        value_row.addStretch(1)
         note = QLabel("")
         note.setObjectName("hint")
         box.addWidget(label)
-        box.addWidget(value)
+        box.addLayout(value_row)
         box.addWidget(note)
         parent_layout.addWidget(card)
         setattr(self, key, value)
@@ -499,6 +514,7 @@ class HMIWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         self.metrics_widget = QWidget()
+        self.metrics_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         metrics = QHBoxLayout(self.metrics_widget)
         metrics.setContentsMargins(0, 0, 0, 0)
         metrics.setSpacing(12)
@@ -506,6 +522,8 @@ class HMIWindow(QMainWindow):
         self._metric(metrics, "Dynamic pressure", "Pa", "dynamic")
         self._metric(metrics, "Flow stability", "%", "stability")
         self._metric(metrics, "Temperature", "°C", "temperature")
+        self.airspeed.setText("0.00")
+        self.dynamic.setText("0.0")
         layout.addWidget(self.metrics_widget)
         self.chart_card = Card()
         self.chart_card.setObjectName("chartCard")
@@ -546,9 +564,22 @@ class HMIWindow(QMainWindow):
         chart_layout.addLayout(chart_heading)
         self.chart = FlowChart()
         chart_layout.addWidget(self.chart, 1)
+        chart_footer = QWidget()
+        chart_footer.setObjectName("chartFooter")
+        chart_footer_layout = QHBoxLayout(chart_footer)
+        chart_footer_layout.setContentsMargins(0, 6, 0, 0)
+        chart_footer_layout.setSpacing(0)
+        velocity_label = QLabel("VELOCITY")
+        velocity_label.setObjectName("chartFooterLabel")
+        velocity_unit = QLabel("m/s")
+        velocity_unit.setObjectName("chartFooterValue")
+        chart_footer_layout.addWidget(velocity_label)
+        chart_footer_layout.addWidget(velocity_unit)
+        chart_footer_layout.addStretch(1)
         self.stream_note = QLabel("Waiting for telemetry")
         self.stream_note.setObjectName("hint")
-        chart_layout.addWidget(self.stream_note)
+        chart_footer_layout.addWidget(self.stream_note)
+        chart_layout.addWidget(chart_footer)
         layout.addWidget(self.chart_card)
 
         self.overview_bottom = QWidget()
@@ -556,53 +587,90 @@ class HMIWindow(QMainWindow):
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(12)
         self.recording_card = Card()
+        self.recording_card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         recording = QVBoxLayout(self.recording_card)
         recording.setContentsMargins(16, 14, 16, 14)
         recording.setSpacing(8)
         recording_heading = QHBoxLayout()
         recording_eyebrow = QLabel("EXPERIMENT MANAGER")
         recording_eyebrow.setObjectName("eyebrow")
-        recording_heading.addWidget(recording_eyebrow)
         self.measurement_badge = QLabel("IDLE")
         self.measurement_badge.setObjectName("tagMuted")
+        self.measurement_badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        recording_title = QVBoxLayout()
+        recording_title.setSpacing(0)
+        recording_title.addWidget(recording_eyebrow)
+        recording_title.addWidget(self._heading("Measurement recording"))
+        recording_heading.setSpacing(8)
+        recording_heading.addLayout(recording_title)
         recording_heading.addStretch(1)
-        recording_heading.addWidget(self.measurement_badge)
+        recording_heading.addWidget(self.measurement_badge, 0, Qt.AlignmentFlag.AlignTop)
         recording.addLayout(recording_heading)
-        recording.addWidget(self._heading("Measurement recording"))
         bottom.addWidget(self.recording_card, 6)
-        recording.addWidget(QLabel("Measurement name"))
+        measurement_fields = QHBoxLayout()
+        measurement_label = QLabel("Measurement name")
+        measurement_label.setObjectName("formLabel")
+        measurement_fields.addWidget(measurement_label)
+        measurement_fields.addStretch(1)
+        measurement_fields.addWidget(QLabel("Record rate (Hz)"))
+        self.recording_rate_spin = QSpinBox()
+        self.recording_rate_spin.setRange(1, 100)
+        self.recording_rate_spin.setSingleStep(1)
+        self.recording_rate_spin.setSuffix(" Hz")
+        self.recording_rate_spin.setValue(25)
+        self.recording_rate_spin.setFixedWidth(100)
+        measurement_fields.addWidget(self.recording_rate_spin)
+        recording.addLayout(measurement_fields)
         self.measurement_name = QLineEdit()
+        self.measurement_name.setObjectName("measurementName")
+        self.measurement_name.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.measurement_name.setMinimumWidth(0)
         self.measurement_name.setPlaceholderText("e.g. NACA0012_AOA5_Run01")
         self.measurement_name.setMaxLength(80)
         recording.addWidget(self.measurement_name)
-        recording.addWidget(QLabel("Recording is independent of tunnel operation."))
+        recording_hint = QLabel("Recording only · 100 Hz saves every incoming sample; current Uno sends about 25 samples/s.")
+        recording_hint.setObjectName("recordingHint")
+        recording.addWidget(recording_hint)
         stats = QHBoxLayout()
+        stats.setSpacing(10)
         self.elapsed = QLabel("00:00")
         self.samples = QLabel("0")
         self.sample_rate = QLabel("— Hz")
-        for title, value in (("ELAPSED", self.elapsed), ("SAMPLES", self.samples), ("LOG RATE", self.sample_rate)):
+        for title, value in (("ELAPSED", self.elapsed), ("SAMPLES", self.samples), ("ACTUAL RATE", self.sample_rate)):
             column = QVBoxLayout()
-            column.addWidget(QLabel(title))
+            column.setSpacing(2)
+            stat_label = QLabel(title)
+            stat_label.setObjectName("recordStatLabel")
+            value.setObjectName("recordStatValue")
+            column.addWidget(stat_label)
             column.addWidget(value)
             stats.addLayout(column)
         recording.addLayout(stats)
         buttons = QHBoxLayout()
         self.record_start = QPushButton("● Start measurement")
         self.record_start.setObjectName("primaryButton")
+        self.record_start.setProperty("compact", True)
         self.record_start.clicked.connect(self._start_recording)
         self.record_stop = QPushButton("■ Stop & save")
+        self.record_stop.setObjectName("recordStopButton")
         self.record_stop.clicked.connect(self._stop_recording)
+        self.record_start.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.record_stop.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.record_start.setMinimumWidth(0)
+        self.record_stop.setMinimumWidth(0)
         buttons.addWidget(self.record_start)
         buttons.addWidget(self.record_stop)
+        buttons.addStretch(1)
         recording.addLayout(buttons)
         self.file_status = QLabel("Connect Arduino Uno via USB to record.")
         self.file_status.setObjectName("hint")
         recording.addWidget(self.file_status)
 
         self.operating_card = Card()
+        self.operating_card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         operating = QVBoxLayout(self.operating_card)
         operating.setContentsMargins(16, 14, 16, 14)
-        operating.setSpacing(7)
+        operating.setSpacing(4)
         eyebrow = QLabel("OPERATING POINT")
         eyebrow.setObjectName("eyebrow")
         operating.addWidget(eyebrow)
@@ -621,7 +689,11 @@ class HMIWindow(QMainWindow):
             ("REYNOLDS NUMBER", "IN DEVELOPMENT"),
         )
         for index, (title, text) in enumerate(fields):
-            cell = QVBoxLayout()
+            cell_widget = QWidget()
+            cell_widget.setObjectName("operatingCell")
+            cell = QVBoxLayout(cell_widget)
+            cell.setContentsMargins(0, 8, 0, 0)
+            cell.setSpacing(4)
             label = QLabel(title)
             label.setObjectName("smallLabel")
             value = QLabel(text)
@@ -630,7 +702,7 @@ class HMIWindow(QMainWindow):
                 value.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             cell.addWidget(label)
             cell.addWidget(value)
-            self.operating_grid.addLayout(cell, index // 2, index % 2)
+            self.operating_grid.addWidget(cell_widget, index // 2, index % 2)
             self.operating_values[title] = value
         operating.addLayout(self.operating_grid)
         hint = QLabel("Live values are derived from the single USB-connected pitot sensor.")
@@ -641,16 +713,23 @@ class HMIWindow(QMainWindow):
         self.flow_summary_range = self.operating_values["5 S MIN / MAX"]
         bottom.addWidget(self.operating_card, 5)
         layout.addWidget(self.overview_bottom, 4)
-        layout.setStretch(1, 3)
-        layout.setStretch(2, 4)
+        self.overview_bottom.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.overview_bottom.setMinimumHeight(287)
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 1)
+        layout.setStretch(2, 0)
         self.pages.addWidget(page)
 
     def _build_raw(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.raw_empty = QLabel("USB\n\nNO SENSOR DATA\nArduino Uno not connected\nConnect the Arduino Uno via USB to start live pitot measurements.")
-        self.raw_empty.setObjectName("emptyState")
+        self.raw_empty = self._empty_state(
+            "USB",
+            "NO SENSOR DATA",
+            "Arduino Uno not connected",
+            "Connect the Arduino Uno via USB to start live pitot measurements.",
+        )
         self.raw_table = self._table(("Channel", "Raw value", "Calibrated", "Unit", "Host timestamp", "Status"))
         self.raw_json = QPlainTextEdit()
         self.raw_json.setReadOnly(True)
@@ -662,16 +741,69 @@ class HMIWindow(QMainWindow):
         raw_box.addWidget(self.raw_table)
         self.raw_json_card, json_box = self._card(layout, "Complete incoming frame")
         json_box.addWidget(self.raw_json)
+        self.raw_card.hide()
+        self.raw_json_card.hide()
         self.pages.addWidget(page)
 
     def _build_cp(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        empty = QLabel("Cp\n\nIN DEVELOPMENT\nPressure tap system not connected\nCp analysis will become available when the multi-point pressure manifold and channel switching hardware are installed.\n\nPRESSURE SYSTEM OFFLINE")
-        empty.setObjectName("emptyState")
+        empty = self._empty_state(
+            "Cp",
+            "IN DEVELOPMENT",
+            "Pressure tap system not connected",
+            "Cp analysis will become available when the multi-point pressure manifold and channel switching hardware are installed.",
+            "PRESSURE SYSTEM OFFLINE",
+            development=True,
+        )
         layout.addWidget(empty, 1)
         self.pages.addWidget(page)
+
+    def _empty_state(self, icon, title, message, detail, status=None, development=False, min_height=320):
+        frame = QFrame()
+        frame.setObjectName("emptyState")
+        frame.setProperty("development", development)
+        frame.setMinimumHeight(min_height)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(0)
+        layout.addStretch(1)
+
+        icon_label = QLabel(icon)
+        icon_label.setObjectName("emptyStateIcon")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setMinimumWidth(54)
+        icon_label.setFixedHeight(54)
+        layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(16)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("emptyStateTitle")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
+        layout.addSpacing(8)
+
+        message_label = QLabel(message)
+        message_label.setObjectName("emptyStateMessage")
+        message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(message_label)
+        layout.addSpacing(7)
+
+        detail_label = QLabel(detail)
+        detail_label.setObjectName("emptyStateDetail")
+        detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        detail_label.setWordWrap(True)
+        detail_label.setMaximumWidth(560)
+        layout.addWidget(detail_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        if status:
+            layout.addSpacing(18)
+            status_label = QLabel(status)
+            status_label.setObjectName("tagAmber")
+            status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(status_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
+        return frame
 
     def _table(self, headers):
         table = QTableWidget(0, len(headers))
@@ -684,27 +816,128 @@ class HMIWindow(QMainWindow):
 
     def _build_measurements(self):
         page = QWidget()
-        layout = QVBoxLayout(page)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(0, 0, 0, 0)
-        card, box = self._card(layout, "Measurement library", "Stored locally · full CSV and JSON preserved per run")
-        top = QHBoxLayout()
-        top.addStretch(1)
+        layout.setSpacing(12)
+        card = Card()
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 14, 16, 14)
+        box.setSpacing(8)
+        heading = QHBoxLayout()
+        heading_text = QVBoxLayout()
+        heading_text.setSpacing(3)
+        heading_text.addWidget(self._heading("Measurement library"))
+        subtitle = QLabel("Stored locally · full CSV and JSON preserved per run")
+        subtitle.setObjectName("muted")
+        heading_text.addWidget(subtitle)
+        heading.addLayout(heading_text)
+        heading.addStretch(1)
         refresh = QPushButton("↻ Refresh")
+        refresh.setObjectName("refreshButton")
         refresh.clicked.connect(self._refresh_data)
-        top.addWidget(refresh)
-        box.addLayout(top)
+        heading.addWidget(refresh, 0, Qt.AlignmentFlag.AlignVCenter)
+        box.addLayout(heading)
         self.measurements_table = self._table(("Experiment", "Timestamp", "Duration", "Avg. m/s", "Samples", "Export"))
         self.measurements_table.cellClicked.connect(self._select_run)
+        self.measurements_table.hide()
         box.addWidget(self.measurements_table)
-        self.measurements_empty = QLabel("NO MEASUREMENTS YET\nNo recorded datasets are available")
-        self.measurements_empty.setObjectName("emptyState")
+        self.measurements_empty = self._empty_state(
+            "REC",
+            "NO MEASUREMENTS YET",
+            "No recorded datasets are available",
+            "Connect the Arduino Uno and start a measurement from the overview to create your first dataset.",
+            min_height=250,
+        )
         box.addWidget(self.measurements_empty)
-        detail_card, detail = self._card(layout, "Run details", "Select a measurement to inspect its metadata and samples.")
-        self.measurement_detail = QPlainTextEdit()
-        self.measurement_detail.setReadOnly(True)
-        self.measurement_detail.setMinimumHeight(180)
-        detail.addWidget(self.measurement_detail)
+        layout.addWidget(card)
+
+        detail_card = Card()
+        detail = QVBoxLayout(detail_card)
+        detail.setContentsMargins(16, 14, 16, 14)
+        detail.setSpacing(10)
+        detail_heading = QHBoxLayout()
+        self.measurement_detail_title = self._heading("Measurement details")
+        detail_heading.addWidget(self.measurement_detail_title)
+        detail_heading.addStretch(1)
+        self.measurement_export_badge = QLabel("LOCAL COPY")
+        self.measurement_export_badge.setObjectName("tagMuted")
+        detail_heading.addWidget(self.measurement_export_badge)
+        detail.addLayout(detail_heading)
+
+        self.measurement_summary = {}
+        summary = QGridLayout()
+        summary.setHorizontalSpacing(18)
+        summary.setVerticalSpacing(8)
+        for index, (key, title) in enumerate((
+            ("average", "AVERAGE AIRSPEED"),
+            ("duration", "DURATION"),
+            ("samples", "SAMPLES"),
+            ("target_rate", "TARGET RATE"),
+            ("actual_rate", "ACTUAL RATE"),
+        )):
+            cell = QWidget()
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 4, 0, 0)
+            cell_layout.setSpacing(4)
+            label = QLabel(title)
+            label.setObjectName("measurementSummaryLabel")
+            value = QLabel("—")
+            value.setObjectName("measurementSummaryValue")
+            cell_layout.addWidget(label)
+            cell_layout.addWidget(value)
+            summary.addWidget(cell, 0, index)
+            self.measurement_summary[key] = value
+        detail.addLayout(summary)
+
+        preview_hint = QLabel("Tables below preview the first 200 rows. Download the full CSV for every recorded sample.")
+        preview_hint.setObjectName("hint")
+        detail.addWidget(preview_hint)
+        downloads = QHBoxLayout()
+        self.download_raw = QPushButton("Download complete raw CSV")
+        self.download_processed = QPushButton("Download complete processed CSV")
+        self.download_raw.setEnabled(False)
+        self.download_processed.setEnabled(False)
+        self.download_raw.clicked.connect(lambda: self._download_run_file("raw_data.csv"))
+        self.download_processed.clicked.connect(lambda: self._download_run_file("processed_data.csv"))
+        downloads.addWidget(self.download_raw)
+        downloads.addWidget(self.download_processed)
+        downloads.addStretch(1)
+        detail.addLayout(downloads)
+        self.measurement_metadata = QPlainTextEdit()
+        self.measurement_metadata.setReadOnly(True)
+        self.measurement_metadata.setMaximumHeight(260)
+        self._add_measurement_section(detail, "Experiment metadata", self.measurement_metadata)
+        self.measurement_raw_preview = self._table(())
+        self.measurement_raw_preview.setMaximumHeight(260)
+        self._add_measurement_section(detail, "Raw pitot data · preview", self.measurement_raw_preview)
+        self.measurement_processed_preview = self._table(())
+        self.measurement_processed_preview.setMaximumHeight(260)
+        self._add_measurement_section(detail, "Processed flow data · preview", self.measurement_processed_preview)
+        development_note = QLabel("CP ANALYSIS · IN DEVELOPMENT · Pressure-tap hardware is not connected yet.")
+        development_note.setObjectName("measurementDevelopment")
+        detail.addWidget(development_note)
+        self.measurement_detail_card = detail_card
+        self.measurement_detail_card.hide()
+        layout.addWidget(detail_card)
+        layout.addStretch(1)
+        scroll.setWidget(scroll_content)
+        page_layout.addWidget(scroll)
         self.pages.addWidget(page)
+
+    def _add_measurement_section(self, layout, title, content):
+        toggle = QPushButton(title)
+        toggle.setObjectName("measurementSectionToggle")
+        toggle.setCheckable(True)
+        content.hide()
+        toggle.toggled.connect(content.setVisible)
+        layout.addWidget(toggle)
+        layout.addWidget(content)
 
     def _build_storage(self):
         page = QWidget()
@@ -748,6 +981,22 @@ class HMIWindow(QMainWindow):
         self.flow_toggle.toggled.connect(self._toggle_flow_metrics)
         toggle_row.addWidget(self.flow_toggle)
         box.addLayout(toggle_row)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Arduino pressure low-pass filter\nCutoff frequency · 0.1–10 Hz"))
+        self.filter_cutoff = QDoubleSpinBox()
+        self.filter_cutoff.setRange(0.1, 10.0)
+        self.filter_cutoff.setSingleStep(0.1)
+        self.filter_cutoff.setDecimals(1)
+        self.filter_cutoff.setSuffix(" Hz")
+        self.filter_cutoff.setValue(5.0)
+        filter_row.addWidget(self.filter_cutoff)
+        self.filter_apply = QPushButton("Apply to Arduino")
+        self.filter_apply.clicked.connect(self._apply_filter_cutoff)
+        filter_row.addWidget(self.filter_apply)
+        box.addLayout(filter_row)
+        self.filter_status = QLabel("Filter setting will be sent when the Arduino connects.")
+        self.filter_status.setObjectName("hint")
+        box.addWidget(self.filter_status)
         self.settings_grid = QGridLayout()
         box.addLayout(self.settings_grid)
         box.addWidget(self._heading("Pressure-tap system"))
@@ -779,6 +1028,9 @@ class HMIWindow(QMainWindow):
             #facilityLabel {{ color:rgba(255,255,255,.86); font-size:11px; }}
             #primaryButton {{ background:{RED}; border-color:{RED}; color:white; font-weight:700; }}
             #primaryButton:hover {{ background:#9f2018; border-color:#9f2018; }}
+            #primaryButton[compact="true"], #recordStopButton {{ padding:9px 13px; font-size:11px; }}
+            #primaryButton[compact="true"] {{ min-width:137px; max-width:137px; }}
+            #recordStopButton {{ min-width:101px; max-width:101px; }}
             #header {{ background:white; border-bottom:1px solid {LINE}; min-height:50px; max-height:50px; }}
             #header QLabel {{ color:#777; font-size:9px; letter-spacing:1px; }}
             #pageTitle {{ font-size:25px; font-weight:700; }}
@@ -792,8 +1044,10 @@ class HMIWindow(QMainWindow):
             #cardHeading {{ font-size:15px; font-weight:700; }}
             #smallLabel {{ color:#727272; font-size:8px; font-weight:800; letter-spacing:1px; }}
             #operatingValue {{ font-size:14px; font-weight:700; }}
-            #metricValue, #metricValueRed {{ font-size:30px; font-weight:700; }}
+            #operatingCell {{ border-top:1px solid #e9e8e4; }}
+            #metricValue, #metricValueRed {{ font-size:34px; font-weight:700; }}
             #metricValueRed {{ color:{RED}; }}
+            #metricUnit {{ color:#777; font-size:13px; font-weight:500; }}
             #tagAmber, #tagMuted {{ padding:4px 7px; border:1px solid #ead0a2; border-radius:3px; background:#fff1d8; color:#975900; font-size:8px; font-weight:800; }}
             #tagMuted {{ background:#efefec; border-color:#d7d7d2; color:#6f6f6c; }}
             #tagSuccess {{ padding:4px 7px; border:1px solid #badbca; border-radius:3px; background:#e6f3ed; color:#16865f; font-size:8px; font-weight:800; }}
@@ -827,7 +1081,26 @@ class HMIWindow(QMainWindow):
             #chartCard #cardHeading {{ font-size:16px; }}
             #chartCard #muted {{ font-size:11px; }}
             #chartLegendText {{ color:#656565; font-size:10px; }}
-            #emptyState {{ background:white; border:1px solid {LINE}; border-radius:6px; padding:45px; color:#777; }}
+            #chartFooter {{ border-top:1px solid #e9e8e4; }}
+            #chartFooterLabel {{ color:#858580; font-size:8px; letter-spacing:1px; }}
+            #chartFooterValue {{ color:#4d4d4b; font-size:9px; font-weight:700; padding-left:6px; }}
+            #chartFooter #hint {{ font-size:8px; }}
+            #formLabel {{ color:#5d5d5d; font-size:12px; margin-top:12px; }}
+            #measurementName {{ padding:10px 11px; }}
+            #recordingHint {{ color:#84847f; font-size:9px; }}
+            #recordStatLabel {{ color:#878783; font-size:8px; font-weight:700; letter-spacing:1px; }}
+            #recordStatValue {{ color:{INK}; font-size:20px; font-weight:700; }}
+            #refreshButton {{ padding:7px 11px; }}
+            #measurementSummaryLabel {{ color:#878783; font-size:8px; font-weight:700; letter-spacing:1px; }}
+            #measurementSummaryValue {{ color:{INK}; font-size:18px; font-weight:700; }}
+            #measurementSectionToggle {{ text-align:left; background:#f5f5f2; border-color:{LINE}; }}
+            #measurementDevelopment {{ color:#975900; background:#fff1d8; border:1px solid #ead0a2; border-radius:4px; padding:8px 10px; font-size:9px; font-weight:700; }}
+            #emptyState {{ background:white; border:1px dashed #cfcfca; border-radius:6px; color:{INK}; }}
+            #emptyState[development="true"] {{ border-left:4px solid #c58a1b; }}
+            #emptyStateIcon {{ min-width:54px; max-width:120px; background:#fff7f5; border:1px solid #d5b7b2; border-radius:6px; color:{RED}; padding:0 10px; font-size:13px; font-weight:850; letter-spacing:1px; }}
+            #emptyStateTitle {{ color:{INK}; font-size:18px; font-weight:700; letter-spacing:1.25px; }}
+            #emptyStateMessage {{ color:#575754; font-size:14px; }}
+            #emptyStateDetail {{ color:#8a8a85; font-size:11px; }}
             QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {{ background:white; border:1px solid #c9c9c5; border-radius:4px; padding:7px; }}
             QLineEdit:focus, QComboBox:focus {{ border-color:{RED}; }}
             QHeaderView::section {{ background:#f1f1ee; color:#555; border:0; padding:7px; font-weight:700; }}
@@ -887,6 +1160,7 @@ class HMIWindow(QMainWindow):
             self._show_error(f"Could not load HMI configuration: {error}")
             return
         self.config = data
+        self.filter_cutoff.setValue(data.get("filter_cutoff_hz", 5.0))
         self.flow_toggle.blockSignals(True)
         self.flow_toggle.setChecked(data.get("flow_metrics_enabled", True))
         self.flow_toggle.blockSignals(False)
@@ -901,6 +1175,25 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(label), index, 0)
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
+
+    def _apply_filter_cutoff(self):
+        cutoff_hz = self.filter_cutoff.value()
+
+        def done(data, error):
+            self.filter_apply.setEnabled(True)
+            if error:
+                self._show_error(f"Could not apply Arduino filter setting: {error}")
+                return
+            self.config["filter_cutoff_hz"] = data["cutoff_hz"]
+            if data["device_confirmed"]:
+                self.filter_status.setText(f"Arduino confirmed a {data['cutoff_hz']:.1f} Hz filter.")
+            elif data["command_sent"]:
+                self.filter_status.setText("Command sent; waiting for Arduino telemetry confirmation.")
+            else:
+                self.filter_status.setText("Setting saved; it will be sent when the Arduino connects.")
+
+        self.filter_apply.setEnabled(False)
+        self._post("settings/arduino-filter", {"cutoff_hz": cutoff_hz}, done)
 
     def _poll(self):
         if self.poll_busy:
@@ -927,23 +1220,39 @@ class HMIWindow(QMainWindow):
         if error:
             return
         self.state = data
+        filter_status = data.get("arduino_filter", {})
+        if self.page_key == "settings":
+            configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 5.0))
+            reported = filter_status.get("reported_cutoff_hz")
+            if filter_status.get("confirmed"):
+                self.filter_status.setText(f"Arduino confirmed a {configured:.1f} Hz filter.")
+            elif data.get("hardware_mode") and reported is not None:
+                self.filter_status.setText(
+                    f"Waiting for Arduino to apply {configured:.1f} Hz; it currently reports {reported:.1f} Hz."
+                )
+            elif data.get("hardware_mode"):
+                self.filter_status.setText("Waiting for firmware telemetry to confirm the filter setting.")
+            else:
+                self.filter_status.setText("Simulation mode · the filter is sent when Arduino hardware is connected.")
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
         self.hardware_mode_badge.setText("ARDUINO CONNECTED" if live else "ARDUINO USB")
         self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ARDUINO")
-        self.airspeed.setText(f"{self._fixed(sample.get('airspeed_ms'))} m/s")
-        self.dynamic.setText(f"{self._fixed(sample.get('dynamic_pressure_pa'), 1)} Pa")
-        self.temperature.setText(f"{self._fixed(sample.get('temperature_c'), 1)} °C")
         enabled = self.config.get("flow_metrics_enabled", True)
+        self.stability_unit.setVisible(enabled)
         stability = sample.get("flow_stability_pct") if enabled else None
-        self.stability.setText(f"{self._fixed(stability, 1)} %" if enabled else "OFF")
+        speed = sample.get("airspeed_ms")
+        sample_timestamp = sample.get("host_timestamp")
+        if sample_timestamp:
+            self.airspeed.setText(self._fixed(speed, 2))
+            self.dynamic.setText(self._fixed(sample.get("dynamic_pressure_pa"), 1))
+            self.temperature.setText(self._fixed(sample.get("temperature_c"), 1))
+            self.stability.setText(self._fixed(stability, 1) if enabled else "OFF")
         self.airspeed_note.setText("Pitot-derived velocity")
         self.dynamic_note.setText("q∞ · differential pressure")
         self.temperature_note.setText("Test section ambient")
         self.stability_note.setText("5 s rolling window · flow > 1 m/s" if enabled else "Disabled in Settings")
-        speed = sample.get("airspeed_ms")
-        sample_timestamp = sample.get("host_timestamp")
         if speed is not None and sample_timestamp != self.last_sample_timestamp:
             self.last_sample_timestamp = sample_timestamp
             now = time.monotonic()
@@ -961,8 +1270,13 @@ class HMIWindow(QMainWindow):
         self.measurement_badge.setText(measurement.get("state", "IDLE"))
         self.elapsed.setText(self._duration(measurement.get("elapsed_s", 0)))
         self.samples.setText(f"{measurement.get('samples', 0):,}")
-        self.sample_rate.setText(f"≈ {self.config.get('sample_rate_hz', 5)} Hz")
+        requested_rate = measurement.get("recording_rate_hz")
+        actual_rate = measurement.get("actual_sample_rate_hz", 0.0)
+        self.sample_rate.setText(
+            f"{actual_rate:.1f} Hz" if actual_rate else f"Target {requested_rate or self.recording_rate_spin.value()} Hz"
+        )
         recording = measurement.get("state") == "RECORDING"
+        self.recording_rate_spin.setEnabled(not recording)
         if recording:
             self.measurement_name.setText(measurement.get("name", ""))
         self.measurement_name.setEnabled(not recording)
@@ -1045,6 +1359,7 @@ class HMIWindow(QMainWindow):
         if error:
             self._show_error(error)
             return
+        selected_run_id = self.selected_run_id
         self.measurements_table.setRowCount(len(runs))
         self.measurements_empty.setVisible(not runs)
         self.measurements_table.setVisible(bool(runs))
@@ -1068,6 +1383,13 @@ class HMIWindow(QMainWindow):
                 self.export_select.addItem(
                     f"{run.get('name')} · {self._time(run.get('timestamp'))}", run.get("id")
                 )
+        self.selected_run_id = selected_run_id if any(
+            run.get("id") == selected_run_id for run in runs
+        ) else None
+        if not self.selected_run_id:
+            self.measurement_detail_card.hide()
+        self.download_raw.setEnabled(bool(self.selected_run_id))
+        self.download_processed.setEnabled(bool(self.selected_run_id))
 
     def _on_storage(self, data, error):
         if error:
@@ -1090,17 +1412,123 @@ class HMIWindow(QMainWindow):
         identifier = item.data(Qt.ItemDataRole.UserRole) if item else None
         if not identifier:
             return
+        self.selected_run_id = identifier
+        self.measurement_detail_card.hide()
+        self.download_raw.setEnabled(False)
+        self.download_processed.setEnabled(False)
 
         def show_detail(data, error):
+            if self.selected_run_id != identifier:
+                return
             if error:
                 self._show_error(error)
                 return
-            self.measurement_detail.setPlainText(json.dumps(data, indent=2, ensure_ascii=False))
+            metadata = data["metadata"]
+            self.measurement_detail_title.setText(metadata.get("name") or "Measurement details")
+            self.measurement_export_badge.setText(
+                "EXPORTED" if metadata.get("exported") else "LOCAL COPY"
+            )
+            self.measurement_export_badge.setObjectName(
+                "tagSuccess" if metadata.get("exported") else "tagMuted"
+            )
+            self.measurement_export_badge.style().unpolish(self.measurement_export_badge)
+            self.measurement_export_badge.style().polish(self.measurement_export_badge)
+            self.measurement_summary["average"].setText(
+                f"{self._fixed(metadata.get('average_airspeed_ms'))} m/s"
+            )
+            self.measurement_summary["duration"].setText(
+                self._duration(metadata.get("duration_s"))
+            )
+            self.measurement_summary["samples"].setText(
+                f"{int(metadata.get('samples') or 0):,}"
+            )
+            self.measurement_summary["target_rate"].setText(
+                f"{metadata.get('recording_rate_hz') or '—'} Hz"
+            )
+            self.measurement_summary["actual_rate"].setText(
+                f"{self._fixed(metadata.get('actual_sample_rate_hz'), 1)} Hz"
+            )
+            self.measurement_metadata.setPlainText(
+                json.dumps(metadata, indent=2, ensure_ascii=False)
+            )
+            self._set_preview_table(self.measurement_raw_preview, data.get("raw", []))
+            self._set_preview_table(self.measurement_processed_preview, data.get("processed", []))
+            for section in self.measurement_detail_card.findChildren(QPushButton, "measurementSectionToggle"):
+                section.setChecked(False)
+            self.measurement_detail_card.show()
+            self.download_raw.setEnabled(True)
+            self.download_processed.setEnabled(True)
 
         self._get("measurements/" + identifier, show_detail)
 
+    @staticmethod
+    def _set_preview_table(table, rows):
+        if not rows:
+            table.setColumnCount(1)
+            table.setHorizontalHeaderLabels(("Data",))
+            table.setRowCount(1)
+            table.setItem(0, 0, QTableWidgetItem("No data available"))
+            return
+        headers = tuple(rows[0].keys())
+        table.setColumnCount(len(headers))
+        table.setRowCount(len(rows))
+        table.setHorizontalHeaderLabels(headers)
+        for row_index, row in enumerate(rows):
+            for column, header in enumerate(headers):
+                table.setItem(row_index, column, QTableWidgetItem(str(row.get(header, ""))))
+
     def _start_recording(self):
-        self._post("measurement/start", {"name": self.measurement_name.text().strip()}, self._action_result("Recording started · live pitot data"))
+        self._post("measurement/start", {
+            "name": self.measurement_name.text().strip(),
+            "recording_rate_hz": self.recording_rate_spin.value(),
+        }, self._action_result("Recording started · live pitot data"))
+
+    def _download_run_file(self, filename):
+        if not self.selected_run_id:
+            self._show_error("Select a measurement before downloading its data.")
+            return
+        suggested = str(Path.home() / f"{self.selected_run_id}_{filename}")
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Save complete measurement data", suggested, "CSV files (*.csv)"
+        )
+        if not destination:
+            return
+        save_file = QSaveFile(destination)
+        if not save_file.open(QIODevice.OpenModeFlag.WriteOnly):
+            self._show_error(f"Could not save measurement data: {save_file.errorString()}")
+            return
+        url = QUrl(
+            f"http://127.0.0.1:8000/api/measurements/{self.selected_run_id}/files/{filename}"
+        )
+        reply = self.network.get(QNetworkRequest(url))
+        write_error = {"message": None}
+
+        def write_pending_data():
+            data = bytes(reply.readAll())
+            if data and save_file.write(data) != len(data):
+                write_error["message"] = save_file.errorString()
+
+        def finished():
+            write_pending_data()
+            status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+            error = None
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                error = reply.errorString()
+            elif status and int(status) >= 400:
+                error = f"Server returned HTTP {int(status)}"
+            reply.deleteLater()
+            if error or write_error["message"]:
+                save_file.cancelWriting()
+                error = error or write_error["message"]
+                self._show_error(f"Could not download measurement data: {error}")
+                return
+            if not save_file.commit():
+                self._show_error(f"Could not save measurement data: {save_file.errorString()}")
+                return
+            self.file_status.setText(f"Complete sample file saved to {destination}")
+
+        reply.readyRead.connect(write_pending_data)
+        reply.finished.connect(finished)
 
     def _stop_recording(self):
         self._post("measurement/stop", {}, self._action_result("Measurement saved", refresh=True))

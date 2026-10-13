@@ -11,6 +11,7 @@ class Tap(BaseModel):
 class Config(BaseModel):
     simulation: bool = True
     sample_rate_hz: float = Field(default=20, ge=1, le=100, allow_inf_nan=False)
+    filter_cutoff_hz: float = Field(default=5.0, ge=0.1, le=10, allow_inf_nan=False)
     air_density: float = Field(default=1.225, gt=0, le=10, allow_inf_nan=False)
     max_airspeed_ms: float = Field(default=30, gt=0, le=100, allow_inf_nan=False)
     serial_port: str = 'auto'
@@ -34,6 +35,7 @@ class Setpoint(BaseModel):
 
 class MeasurementRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80, pattern=r'^[A-Za-z0-9][A-Za-z0-9 _.-]*$')
+    recording_rate_hz: int = Field(default=25, ge=1, le=100)
 
 
 class Recalculate(BaseModel):
@@ -42,3 +44,7 @@ class Recalculate(BaseModel):
 
 class FlowMetricsSetting(BaseModel):
     enabled: bool
+
+
+class ArduinoFilterSetting(BaseModel):
+    cutoff_hz: float = Field(ge=0.1, le=10, allow_inf_nan=False)

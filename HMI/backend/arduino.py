@@ -8,12 +8,13 @@ The reader auto-detects /dev/ttyACM* and /dev/ttyUSB* when serial_port is "auto"
 from __future__ import annotations
 
 import glob
+import math
 import time
 from pathlib import Path
 
 
 class ArduinoPitotSerial:
-    def __init__(self, port: str = "auto", baud_rate: int = 115200):
+    def __init__(self, port: str = "auto", baud_rate: int = 115200, filter_cutoff_hz: float = 5.0):
         try:
             import serial
         except ImportError:
@@ -26,6 +27,8 @@ class ArduinoPitotSerial:
         self.port = None
         self.last_error = "Not connected"
         self.connected_since = None
+        self.filter_cutoff_hz = filter_cutoff_hz
+        self.reported_filter_cutoff_hz = None
 
     def _candidates(self) -> list[str]:
         if self.requested_port and self.requested_port.lower() != "auto":
@@ -62,11 +65,12 @@ class ArduinoPitotSerial:
                 # Opening an Uno normally resets it. Give its zero calibration time to finish.
                 time.sleep(0.25)
                 self.connection.reset_input_buffer()
+                self.connection.write(f"FILTER_HZ={self.filter_cutoff_hz:.1f}\n".encode("ascii"))
+                self.connection.flush()
                 return True
             except (OSError, self.serial.SerialException) as exc:
                 self.last_error = f"{port}: {exc}"
-                self.connection = None
-                self.port = None
+                self.close()
         return False
 
     def _parse(self, text: str) -> dict | None:
@@ -81,7 +85,29 @@ class ArduinoPitotSerial:
             except ValueError:
                 return None
         required = {'pressure_pa', 'temperature_c', 'airspeed_ms', 'airspeed_kmh'}
-        return values if required.issubset(values) else None
+        if not required.issubset(values):
+            return None
+        if 'filter_hz' in values:
+            self.reported_filter_cutoff_hz = values['filter_hz']
+        else:
+            self.reported_filter_cutoff_hz = None
+        return values
+
+    def set_filter_cutoff_hz(self, cutoff_hz: float) -> bool:
+        if not math.isfinite(cutoff_hz) or not 0.1 <= cutoff_hz <= 10:
+            raise ValueError("Arduino filter cutoff must be between 0.1 and 10 Hz")
+        self.filter_cutoff_hz = cutoff_hz
+        connection = self.connection
+        if connection is None or not bool(getattr(connection, 'is_open', False)):
+            return False
+        try:
+            connection.write(f"FILTER_HZ={cutoff_hz:.1f}\n".encode("ascii"))
+            connection.flush()
+        except (OSError, self.serial.SerialException) as exc:
+            self.last_error = f"Could not configure Arduino low-pass filter: {exc}"
+            self.close()
+            return False
+        return True
 
     def read(self) -> dict | None:
         if self.connection is None and not self.connect():

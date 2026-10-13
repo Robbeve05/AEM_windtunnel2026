@@ -28,9 +28,9 @@ Development reload interrupts active experiments; use the command without `--rel
 
 1. Set the airspeed and press **Start tunnel**. The simulated fan ramps up with a first-order response.
 2. Wait for **RUNNING**. Enter a measurement name, for example `NACA0012_AOA5_Run01`.
-3. Press **Start measurement** to record. It does not start the tunnel.
+3. Choose a recording rate (1–100 Hz), enter a measurement name and press **Start measurement**. The selected rate only controls recording; it does not change the live display or the Arduino filter. At or above the sensor's incoming rate, every incoming sample is saved without creating duplicate samples.
 4. Press **Stop & save** to close CSV files, write metadata and calculate the mean Cp curve. The tunnel keeps running.
-5. Inspect the run in **Measurements**. Raw and processed previews are limited to 200 rows; complete files remain on disk.
+5. Inspect the run in **Measurements**. The on-screen raw and processed previews show at most 200 rows. Use **Download complete raw CSV** / **Download complete processed CSV**, or export the measurement folder to USB, to get the complete recording.
 6. Choose a run in **Cp Analysis** to recalculate from stored samples using a different density.
 7. Open **Storage**, export a run or all unexported runs, then eject the simulated USB.
 8. Press **Software stop** to ramp the tunnel down. This does not stop an active recording; stopping flow during an experiment remains recorded.
@@ -43,7 +43,7 @@ Each run is stored locally first:
 
 ```text
 data/measurements/<UTC timestamp>_<sanitized name>_<unique suffix>/
-  raw_data.csv         # host UTC, ESP32 milliseconds and every received value
+  raw_data.csv         # every selected incoming sample, with host UTC and measured values
   processed_data.csv   # velocity, calculated q_inf and per-tap Cp
   cp_curve.csv         # mean of valid per-sample Cp, pressure and tap geometry
   experiment.json     # configuration snapshot, timing, counts and export state
@@ -61,7 +61,9 @@ Physical safe unmount is delegated to the operating system: the UI's physical ej
 
 Edit **config/config.json**, then restart. Settings displays the loaded configuration; it is intentionally read-only while experiments can be running.
 
-- `sample_rate_hz`: logger acquisition rate (default 20 Hz). Browser WebSocket updates are bounded at 10 Hz to reduce Pi workload. Python supervisory timing is not hard real-time.
+- `sample_rate_hz`: HMI acquisition/simulation-loop setting (default 20 Hz); it is separate from the per-measurement recording target. Browser WebSocket updates are bounded at 10 Hz to reduce Pi workload. Python supervisory timing is not hard real-time.
+- `recording_rate_hz`: selected per run from 1–100 Hz. The Pi retains at most one incoming sensor sample per selected interval. A 100 Hz target saves every sample the device sends; it does not upsample the input. The current Arduino sketch sends roughly 25 samples/s, so rates above that will report the actual lower incoming rate until faster sensor acquisition is commissioned. Each run records its requested and actual rate in `experiment.json`.
+- `filter_cutoff_hz`: Arduino-side first-order low-pass cutoff for pitot differential pressure (default 5 Hz, range 0.1–10 Hz). Change it in **Settings**; the Pi saves the value and sends it over USB serial. The Uno must have the updated firmware before it can apply or confirm changes. Lower cutoffs smooth more noise but increase response lag.
 - `pressure_taps`: any 1–128 uniquely named taps, with `x_c` from 0–1 and `surface` upper/lower.
 - `air_density`, `max_airspeed_ms`: validated flow parameters.
 - `serial_port`, `baud_rate`: future transport settings.
@@ -74,7 +76,7 @@ Raw simulator values are already expressed in engineering units; the raw and cal
 
 ## ESP32 integration
 
-`backend/esp32.py` prepares a pyserial newline-delimited JSON adapter. Hardware mode intentionally fails startup until a validated firmware protocol is integrated. Keep `simulation: true` for this release. Commission command acknowledgements, sequence numbers, timestamp rollover, heartbeat timeout, pressure units/reference, sensor quality, reconnect behavior, fault reset and hardware interlocks before wiring the transport into `Controller`. The ESP32 must own PID, VFD and fast safety behavior; browser connection loss must never be the physical safety mechanism.
+ESP32 firmware belongs in the top-level `../ESP32/` project folder. `backend/esp32.py` is the existing host-side serial adapter; it is not ESP32 firmware. Hardware mode intentionally fails startup until a validated firmware protocol is integrated. Keep `simulation: true` for this release. Commission command acknowledgements, sequence numbers, timestamp rollover, heartbeat timeout, pressure units/reference, sensor quality, reconnect behavior, fault reset and hardware interlocks before wiring the transport into `Controller`. The ESP32 must own PID, VFD and fast safety behavior; browser connection loss must never be the physical safety mechanism.
 
 The browser reconnects automatically with bounded exponential backoff and detects stale telemetry after four seconds. On disconnect it marks values stale and disables controls. Recording belongs to the server and continues if a browser disconnects.
 
@@ -101,6 +103,21 @@ cd ~/AEM_windtunnel2026 && bash HMI/deploy/update-pi.sh
 ```
 
 This pulls the latest code, reinstalls updated Python dependencies and desktop launchers, and restarts the backend service. The updater preserves the Pi's `HMI/config/config.json` and measurement files in `HMI/data/`; it stops with an error instead of overwriting other uncommitted source changes. Reopen **Windtunnel HMI** from the desktop menu after it finishes. The initial setup command is only needed once.
+
+### Updating Arduino firmware from the Pi
+
+If the Uno's USB cable is connected to the Pi, it can be flashed without opening the
+tunnel enclosure. Install Arduino CLI and the Uno core once (`arduino-cli core update-index`
+and `arduino-cli core install arduino:avr`), then run:
+
+```bash
+cd ~/AEM_windtunnel2026
+bash HMI/deploy/flash-arduino.sh
+```
+
+The helper stops the HMI service before uploading and restarts it afterward. Turn off
+airflow and keep the pitot out of the airflow during startup zero calibration. See
+[ARDUINO-USB-SETUP.md](./ARDUINO-USB-SETUP.md) for serial-port and calibration details.
 
 For a browser-only/server deployment instead, copy this directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
 
