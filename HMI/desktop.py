@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -58,6 +59,11 @@ class Card(QFrame):
         self.setObjectName("card")
         if accent:
             self.setProperty("accent", True)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        self.setGraphicsEffect(shadow)
 
 
 class FlowChart(QWidget):
@@ -298,19 +304,41 @@ class HMIWindow(QMainWindow):
         eyebrow = QLabel("SYSTEM & DEVELOPMENT")
         eyebrow.setObjectName("eyebrow")
         right_layout.addWidget(eyebrow)
-        right_layout.addWidget(self._heading("Wind tunnel"))
-        tunnel_state = QLabel("IN DEVELOPMENT  ·  Fan / VFD control")
-        tunnel_state.setObjectName("tagAmber")
-        right_layout.addWidget(tunnel_state)
-        control = QLabel("AIRSPEED SETPOINT\nIN DEVELOPMENT\nManual fan operation only for now")
+        tunnel_heading = self._heading("Wind tunnel")
+        tunnel_heading.setObjectName("sidebarTitle")
+        right_layout.addWidget(tunnel_heading)
+        tunnel_status = QHBoxLayout()
+        tunnel_badge = QLabel("IN DEVELOPMENT")
+        tunnel_badge.setObjectName("tagAmber")
+        tunnel_status.addWidget(tunnel_badge)
+        tunnel_status.addWidget(QLabel("Fan / VFD control"))
+        tunnel_status.addStretch(1)
+        right_layout.addLayout(tunnel_status)
+        control = QWidget()
         control.setObjectName("development")
+        control_layout = QVBoxLayout(control)
+        control_layout.setContentsMargins(10, 9, 10, 9)
+        control_layout.setSpacing(3)
+        control_label = QLabel("AIRSPEED SETPOINT")
+        control_label.setObjectName("smallLabel")
+        control_state = QLabel("IN DEVELOPMENT")
+        control_state.setObjectName("developmentText")
+        control_note = QLabel("Manual fan operation for now")
+        control_note.setObjectName("hint")
+        control_layout.addWidget(control_label)
+        control_layout.addWidget(control_state)
+        control_layout.addWidget(control_note)
         right_layout.addWidget(control)
-        right_layout.addWidget(QLabel("Data acquisition is active.\nFan control remains manual until commissioned."))
+        safety_note = QLabel("Data acquisition is active.\nFan control remains manual until commissioned.")
+        safety_note.setObjectName("safetyNote")
+        safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_layout.addWidget(safety_note)
         readings = QHBoxLayout()
         self.side_speed = self._side_reading(readings, "LIVE AIRSPEED")
         self.side_stability = self._side_reading(readings, "FLOW STABILITY")
         right_layout.addLayout(readings)
         self.health_card = Card()
+        self.health_card.setGraphicsEffect(None)
         health_layout = QVBoxLayout(self.health_card)
         health_layout.addWidget(self._heading("System health"))
         self.health_labels = {}
@@ -322,6 +350,7 @@ class HMIWindow(QMainWindow):
             row = QHBoxLayout()
             row.addWidget(QLabel(label))
             value = QLabel("CHECKING")
+            value.setObjectName("healthValue")
             value.setAlignment(Qt.AlignmentFlag.AlignRight)
             row.addWidget(value)
             health_layout.addLayout(row)
@@ -330,6 +359,8 @@ class HMIWindow(QMainWindow):
         health_layout.addWidget(self.usb_health)
         right_layout.addWidget(self.health_card)
         warning_card = Card()
+        warning_card.setGraphicsEffect(None)
+        warning_card.setProperty("warning", True)
         warning_layout = QVBoxLayout(warning_card)
         warning_layout.addWidget(self._heading("Warnings & development"))
         self.warnings = QLabel("Waiting for Arduino pitot data")
@@ -337,6 +368,7 @@ class HMIWindow(QMainWindow):
         warning_layout.addWidget(self.warnings)
         right_layout.addWidget(warning_card)
         event_card = Card()
+        event_card.setGraphicsEffect(None)
         event_layout = QVBoxLayout(event_card)
         event_layout.addWidget(self._heading("Event log · latest"))
         self.event_log = QLabel("Waiting for events")
@@ -409,11 +441,43 @@ class HMIWindow(QMainWindow):
         self._metric(metrics, "Flow stability", "%", "stability")
         self._metric(metrics, "Temperature", "°C", "temperature")
         layout.addWidget(self.metrics_widget)
-        self.chart_card, chart_layout = self._card(layout, "Flow velocity", "Live pitot-tube airspeed with 5 s rolling mean")
+        self.chart_card = Card()
         self.chart_card.setObjectName("chartCard")
-        legend = QLabel("━━ Actual       ┄┄ 5 s mean       LAST 60 S")
-        legend.setObjectName("hint")
-        chart_layout.addWidget(legend)
+        chart_layout = QVBoxLayout(self.chart_card)
+        chart_layout.setContentsMargins(14, 12, 14, 10)
+        chart_layout.setSpacing(5)
+        chart_heading = QHBoxLayout()
+        chart_title = QVBoxLayout()
+        chart_title.setSpacing(1)
+        chart_title.addWidget(self._heading("Flow velocity"))
+        chart_subtitle = QLabel("Live pitot-tube airspeed with 5 s rolling mean")
+        chart_subtitle.setObjectName("muted")
+        chart_title.addWidget(chart_subtitle)
+        chart_heading.addLayout(chart_title)
+        chart_heading.addStretch(1)
+        legend = QHBoxLayout()
+        legend.setSpacing(5)
+        actual_line = QFrame()
+        actual_line.setObjectName("actualLegendLine")
+        actual_line.setFixedSize(18, 3)
+        legend.addWidget(actual_line)
+        actual_label = QLabel("Actual")
+        actual_label.setObjectName("chartLegendText")
+        legend.addWidget(actual_label)
+        mean_line = QFrame()
+        mean_line.setObjectName("meanLegendLine")
+        mean_line.setFixedSize(18, 2)
+        legend.addSpacing(5)
+        legend.addWidget(mean_line)
+        mean_label = QLabel("5 s mean")
+        mean_label.setObjectName("chartLegendText")
+        legend.addWidget(mean_label)
+        latest = QLabel("LAST 60 S")
+        latest.setObjectName("tagMuted")
+        legend.addSpacing(5)
+        legend.addWidget(latest)
+        chart_heading.addLayout(legend)
+        chart_layout.addLayout(chart_heading)
         self.chart = FlowChart()
         chart_layout.addWidget(self.chart, 1)
         self.stream_note = QLabel("Waiting for telemetry")
@@ -495,6 +559,8 @@ class HMIWindow(QMainWindow):
             label.setObjectName("smallLabel")
             value = QLabel(text)
             value.setObjectName("developmentText" if text == "IN DEVELOPMENT" else "operatingValue")
+            if text == "IN DEVELOPMENT":
+                value.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             cell.addWidget(label)
             cell.addWidget(value)
             self.operating_grid.addLayout(cell, index // 2, index % 2)
@@ -626,46 +692,65 @@ class HMIWindow(QMainWindow):
 
     def _apply_style(self):
         self.setStyleSheet(f"""
-            QWidget {{ color:{INK}; font: 13px Arial, sans-serif; }}
+            QWidget {{ color:{INK}; font-family:Arial; font-size:14px; }}
             QMainWindow, #center {{ background:{CREAM}; }}
             #navigation {{ background:{RED}; color:white; }}
             #navigation QLabel {{ color:white; }}
             #brandLogo {{ font-size:17px; font-weight:800; padding:4px 7px; }}
             #brand {{ font-size:12px; font-weight:800; letter-spacing:1px; padding:4px 7px 18px; border-bottom:1px solid rgba(255,255,255,.35); }}
             #navSection {{ color:rgba(255,255,255,.78); font-size:9px; letter-spacing:1px; padding:8px 10px; }}
-            QPushButton {{ background:white; border:1px solid #c8c8c4; border-radius:4px; padding:8px 12px; font-weight:600; }}
-            QPushButton:hover {{ background:#f1f1ee; }}
+            QPushButton {{ background:white; color:{INK}; border:1px solid #c8c8c4; border-radius:4px; padding:8px 12px; font-weight:600; }}
+            QPushButton:hover {{ background:#f1f1ee; border-color:#adada8; }}
             QPushButton:disabled {{ color:#999; }}
-            #navigation QPushButton {{ background:transparent; color:white; border:0; text-align:left; padding:11px 10px; }}
-            #navigation QPushButton:checked {{ background:white; color:{RED}; }}
-            #exitButton {{ border:1px solid rgba(255,255,255,.35); text-align:left; }}
+            #navigation QPushButton {{ background:transparent; color:rgba(255,255,255,.86); border:0; border-radius:4px; text-align:left; padding:11px 10px; }}
+            #navigation QPushButton:hover {{ background:rgba(255,255,255,.11); }}
+            #navigation QPushButton:checked {{ background:white; color:{RED}; font-weight:700; }}
+            #exitButton {{ background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.25); text-align:left; }}
+            #exitButton:hover {{ background:white; color:#202225; }}
             #primaryButton {{ background:{RED}; border-color:{RED}; color:white; font-weight:700; }}
+            #primaryButton:hover {{ background:#9f2018; border-color:#9f2018; }}
             #header {{ background:white; border-bottom:1px solid {LINE}; min-height:50px; max-height:50px; }}
             #header QLabel {{ color:#777; font-size:9px; letter-spacing:1px; }}
-            #pageTitle {{ font-size:25px; font-weight:750; }}
-            #eyebrow {{ color:{RED}; font-size:9px; font-weight:800; letter-spacing:1px; }}
-            #muted, #hint {{ color:{MUTED}; font-size:11px; }}
-            #footer {{ color:#777; font-size:9px; padding-top:5px; }}
+            #pageTitle {{ font-size:25px; font-weight:700; }}
+            #eyebrow {{ color:{RED}; font-size:9px; font-weight:800; letter-spacing:1.5px; }}
+            #muted {{ color:{MUTED}; font-size:11px; }}
+            #hint {{ color:#84847f; font-size:10px; }}
+            #footer {{ color:#8a8a85; font-size:8px; letter-spacing:1px; padding-top:5px; }}
             #card {{ background:white; border:1px solid {LINE}; border-radius:6px; }}
             #card[accent="true"] {{ border-color:#d4c0bd; border-left:4px solid {RED}; }}
             #chartCard {{ border-top:3px solid {RED}; }}
             #cardHeading {{ font-size:15px; font-weight:700; }}
-            #smallLabel {{ color:#727272; font-size:9px; font-weight:800; letter-spacing:1px; }}
-            #operatingValue {{ font-size:13px; font-weight:700; }}
-            #metricValue, #metricValueRed {{ font-size:27px; font-weight:700; }}
+            #smallLabel {{ color:#727272; font-size:8px; font-weight:800; letter-spacing:1px; }}
+            #operatingValue {{ font-size:14px; font-weight:700; }}
+            #metricValue, #metricValueRed {{ font-size:30px; font-weight:700; }}
             #metricValueRed {{ color:{RED}; }}
-            #tagAmber, #tagMuted {{ padding:5px 8px; border-radius:3px; background:#fff1d8; color:#975900; font-size:9px; font-weight:800; }}
-            #tagMuted {{ background:#efefec; color:#6f6f6c; }}
-            #rightSidebar {{ background:{PANEL}; color:#f5f5f5; }}
+            #tagAmber, #tagMuted {{ padding:4px 7px; border:1px solid #ead0a2; border-radius:3px; background:#fff1d8; color:#975900; font-size:8px; font-weight:800; }}
+            #tagMuted {{ background:#efefec; border-color:#d7d7d2; color:#6f6f6c; }}
+            #rightSidebar {{ background:{PANEL}; color:#f5f5f5; border-left:1px solid #303236; }}
             #rightSidebar QLabel {{ color:#eee; }}
-            #rightSidebar #card {{ background:#292c30; border-color:#3b3e42; }}
+            #rightSidebar #card {{ background:transparent; border:0; border-top:1px solid #3a3d42; border-radius:0; }}
+            #rightSidebar #card[warning="true"] {{ background:#3a3022; border:1px solid #5b482c; border-radius:4px; }}
+            #rightSidebar #card[warning="true"] QLabel {{ color:#ffd695; font-size:10px; }}
+            #rightSidebar #card[warning="true"] #cardHeading {{ color:white; font-size:12px; }}
             #rightSidebar #cardHeading {{ color:white; }}
             #rightSidebar #smallLabel {{ color:#bbb; }}
+            #rightSidebar #eyebrow {{ color:#ff776e; }}
+            #sidebarTitle {{ color:white; font-size:18px; }}
+            #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
             #sideValue {{ font-size:19px; font-weight:700; }}
-            #development {{ background:#292c30; padding:14px; border:1px solid #444; }}
-            #developmentText {{ color:#975900; font-weight:700; }}
+            #development {{ background:#292c30; border:1px solid #444; border-radius:4px; }}
+            #rightSidebar #developmentText {{ color:#ffd58a; background:transparent; border:0; padding:0; font-size:11px; font-weight:700; }}
+            #rightSidebar #hint {{ color:#9da1a6; font-size:9px; }}
+            #safetyNote {{ color:#92969a; font-size:9px; }}
+            #developmentText {{ color:#9a6100; background:#fff4dd; border:1px solid #ead0a2; border-radius:4px; padding:4px 6px; font-size:9px; font-weight:700; }}
+            #actualLegendLine {{ background:{RED}; }}
+            #meanLegendLine {{ background:#2f3338; }}
+            #chartCard #cardHeading {{ font-size:16px; }}
+            #chartCard #muted {{ font-size:11px; }}
+            #chartLegendText {{ color:#656565; font-size:10px; }}
             #emptyState {{ background:white; border:1px solid {LINE}; border-radius:6px; padding:45px; color:#777; }}
             QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {{ background:white; border:1px solid #c9c9c5; border-radius:4px; padding:7px; }}
+            QLineEdit:focus, QComboBox:focus {{ border-color:{RED}; }}
             QHeaderView::section {{ background:#f1f1ee; color:#555; border:0; padding:7px; font-weight:700; }}
             QTableWidget {{ gridline-color:#e9e8e4; }}
             QProgressBar {{ background:#eee; border:0; height:10px; text-align:center; }}
