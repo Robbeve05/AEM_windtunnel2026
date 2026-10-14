@@ -36,8 +36,7 @@ git -C "$REPOSITORY_DIR" pull --ff-only origin RaspberryPi
 restore_config
 trap - EXIT
 
-cd "$APP_DIR"
-bash deploy/install-pi.sh
+bash "$HOME/HMI/deploy/install-pi.sh"
 systemctl --user restart windtunnel-hmi.service
 
 echo
