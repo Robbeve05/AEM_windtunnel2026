@@ -11,7 +11,7 @@ const float P_MIN_PSI = -1.0f;
 const int ZERO_SAMPLES = 200;
 const int FILTER_SAMPLES = 10;
 const float PRESSURE_DEADBAND = 5.0f;
-const float DEFAULT_FILTER_HZ = 5.0f;
+const float DEFAULT_FILTER_HZ = 1.0f;
 const float MIN_FILTER_HZ = 0.1f;
 const float MAX_FILTER_HZ = 10.0f;
 

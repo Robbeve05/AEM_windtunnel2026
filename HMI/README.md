@@ -65,7 +65,7 @@ Edit **config/config.json**, then restart. Settings displays the loaded configur
 
 - `sample_rate_hz`: HMI acquisition/simulation-loop setting (default 20 Hz); it is separate from the per-measurement recording target. Browser WebSocket updates are bounded at 10 Hz to reduce Pi workload. Python supervisory timing is not hard real-time.
 - `recording_rate_hz`: selected per run from 1–100 Hz. The Pi retains at most one incoming sensor sample per selected interval. A 100 Hz target saves every sample the device sends; it does not upsample the input. The current Arduino sketch sends roughly 25 samples/s, so rates above that will report the actual lower incoming rate until faster sensor acquisition is commissioned. Each run records its requested and actual rate in `experiment.json`.
-- `filter_cutoff_hz`: Arduino-side first-order low-pass cutoff for pitot differential pressure (default 5 Hz, range 0.1–10 Hz). Change it in **Settings**; the Pi saves the value and sends it over USB serial. The Uno must have the updated firmware before it can apply or confirm changes. Lower cutoffs smooth more noise but increase response lag.
+- `filter_cutoff_hz`: Arduino-side first-order low-pass cutoff for pitot differential pressure (default 1 Hz, range 0.1–10 Hz). The Pi saves the value and automatically sends it to the Uno whenever it connects over USB; use **Apply to Arduino** only to change the saved setting. The Uno must have the updated firmware before it can apply or confirm changes. Lower cutoffs smooth more noise but increase response lag.
 - `pressure_taps`: any 1–128 uniquely named taps, with `x_c` from 0–1 and `surface` upper/lower.
 - `air_density`, `max_airspeed_ms`: validated flow parameters.
 - `serial_port`, `baud_rate`: future transport settings.

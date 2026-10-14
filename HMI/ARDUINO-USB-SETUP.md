@@ -48,8 +48,9 @@ The HMI is configured with `serial_port: "auto"`, so no fixed device name is nee
 ## Arduino pressure low-pass filter
 
 The HMI Settings page provides an Arduino pressure-filter cutoff from **0.1 to 10 Hz**
-(default 5 Hz). The Pi sends the selected value over the same USB serial connection as
-the live telemetry; the Uno applies a first-order low-pass filter to differential
+(default 1 Hz). When the Uno connects, the Pi automatically sends the saved cutoff over
+the same USB serial connection as the live telemetry; no button press is needed at
+startup. The Uno applies a first-order low-pass filter to differential
 pressure before calculating airspeed and reports its active cutoff in each data line.
 Lower cutoffs smooth more noise but respond more slowly to real changes. This is
 separate from the existing 10-reading sensor average and the Pi's 5-second statistics.

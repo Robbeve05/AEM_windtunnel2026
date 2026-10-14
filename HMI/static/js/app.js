@@ -146,7 +146,7 @@ async function init(){
   const flowToggle=$('flow-metrics-toggle');flowToggle.checked=flowMetricsEnabled();flowToggle.addEventListener('change',async()=>{flowToggle.disabled=true;try{const result=await api('settings/flow-metrics',{enabled:flowToggle.checked});config.flow_metrics_enabled=result.enabled;history.forEach(p=>p.mean=null);toast(result.enabled?'5 s flow statistics enabled':'5 s flow statistics disabled');if(state)onFrame(state);}catch(e){flowToggle.checked=!flowToggle.checked;toast(e.message,true);}finally{flowToggle.disabled=false;}});velocity.setYRange(0,Math.max(45,Math.ceil(config.max_airspeed_ms/5)*5));
   const fields={simulation:'Simulation mode',sample_rate_hz:'Expected pitot rate · Hz',filter_cutoff_hz:'Arduino filter cutoff · Hz',air_density:'Air density · kg/m³',max_airspeed_ms:'Graph maximum airspeed · m/s',serial_port:'Arduino serial port',baud_rate:'Baud rate',data_directory:'Local data directory',usb_mount_path:'USB mount path',simulate_usb:'Simulated USB export'};
   $('settings-grid').innerHTML=Object.entries(fields).map(([key,label])=>`<div class="setting"><span>${label}</span>${escape(String(config[key]??'')||'Not configured')}</div>`).join('');
-  $('filter-cutoff').value=Number(config.filter_cutoff_hz??5).toFixed(1);
+  $('filter-cutoff').value=Number(config.filter_cutoff_hz??1).toFixed(1);
   $('apply-filter').addEventListener('click',async()=>{
     const button=$('apply-filter'),cutoff=Number($('filter-cutoff').value);
     button.disabled=true;

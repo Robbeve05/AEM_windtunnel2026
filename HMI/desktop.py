@@ -988,7 +988,7 @@ class HMIWindow(QMainWindow):
         self.filter_cutoff.setSingleStep(0.1)
         self.filter_cutoff.setDecimals(1)
         self.filter_cutoff.setSuffix(" Hz")
-        self.filter_cutoff.setValue(5.0)
+        self.filter_cutoff.setValue(1.0)
         filter_row.addWidget(self.filter_cutoff)
         self.filter_apply = QPushButton("Apply to Arduino")
         self.filter_apply.clicked.connect(self._apply_filter_cutoff)
@@ -1160,7 +1160,7 @@ class HMIWindow(QMainWindow):
             self._show_error(f"Could not load HMI configuration: {error}")
             return
         self.config = data
-        self.filter_cutoff.setValue(data.get("filter_cutoff_hz", 5.0))
+        self.filter_cutoff.setValue(data.get("filter_cutoff_hz", 1.0))
         self.flow_toggle.blockSignals(True)
         self.flow_toggle.setChecked(data.get("flow_metrics_enabled", True))
         self.flow_toggle.blockSignals(False)
@@ -1222,7 +1222,7 @@ class HMIWindow(QMainWindow):
         self.state = data
         filter_status = data.get("arduino_filter", {})
         if self.page_key == "settings":
-            configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 5.0))
+            configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 1.0))
             reported = filter_status.get("reported_cutoff_hz")
             if filter_status.get("confirmed"):
                 self.filter_status.setText(f"Arduino confirmed a {configured:.1f} Hz filter.")

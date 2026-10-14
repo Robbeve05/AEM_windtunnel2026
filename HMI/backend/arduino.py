@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 class ArduinoPitotSerial:
-    def __init__(self, port: str = "auto", baud_rate: int = 115200, filter_cutoff_hz: float = 5.0):
+    def __init__(self, port: str = "auto", baud_rate: int = 115200, filter_cutoff_hz: float = 1.0):
         try:
             import serial
         except ImportError:
@@ -29,6 +29,7 @@ class ArduinoPitotSerial:
         self.connected_since = None
         self.filter_cutoff_hz = filter_cutoff_hz
         self.reported_filter_cutoff_hz = None
+        self._last_filter_command_monotonic = 0.0
 
     def _candidates(self) -> list[str]:
         if self.requested_port and self.requested_port.lower() != "auto":
@@ -67,6 +68,7 @@ class ArduinoPitotSerial:
                 self.connection.reset_input_buffer()
                 self.connection.write(f"FILTER_HZ={self.filter_cutoff_hz:.1f}\n".encode("ascii"))
                 self.connection.flush()
+                self._last_filter_command_monotonic = time.monotonic()
                 return True
             except (OSError, self.serial.SerialException) as exc:
                 self.last_error = f"{port}: {exc}"
@@ -103,6 +105,7 @@ class ArduinoPitotSerial:
         try:
             connection.write(f"FILTER_HZ={cutoff_hz:.1f}\n".encode("ascii"))
             connection.flush()
+            self._last_filter_command_monotonic = time.monotonic()
         except (OSError, self.serial.SerialException) as exc:
             self.last_error = f"Could not configure Arduino low-pass filter: {exc}"
             self.close()
@@ -122,6 +125,16 @@ class ArduinoPitotSerial:
                 self.last_error = "Unexpected Arduino serial format"
             else:
                 self.last_error = ""
+                if (
+                    self.reported_filter_cutoff_hz is not None
+                    and not math.isclose(
+                        self.reported_filter_cutoff_hz,
+                        self.filter_cutoff_hz,
+                        abs_tol=0.06,
+                    )
+                    and time.monotonic() - self._last_filter_command_monotonic >= 1.0
+                ):
+                    self.set_filter_cutoff_hz(self.filter_cutoff_hz)
             return sample
         except (OSError, self.serial.SerialException) as exc:
             self.last_error = str(exc)
