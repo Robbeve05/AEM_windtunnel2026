@@ -56,14 +56,12 @@ separate from the existing 10-reading sensor average and the Pi's 5-second stati
 
 The updated firmware is `Arduino/Arduino_Uno_Pitot_HMI.ino`. Flash it once to enable
 remote filter changes. To flash without opening the enclosure, the Pi must already be
-connected to the Uno over USB and you must have shell access to the Pi. Install
-Arduino CLI and the Uno board core once:
+connected to the Uno over USB and you must have shell access to the Pi. From the
+repository checkout, install Arduino CLI and the Uno board core once:
 
 ```bash
-sudo apt update
-sudo apt install arduino-cli
-arduino-cli core update-index
-arduino-cli core install arduino:avr
+cd ~/AEM_windtunnel2026
+bash HMI/deploy/install-arduino-cli.sh
 ```
 
 Then, from the repository checkout, run:

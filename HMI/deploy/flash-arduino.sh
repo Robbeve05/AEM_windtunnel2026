@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="$HOME/.local/bin:$PATH"
+
 APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SKETCH_NAME="Arduino_Uno_Pitot_HMI"
 SOURCE_SKETCH="$APP_DIR/Arduino/Arduino_Uno_Pitot_HMI.ino"
 FQBN="arduino:avr:uno"
 
 if ! command -v arduino-cli >/dev/null 2>&1; then
-  echo "arduino-cli is required. Install Arduino CLI and run: arduino-cli core install arduino:avr" >&2
+  echo "arduino-cli is required. Run: bash HMI/deploy/install-arduino-cli.sh" >&2
   exit 1
 fi
 if ! arduino-cli core list | grep -q '^arduino:avr'; then
-  echo "The Uno board core is missing. Run: arduino-cli core update-index && arduino-cli core install arduino:avr" >&2
+  echo "The Uno board core is missing. Run: bash HMI/deploy/install-arduino-cli.sh" >&2
   exit 1
 fi
 if [[ ! -f "$SOURCE_SKETCH" ]]; then
@@ -64,5 +66,5 @@ fi
 mkdir -p "$BUILD_DIR/$SKETCH_NAME"
 cp -- "$SOURCE_SKETCH" "$BUILD_DIR/$SKETCH_NAME/$SKETCH_NAME.ino"
 arduino-cli compile --fqbn "$FQBN" --build-path "$BUILD_DIR/build" "$BUILD_DIR/$SKETCH_NAME"
-arduino-cli upload --fqbn "$FQBN" --port "$PORT" "$BUILD_DIR/$SKETCH_NAME"
+arduino-cli upload --fqbn "$FQBN" --port "$PORT" --input-dir "$BUILD_DIR/build" "$BUILD_DIR/$SKETCH_NAME"
 echo "Firmware uploaded successfully to $PORT. The HMI service will now restart."

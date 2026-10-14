@@ -109,11 +109,11 @@ This pulls the latest code, reinstalls updated Python dependencies and desktop l
 ### Updating Arduino firmware from the Pi
 
 If the Uno's USB cable is connected to the Pi, it can be flashed without opening the
-tunnel enclosure. Install Arduino CLI and the Uno core once (`arduino-cli core update-index`
-and `arduino-cli core install arduino:avr`), then run:
+tunnel enclosure. From the repository checkout, install Arduino CLI and the Uno core once:
 
 ```bash
 cd ~/AEM_windtunnel2026
+bash HMI/deploy/install-arduino-cli.sh
 bash HMI/deploy/flash-arduino.sh
 ```
 

@@ -60,13 +60,11 @@ Na het opnieuw opstarten hoef je deze groepsinstelling niet opnieuw uit te voere
 
 ## 4. Arduino-uploadsoftware installeren op de Pi
 
-De Arduino-uploadsoftware heet **Arduino CLI**. De HMI-installatie installeert die niet automatisch. Installeer de CLI en de Uno-boardbestanden eenmalig:
+De Arduino-uploadsoftware heet **Arduino CLI**. De HMI-installatie installeert die niet automatisch. Installeer de CLI en de Uno-boardbestanden eenmalig vanuit de repository:
 
 ```bash
-sudo apt update
-sudo apt install -y arduino-cli
-arduino-cli core update-index
-arduino-cli core install arduino:avr
+cd ~/AEM_windtunnel2026
+bash HMI/deploy/install-arduino-cli.sh
 ```
 
 Een grafische Arduino IDE is niet nodig.
