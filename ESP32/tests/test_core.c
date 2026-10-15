@@ -21,12 +21,15 @@ int main(void)
     assert(Regelaar_Init(&p, 2, 1, 0, .01f, 0, 100, .05f));
     for (int i=0; i<10000; ++i) assert(Regelaar_Step(&p, 1000, 0, &u) && u==100);
     assert(p.integral==0); /* Verzadiging laat de integrator niet oplopen. */
-    assert(Regelaar_Step(&p, 0, 0, &u) && u==0);
+    assert(Regelaar_Step(&p, 0, 0, &u) && fabsf(u-5.0f)<.001f);
     assert(!Regelaar_Step(&p, NAN, 0, &u) && u==0);
-    assert(Regelaar_Init(&p, 0, 0, 1, .01f, -1000, 1000, 0));
+    assert(Regelaar_Init(&p, 0, 2, 0, .1f, -1000, 1000, .05f));
+    assert(Regelaar_Step(&p, 1, 0, &u) && fabsf(u-.1f)<.001f);
+    assert(Regelaar_Step(&p, 3, 0, &u) && fabsf(u-.5f)<.001f);
+    assert(Regelaar_Init(&p, 0, 0, 1, .01f, -1000, 1000, .05f));
     assert(Regelaar_Step(&p, 0, 5, &u) && u==0);
     assert(Regelaar_Step(&p, 100, 5, &u) && u==0); /* Geen derivative kick bij setpointstap. */
-    assert(Regelaar_Step(&p, 100, 6, &u) && fabsf(u+100)<.001f);
+    assert(Regelaar_Step(&p, 100, 6, &u) && fabsf(u+(2.0f/.11f))<.001f);
     Regelaar_Reset(&p);
     assert(Regelaar_Step(&p, 100, 6, &u) && u==0);
     assert(Regelaar_Init(&p, 2, 1, 0, .01f, 0, 100, .05f));
@@ -37,6 +40,6 @@ int main(void)
         y += (u*.3f-y)*.01f/.5f;
     }
     assert(fabsf(y-10)<.01f);
-    puts("PASS: protocol, invalid input, saturation, anti-windup, derivative, reset, closed-loop simulation");
+    puts("PASS: protocol, invalid input, Tustin PI(D), saturation, anti-windup, reset, closed-loop simulation");
     return 0;
 }

@@ -1,12 +1,18 @@
 #pragma once
 
 /* Voorlopig klassieke ESP32 DevKit. Controleer pinnen voor jouw board. */
-#define CONTROL_PERIOD_MS 50
 #define SENSOR_PERIOD_MS 10
+#define ACTUATOR_PERIOD_MS 50
 #define SENSOR_TIMEOUT_MS 100
+#define CONTROL_CLOCK_TIMEOUT_MS 50
 #define COMMAND_TIMEOUT_MS 2000
 #define TELEMETRY_PERIOD_MS 200
 #define SIMULATION_MODE 1
+
+/* Externe 1 kHz klok naar GPIO4, 3.3 V logic, rising-edge triggered. */
+#define CONTROL_CLOCK_GPIO 4
+#define CONTROL_CLOCK_HZ 1000
+#define CONTROL_CLOCK_PERIOD_S (1.0f / CONTROL_CLOCK_HZ)
 
 /* Pi: UART1, 3.3 V TTL, 115200 8N1. UART0 blijft USB/debug. */
 #define PI_UART_PORT 1

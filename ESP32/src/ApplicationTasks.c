@@ -6,6 +6,7 @@
 
 QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry;
 EventGroupHandle_t events;
+TaskHandle_t control_task_handle;
 void StartApplicationTasks(void)
 {
     commands = xQueueCreate(16, sizeof(PiCommand));
@@ -18,6 +19,7 @@ void StartApplicationTasks(void)
                     ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(SensorTask, "SensorTask", 3072, NULL, 3, NULL)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(ActuatorTask, "ActuatorTask", 3072, NULL, 3, NULL)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreate(ControlTask, "ControlTask", 4096, NULL, 4, NULL)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreate(ControlTask, "ControlTask", 4096, NULL, 4,
+        &control_task_handle)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(PiCommunicationTask, "PiCommunication", 4096, NULL, 2, NULL)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 }

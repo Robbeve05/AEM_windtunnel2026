@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 typedef struct { float value; TickType_t tick; bool valid; } Sample;
 typedef struct { float output; TickType_t tick; } MotorRequest;
 typedef struct { bool ready; bool ok; TickType_t tick; } MotorStatus;
@@ -13,6 +14,7 @@ typedef struct {
 } Telemetry;
 extern QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry;
 extern EventGroupHandle_t events;
+extern TaskHandle_t control_task_handle;
 #define STOP_REQUEST BIT0
 void ControlTask(void *argument);
 void SensorTask(void *argument);

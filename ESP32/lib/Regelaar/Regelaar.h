@@ -2,7 +2,7 @@
 #include <stdbool.h>
 typedef struct {
     float kp, ki, kd, dt, minimum, maximum, filter_tau;
-    float integral, previous_measurement, derivative;
+    float integral, previous_error, previous_measurement, derivative;
     bool initialized;
 } Regelaar;
 bool Regelaar_Init(Regelaar *pid, float kp, float ki, float kd, float dt,

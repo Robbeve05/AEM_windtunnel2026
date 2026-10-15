@@ -7,14 +7,14 @@ PlatformIO, `espressif32@6.12.0`, Arduino-ESP32 2.0.17 en de ingebouwde FreeRTOS
 ## Opbouw
 
 ```text
-include/AppConfig.h              Timing, voorlopige pinnen en simulatiekeuze
+include/AppConfig.h              Klok-/I/O-timing, voorlopige pinnen en simulatiekeuze
 include/ApplicationTasks.h       Startfunctie
 include/TaskData.h               Queue-berichten en gedeelde RTOS-handles
 src/main.cpp                    Opstartlaag
 src/ApplicationTasks.c          Maakt queues en taken aan
-src/ControlTask.c               PID + START/STOP + foutafhandeling, 20 Hz
+src/ControlTask.c               Tustin PI(D) + START/STOP + foutafhandeling, externe 1 kHz-klok
 src/SensorTask.c                Sensor uitlezen, 100 Hz
-src/ActuatorTask.c              Motoropdracht uitvoeren, voorlopig 100 Hz
+src/ActuatorTask.c              Motoropdracht uitvoeren, voorlopig 20 Hz
 src/PiCommunicationTask.c       UART-commando's en status op 5 Hz
 lib/Regelaar/                  Hardware-onafhankelijke PID
 lib/PiProtocol/                Tekstcommando-parser
@@ -23,7 +23,8 @@ tools/pi_client.py             Pi-testclient met periodieke PING
 tests/                         Uitvoerbare C-hosttests
 ```
 
-Datastroom: Pi → command queue → ControlTask → motor-mailbox → ActuatorTask → motor.
+Datastroom: externe klokflank → GPIO-ISR → ControlTask-notificatie → Tustin-regelaar.
+Pi → command queue → ControlTask → motor-mailbox → ActuatorTask → motor.
 SensorTask → sensor-mailbox → ControlTask → status-mailbox → Pi.
 De mailboxes hebben lengte één en bewaren de nieuwste waarde. Alleen ControlTask beheert de PID en regeltoestand. I²C/Modbus-I/O draait buiten de regelcyclus. Stapels zijn in bytes opgegeven zoals verwacht door ESP32 FreeRTOS.
 
@@ -31,11 +32,13 @@ De mailboxes hebben lengte één en bewaren de nieuwste waarde. Alleen ControlTa
 
 **`SIMULATION_MODE=1` staat standaard aan. Er wordt geen echte motor aangestuurd en geen I²C-sensor uitgelezen.** Het model simuleert een eerste-ordeproces (tijdconstante 0,5 s, 100% uitgang geeft 30 m/s). Een opgestarte controller staat stil totdat START is ontvangen. De simulatie draait op de ESP32; de hosttests testen daarnaast dezelfde PID-code met een simulatiemodel op de pc.
 
-De PID heeft instelbare Kp/Ki/Kd, een vaste sampletijd, afgeleide van de meting met een eerste-ordefilter, uitgangsbegrenzing 0–100% en conditional-integration anti-windup. PID-historie wordt gewist bij stoppen. Dit is een parallelle PID; de robot-specifieke Tustin-regelaar, resonantieparameters, overbrengingen en feedforward uit DeltaRobot zijn bewust niet overgenomen. Standaardgains zijn alleen voorbeeldwaarden. Het theoretische PI-model gebruikt een sampletijd van 50 ms, maar de berekende gains horen bij een andere, aangenomen plant en een incrementele VFD-frequentieopdracht; ze zijn daarom niet rechtstreeks geschikt voor de huidige 0–100%-motorinterface. Begin op echte hardware met P/PI-inregeling en `Kd=0`.
+De GPIO-ISR op GPIO4 wordt geactiveerd op iedere opgaande flank van de externe 1 kHz-klok. De ISR wekt alleen ControlTask met een FreeRTOS-tasknotificatie; alle commandaverwerking en regeling gebeurt in task-context. De Tustin-regelaar gebruikt daarom `Ts = 1 ms`. Als een kloktik uitblijft (50 ms timeout) of meerdere tikken zijn samengevoegd, stopt de regeltoestand en wordt nul uitgang aangevraagd; START is daarna opnieuw nodig. SensorTask leest op 100 Hz en ActuatorTask werkt de motoruitgang voorlopig op 20 Hz bij. Sensor- en actuator-I/O blokkeren de regeltaak dus niet.
+
+De regelaar heeft instelbare Kp/Ki/Kd, Tustin-discretisatie voor integratie en gefilterde afgeleide van de meting, uitgangsbegrenzing 0–100% en conditional-integration anti-windup. PID-historie wordt gewist bij stoppen. Dit volgt de Tustin-opbouw uit DeltaRobot, maar gebruikt geen robot-specifieke resonantieparameters, overbrengingen of feedforward. Standaardgains zijn alleen voorbeeldwaarden. Het theoretische windtunnel-PI-model gebruikt `Ts = 50 ms`, terwijl de externe klok deze implementatie op `Ts = 1 ms` laat rekenen; de berekende gains horen bovendien bij een andere, aangenomen plant en een incrementele VFD-frequentieopdracht. Neem die gains daarom niet rechtstreeks over. Begin op echte hardware met P/PI-inregeling en `Kd=0`.
 
 Bij ongeldige/verouderde sensorfeedback, een motordriverfout of 2 seconden zonder verwerkt geldig Pi-commando stopt de regeltoestand en wordt nul uitgang aangevraagd. Na herstel is een nieuwe START nodig. De motortaak vraagt zelf nul aan wanneer de regelopdracht ouder is dan 100 ms. Sensor/motordriver-initfouten vereisen momenteel herstart.
 
-Nul aanvragen garandeert niet dat een onbereikbare echte drive stopt. Configureer de communicatiewatchdog in de frequentieregelaar en houd een fysieke noodstop onafhankelijk van deze firmware. De regellus draait op 20 Hz (50 ms), overeenkomstig de sampletijd van het theoretische PI-model; dit is geen aangetoonde realtimegarantie. De sensorfilter, sensorconversietijd, Modbus-transactietijd, drive-updatefrequentie en time-outs moeten nog op de hardware worden afgestemd en gevalideerd.
+Nul aanvragen garandeert niet dat een onbereikbare echte drive stopt. Configureer de communicatiewatchdog in de frequentieregelaar en houd een fysieke noodstop onafhankelijk van deze firmware. De 1 kHz-loop, GPIO-interruptlatentie en taakdeadline moeten op de uiteindelijke ESP32 en klokbron worden gevalideerd. De sensorfilter, sensorconversietijd, Modbus-transactietijd, drive-updatefrequentie en time-outs moeten nog op de hardware worden afgestemd.
 
 ## Bouwen en uploaden
 
@@ -48,6 +51,8 @@ pio device monitor --port COM5 --baud 115200
 ```
 
 Vervang COM5 door de ESP32-poort. USB/UART0 is voor programmeren/debug; de Pi-commandopoort is **UART1**, niet de USB-monitor. Er is nog niets geflasht.
+
+Verbind de externe **1 kHz-klokuitgang met 3,3 V-logicaniveau** met voorlopig GPIO4 en verbind de signaal-GND met ESP32-GND. Iedere opgaande flank triggert één regelstap. Controleer de pin en elektrische niveaus voor het definitieve ESP32-board; stuur geen 5 V rechtstreeks naar een GPIO. Zonder kloksignaal stopt de controller na de kloktimeout.
 
 Hosttests op Windows met Visual Studio C++ tools:
 

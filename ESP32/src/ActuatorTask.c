@@ -16,6 +16,6 @@ void ActuatorTask(void *argument)
         bool ok = ready && MotorLib_Write(fresh ? request.output : 0);
         MotorStatus status = {.ready=ready, .ok=ok, .tick=xTaskGetTickCount()};
         xQueueOverwrite(motor_status, &status);
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(CONTROL_PERIOD_MS));
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(ACTUATOR_PERIOD_MS));
     }
 }
