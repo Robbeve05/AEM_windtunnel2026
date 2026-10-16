@@ -6,5 +6,5 @@
 bool SensorLib_Init(void);
 bool SensorLib_Read(float *velocity_mps);
 bool MotorLib_Init(void);
-bool MotorLib_Write(float percentage);
+bool MotorLib_Write(bool run, float percentage);
 void Simulation_SetOutput(float percentage);

@@ -24,10 +24,10 @@ bool SensorLib_Read(float *value)
     return true;
 }
 bool MotorLib_Init(void) { Simulation_SetOutput(0); return true; }
-bool MotorLib_Write(float value)
+bool MotorLib_Write(bool run, float value)
 {
     if (!isfinite(value) || value < 0 || value > MAX_OUTPUT) return false;
-    Simulation_SetOutput(value);
+    Simulation_SetOutput(run ? value : 0.0f);
     return true;
 }
 #else
@@ -35,10 +35,6 @@ bool MotorLib_Write(float value)
  * Geen fictieve geldige sensorwaarden bij ontbrekende hardware. */
 bool SensorLib_Init(void) { return false; }
 bool SensorLib_Read(float *value) { (void)value; return false; }
-/* TODO: Modbus RTU RS485-driver met CRC, response-validatie, timeout,
- * drive-enable/stop en registermapping van de gekozen frequentieregelaar.
- * Configureer ook de communicatiewatchdog in de drive zelf. */
-bool MotorLib_Init(void) { return false; }
-bool MotorLib_Write(float value) { (void)value; return false; }
+/* Motor driver: V20Transport.c. */
 void Simulation_SetOutput(float value) { (void)value; }
 #endif

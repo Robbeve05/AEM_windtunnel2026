@@ -11,11 +11,14 @@ void ActuatorTask(void *argument)
     for (;;) {
         xQueuePeek(motor_requests, &request, 0);
         TickType_t now = xTaskGetTickCount();
-        /* Lokale watchdog: vraag nul aan als de regeltaak geen nieuwe output levert. */
         bool fresh = (TickType_t)(now-request.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
-        bool ok = ready && MotorLib_Write(fresh ? request.output : 0);
+        /* Explicit OFF1 on stopped/stale requests, even when PI output was already zero. */
+        bool ok = ready && MotorLib_Write(fresh && request.run, fresh ? request.output : 0);
         MotorStatus status = {.ready=ready, .ok=ok, .tick=xTaskGetTickCount()};
         xQueueOverwrite(motor_status, &status);
+        /* No burst of catch-up requests after a Modbus timeout. */
+        if ((TickType_t)(xTaskGetTickCount()-last) >= pdMS_TO_TICKS(ACTUATOR_PERIOD_MS))
+            last=xTaskGetTickCount();
         vTaskDelayUntil(&last, pdMS_TO_TICKS(ACTUATOR_PERIOD_MS));
     }
 }

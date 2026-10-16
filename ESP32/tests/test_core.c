@@ -40,6 +40,45 @@ int main(void)
         y += (u*.3f-y)*.01f/.5f;
     }
     assert(fabsf(y-10)<.01f);
+    /* Independent double-precision evaluation of Python's VFD design. */
+    const double wc = 2.0 * 3.14159265358979323846 * 0.20;
+    const double wi = wc / 10.0;
+    const double kp_hz = sqrt(1.0 + pow(wc * 0.6, 2.0)) /
+                         (0.8 * sqrt(1.0 + pow(wi / wc, 2.0)));
+    const float times[] = {0.001f, 0.05f};
+    for (unsigned k = 0; k < 2; ++k) {
+        assert(Regelaar_InitWindtunnel(&p, times[k]));
+        assert(fabs(p.kp - 2.0 * kp_hz) < 1e-6);
+        assert(fabs(p.ki - 2.0 * kp_hz * wi) < 1e-6);
+        assert(p.kd == 0 && p.minimum == 0 && p.maximum == 100);
+        double previous = 0, expected = 0;
+        for (int n = 0; n < 100; ++n) {
+            const float error = 1.0f + 0.1f * sinf((float)n);
+            expected += (2.0*kp_hz + kp_hz*wi*times[k])*error +
+                        (-2.0*kp_hz + kp_hz*wi*times[k])*previous;
+            assert(Regelaar_Step(&p, error, 0, &u));
+            assert(fabs(u - expected) < 0.0001);
+            previous = error;
+        }
+        Regelaar_Reset(&p);
+        assert(p.integral == 0 && !p.initialized);
+        for (int n = 0; n < 10000; ++n)
+            assert(Regelaar_Step(&p, 1000, 0, &u) && u == 100);
+        assert(p.integral == 0);
+        Regelaar_Reset(&p);
+        float air = 0;
+        for (int n = 0; n < (int)(120.0f / times[k]); ++n) {
+            assert(Regelaar_Step(&p, 10, air, &u));
+            /* VFD proxy: 100% = 50 Hz, 50 Hz = 40 m/s. */
+            air += (0.4f*u - air)*times[k]/0.6f;
+        }
+        assert(fabsf(air - 10.0f) < 0.01f);
+    }
+    assert(!Regelaar_InitWindtunnel(&p, 0));
+    assert(!Regelaar_InitWindtunnel(&p, NAN));
+    assert(!Regelaar_InitWindtunnel(&p, 0.5f));
+    printf("VFD design: Kp=%.9f Hz/(m/s), Ki=%.9f Hz/m; percent gains x2\n",
+           kp_hz, kp_hz*wi);
     puts("PASS: protocol, invalid input, Tustin PI(D), saturation, anti-windup, reset, closed-loop simulation");
     return 0;
 }

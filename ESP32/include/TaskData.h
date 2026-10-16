@@ -5,7 +5,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 typedef struct { float value; TickType_t tick; bool valid; } Sample;
-typedef struct { float output; TickType_t tick; } MotorRequest;
+typedef struct { float output; TickType_t tick; bool run; } MotorRequest;
 typedef struct { bool ready; bool ok; TickType_t tick; } MotorStatus;
 typedef struct {
     float setpoint, measurement, output;

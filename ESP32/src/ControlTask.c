@@ -75,7 +75,7 @@ static void ConfigureControlClock(void)
  */
 static void PublishControlState(Telemetry *state, TickType_t now)
 {
-    const MotorRequest request = {.output = state->output, .tick = now};
+    const MotorRequest request = {.output = state->output, .tick = now, .run = state->running};
     xQueueOverwrite(motor_requests, &request);
     xQueueOverwrite(telemetry, state);
 }
@@ -93,8 +93,7 @@ void ControlTask(void *argument)
     ConfigureControlClock();
 
     Regelaar pid;
-    ESP_ERROR_CHECK(Regelaar_Init(&pid, DEFAULT_KP, DEFAULT_KI, DEFAULT_KD,
-        CONTROL_CLOCK_PERIOD_S, 0.0f, MAX_OUTPUT, 0.05f) ? ESP_OK : ESP_FAIL);
+    ESP_ERROR_CHECK(Regelaar_InitWindtunnel(&pid, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
 
     TickType_t lastCommand = xTaskGetTickCount();
     Telemetry state = {.reason = "STOPPED"};
@@ -137,7 +136,7 @@ void ControlTask(void *argument)
         state.sensor_ok = sample.valid &&
             (TickType_t)(now - sample.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
         state.motor_ok = motor.ready && motor.ok &&
-            (TickType_t)(now - motor.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
+            (TickType_t)(now - motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
 
         bool stopRequested =
             (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) &
