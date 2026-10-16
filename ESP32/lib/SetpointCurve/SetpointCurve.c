@@ -1,40 +1,77 @@
+/* Vijfdegraads bewegingscurve voor het luchtsnelheid-setpoint. */
 #include "SetpointCurve.h"
 #include <math.h>
 #include <stddef.h>
-bool SetpointCurve_Init(SetpointCurve *c, float initial, float time, float acceleration, float jerk)
+
+///////////////////////////////////////////////////////////////////////////////
+// Losse rekenfuncties
+
+/* Kies de gewenste tijd, of verleng tot versnelling en jerk binnen de grenzen vallen.
+ * Voor een snelheidsetpoint is dv/dt versnelling en d2v/dt2 jerk. */
+static double BerekenOvergangstijd(const SetpointCurve *curve, double verschil)
 {
-    if (!c || !isfinite(initial) || !isfinite(time) || !isfinite(acceleration) ||
-        !isfinite(jerk) || time<=0 || acceleration<=0 || jerk<=0) return false;
-    *c=(SetpointCurve){.start=initial,.target=initial,.value=initial,
-        .requested_time=time,.max_acceleration=acceleration,.max_jerk=jerk};
+    const double afstand = fabs(verschil);
+    const double tijd_versnelling = 1.875 * afstand / curve->max_acceleration;
+    const double tijd_jerk = sqrt((10.0 / sqrt(3.0)) * afstand / curve->max_jerk);
+    return fmax(curve->requested_time, fmax(tijd_versnelling, tijd_jerk));
+}
+
+/* q loopt van 0 naar 1. Waarde, versnelling en jerk sluiten aan op de eindpunten. */
+static double BerekenVijfdegraadsFactor(double q)
+{
+    return q * q * q * (10.0 + q * (-15.0 + 6.0 * q));
+}
+
+static void StartNieuweOvergang(SetpointCurve *curve, float doel)
+{
+    curve->start = curve->value;
+    curve->target = doel;
+    curve->duration = BerekenOvergangstijd(curve, curve->target - curve->start);
+    curve->elapsed = 0;
+}
+
+static void BerekenVolgendeWaarde(SetpointCurve *curve, float Tsample)
+{
+    curve->elapsed = fmin(curve->duration, curve->elapsed + (double)Tsample);
+    const double q = curve->elapsed / curve->duration;
+    const double factor = BerekenVijfdegraadsFactor(q);
+    curve->value = curve->start + (curve->target - curve->start) * factor;
+    if (curve->elapsed >= curve->duration)
+        curve->value = curve->target;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialiseren bij START, vanaf de dan gemeten luchtsnelheid.
+bool SetpointCurve_Init(SetpointCurve *curve, float initial, float time,
+                        float acceleration, float jerk)
+{
+    if (curve == NULL || !isfinite(initial) || !isfinite(time) ||
+        !isfinite(acceleration) || !isfinite(jerk) || time <= 0 ||
+        acceleration <= 0 || jerk <= 0)
+        return false;
+    *curve = (SetpointCurve){.start=initial, .target=initial, .value=initial,
+        .requested_time=time, .max_acceleration=acceleration, .max_jerk=jerk};
     return true;
 }
-bool SetpointCurve_Step(SetpointCurve *c, float target, float dt, float *output)
+
+///////////////////////////////////////////////////////////////////////////////
+// Een sample van de bewegingscurve. STOP en fouten gaan buiten deze functie om.
+bool SetpointCurve_Step(SetpointCurve *curve, float target, float dt, float *output)
 {
-    if (!c || !output || !isfinite(target) || !isfinite(dt) || dt<=0 ||
-        c->requested_time<=0 || c->max_acceleration<=0 || c->max_jerk<=0) return false;
-    if (c->elapsed>=c->duration && c->target!=(double)target) {
-        c->start=c->value;
-        c->target=target;
-        const double delta=fabs(c->target-c->start);
-        /* Airspeed trajectory v=v0+delta*(10q^3-15q^4+6q^5).
-         * max |dv/dt| = (15/8)*|delta|/T (acceleration, m/s^2).
-         * max |d2v/dt2| = (10/sqrt(3))*|delta|/T^2 (jerk, m/s^3).
-         * v, acceleration and jerk join continuously at both endpoints.
-         */
-        c->duration=fmax(c->requested_time,
-            fmax(1.875*delta/c->max_acceleration,
-                 sqrt((10.0/sqrt(3.0))*delta/c->max_jerk)));
-        c->elapsed=0;
-    }
-    if (c->elapsed<c->duration) {
-        c->elapsed=fmin(c->duration,c->elapsed+(double)dt);
-        double q=c->elapsed/c->duration;
-        double blend=q*q*q*(10.0+q*(-15.0+6.0*q));
-        c->value=c->start+(c->target-c->start)*blend;
-        if (c->elapsed>=c->duration) c->value=c->target;
-    }
-    if (!isfinite(c->value)) return false;
-    *output=(float)c->value;
+    if (curve == NULL || output == NULL || !isfinite(target) || !isfinite(dt) ||
+        dt <= 0 || curve->requested_time <= 0 || curve->max_acceleration <= 0 ||
+        curve->max_jerk <= 0)
+        return false;
+
+    // Lopende beweging afmaken; daarna alleen het nieuwste doel oppakken.
+    if (curve->elapsed >= curve->duration && curve->target != (double)target)
+        StartNieuweOvergang(curve, target);
+
+    if (curve->elapsed < curve->duration)
+        BerekenVolgendeWaarde(curve, dt);
+
+    if (!isfinite(curve->value))
+        return false;
+    *output = (float)curve->value;
     return true;
 }

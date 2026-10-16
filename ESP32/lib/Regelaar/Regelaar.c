@@ -1,112 +1,199 @@
-/* Windtunnel PI(D), compatible with the ESP32 Regelaar API.
- * Design source: windtunnel_pi_design.py, PLANT_MODE = 'vfd_proxy'.
- * Input: airspeed [m/s]. Output: percent, 100% = 50 Hz (assumption).
- * The HAL must convert percent to the configured V20 Modbus setpoint scale;
- * percent/Hz are NOT raw Modbus register values.
- * This approximate model is not an identification of the real fan/drive.
+/*
+ * Regelaar.c
+ *
+ * Oorspronkelijke opzet: R.E. van Eekelen, deltarobot (10/06/2026).
+ * Aangepast voor de windtunnel: luchtsnelheid [m/s] -> motoropdracht [%].
+ * Berekening uit windtunnel_pi_design.py, stand 'vfd_proxy'.
  */
 #include "Regelaar.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// system includes
 #include <math.h>
 #include <stddef.h>
 
-#define WT_PI 3.14159265358979323846f
-#define WT_AIRSPEED_MS 40.0f
-#define WT_REFERENCE_HZ 50.0f
-#define WT_VFD_TAU_S 0.6f
-#define WT_CROSSOVER_HZ 0.20f
-#define WT_ZERO_DIVISOR 10.0f
-#define WT_PERCENT_PER_HZ (100.0f / WT_REFERENCE_HZ)
+///////////////////////////////////////////////////////////////////////////////
+// REGELAAR constants - dezelfde aannames als het Python VFD-model
+#define PI                  (3.14159265358979323846f)
+#define LUCHTSNELHEID_NOM    (40.0f)  // m/s bij de referentiefrequentie
+#define FREQUENTIE_NOM      (50.0f)  // Hz, komt overeen met 100% uitgang
+#define Tau_motor           (0.6f)   // s, aangenomen VFD/ventilator-tijdconstante
+#define FbM                 (0.20f)  // Hz, gewenste bandbreedte
+#define PI_ZERO_DIVISOR     (10.0f)  // PI-nulpunt een decade onder de bandbreedte
 
-/* Python: G(s) = (V_air/w0)*VFD_SPEED_GAIN/(tau*s+1).
- * VFD_SPEED_GAIN = w0/50, so G(s) = 0.8/(0.6*s+1) [(m/s)/Hz].
- * Kp = 1/abs((1+wi/s)*G(s)) at s=j*wc; Ki = Kp*wi.
- * No torque-to-voltage Ka*Kt, resonance model, or robot feedforward.
- * Python's command delay is zero. Drive ramps/delays require revalidation.
+///////////////////////////////////////////////////////////////////////////////
+// Losse rekenfuncties; uitsluitend gebruikt binnen dit bestand (static)
+
+/* Vervangt de robotberekening met Je1M, Je2M, K12M en Ka*Kt.
+ * G(s) = Kplant / (Tau_motor*s + 1), met ingang Hz en uitgang m/s.
+ * Kies Kp zodat |C(j*wbM)*G(j*wbM)| = 1 bij de gewenste bandbreedte.
  */
-bool Regelaar_InitWindtunnel(Regelaar *pid, float dt)
+static void BerekenWindtunnelParameters(float *Kp, float *Ki)
 {
-    const float wc = 2.0f * WT_PI * WT_CROSSOVER_HZ;
-    const float wi = wc / WT_ZERO_DIVISOR;
-    const float gain = WT_AIRSPEED_MS / WT_REFERENCE_HZ;
-    const float x = wc * WT_VFD_TAU_S;
-    const float r = wi / wc;
-    const float kp_hz = sqrtf(1.0f + x*x) / (gain * sqrtf(1.0f + r*r));
-    if (!isfinite(dt) || dt <= 0.0f || WT_CROSSOVER_HZ >= 0.1f / dt)
-        return false;
-    return Regelaar_Init(pid, kp_hz * WT_PERCENT_PER_HZ,
-                         kp_hz * wi * WT_PERCENT_PER_HZ,
-                         0.0f, dt, 0.0f, 100.0f, 0.0f);
+    const float wbM = 2.0f * PI * FbM;
+    const float wi = wbM / PI_ZERO_DIVISOR;
+    const float Tau_i = 1.0f / wi;
+    const float Kplant = LUCHTSNELHEID_NOM / FREQUENTIE_NOM;
+    const float motor_term = wbM * Tau_motor;
+    const float pi_term = wi / wbM;
+    const float Kp_Hz = sqrtf(1.0f + motor_term * motor_term) /
+                       (Kplant * sqrtf(1.0f + pi_term * pi_term));
+
+    // Eerst gains in Hz, daarna omrekenen naar de bestaande procentuitgang.
+    *Kp = Kp_Hz * (100.0f / FREQUENTIE_NOM);
+    *Ki = *Kp / Tau_i;
 }
 
-bool Regelaar_Init(Regelaar *pid, float kp, float ki, float kd, float dt,
-                   float minimum, float maximum, float filter_tau)
+/* Eenmalig berekenen, net als de a- en b-coefficienten in het oude ontwerp. */
+static bool BerekenTustinCoefficienten(Regelaar *regelaar)
 {
-    if (pid == NULL || !isfinite(kp) || !isfinite(ki) || !isfinite(kd) ||
-        !isfinite(dt) || !isfinite(minimum) || !isfinite(maximum) ||
-        !isfinite(filter_tau) || kp < 0.0f || ki < 0.0f || kd < 0.0f ||
-        dt <= 0.0f || minimum >= maximum || filter_tau < 0.0f)
+    regelaar->i_factor = regelaar->Ki * (0.5f * regelaar->Tsample);
+    const float noemer = 2.0f * regelaar->Tau_f + regelaar->Tsample;
+    regelaar->d_a = (2.0f * regelaar->Tau_f - regelaar->Tsample) / noemer;
+    regelaar->d_b = 2.0f * regelaar->Kd / noemer;
+    return isfinite(regelaar->i_factor) && isfinite(regelaar->d_a) &&
+           isfinite(regelaar->d_b);
+}
+
+/* Tustin: delta_I = Ki*Tsample/2 * (e[n] + e[n-1]). */
+static float BerekenIntegratieStap(const Regelaar *regelaar, float error)
+{
+    return regelaar->i_factor * (error + regelaar->motorHist.e_1);
+}
+
+/* Afgeleide van de meting, zodat een setpointsprong geen D-piek veroorzaakt.
+ * De windtunnel gebruikt standaard Kd=0; dan is deze bijdrage altijd nul. */
+static float BerekenDTerm(const Regelaar *regelaar, float meting)
+{
+    const MotorIOhistory_t *hist = &regelaar->motorHist;
+    if (!hist->gevuld || regelaar->Kd == 0.0f)
+        return 0.0f;
+    return regelaar->d_a * hist->d_1 - regelaar->d_b * (meting - hist->meting_1);
+}
+
+/* Geen extra integratie als die de uitgang verder buiten zijn grens duwt. */
+static bool IntegratieToegestaan(const Regelaar *regelaar, float u_0, float delta_i)
+{
+    if (u_0 > regelaar->maximum && delta_i > 0.0f)
         return false;
-    *pid = (Regelaar){.kp=kp, .ki=ki, .kd=kd, .dt=dt,
-        .minimum=minimum, .maximum=maximum, .filter_tau=filter_tau};
+    if (u_0 < regelaar->minimum && delta_i < 0.0f)
+        return false;
     return true;
 }
 
-void Regelaar_Reset(Regelaar *pid)
+static float BegrensUitgang(const Regelaar *regelaar, float u_0)
 {
-    if (pid == NULL) return;
-    pid->integral = 0.0f;
-    pid->previous_error = 0.0f;
-    pid->previous_measurement = 0.0f;
-    pid->derivative = 0.0f;
-    pid->initialized = false;
+    if (u_0 > regelaar->maximum)
+        return regelaar->maximum;
+    if (u_0 < regelaar->minimum)
+        return regelaar->minimum;
+    return u_0;
 }
 
-bool Regelaar_Step(Regelaar *pid, float setpoint, float measurement, float *output)
+static void BewaarRegelaarHistory(Regelaar *regelaar, float error, float meting,
+                                 float i_0, float d_0)
 {
-    if (output == NULL) return false;
-    *output = 0.0f;
-    if (pid == NULL) return false;
-    if (!isfinite(setpoint) || !isfinite(measurement)) {
-        Regelaar_Reset(pid);
+    MotorIOhistory_t *hist = &regelaar->motorHist;
+    hist->e_1 = error;
+    hist->i_1 = i_0;
+    hist->meting_1 = meting;
+    hist->d_1 = d_0;
+    hist->gevuld = true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// bool Regelaar_INIT(Regelaar *regelaar, float Tsample)
+/* Berekent eenmalig de windtunnel-PI en wist de historie.
+ * Tsample komt uit ControlTask: 0,001 s. Python gebruikt standaard 0,05 s.
+ * De modelparameters zijn aannames, geen gemeten afstelling van de ventilator.
+ */
+bool Regelaar_INIT(Regelaar *regelaar, float Tsample)
+{
+    if (!isfinite(Tsample) || Tsample <= 0.0f || FbM >= 0.1f / Tsample)
         return false;
-    }
-    const float error = setpoint - measurement;
-    /* Tustin integral: I[n] = I[n-1] + Ki*dt/2*(e[n]+e[n-1]).
-     * Without saturation this equals Python's sampled PI transfer function.
-     * Use the caller's real sample time (currently 1 ms, not Python's 50 ms).
-     */
-    const float delta_i = pid->ki * (0.5f * pid->dt) *
-                          (error + pid->previous_error);
-    float integral = pid->integral + delta_i;
-    float derivative = 0.0f;
-    if (pid->initialized && pid->kd > 0.0f) {
-        const float denominator = 2.0f * pid->filter_tau + pid->dt;
-        derivative = (2.0f * pid->filter_tau - pid->dt) / denominator *
-                     pid->derivative - (2.0f * pid->kd / denominator) *
-                     (measurement - pid->previous_measurement);
-    }
-    const float proportional = pid->kp * error;
-    float command = proportional + integral + derivative;
-    if (!isfinite(error) || !isfinite(integral) || !isfinite(derivative) ||
-        !isfinite(command)) {
-        Regelaar_Reset(pid);
+    float Kp, Ki;
+    BerekenWindtunnelParameters(&Kp, &Ki);
+    return Regelaar_Instellen(regelaar, Kp, Ki, 0.0f, Tsample, 0.0f, 100.0f, 0.0f);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// bool Regelaar_Instellen(...)
+/* Voor handmatige PID-waarden vanuit de Pi en voor de tests.
+ * Pas de bestaande regelaar alleen aan als alle nieuwe waarden geldig zijn. */
+bool Regelaar_Instellen(Regelaar *regelaar, float Kp, float Ki, float Kd,
+                        float Tsample, float minimum, float maximum, float Tau_f)
+{
+    if (regelaar == NULL || !isfinite(Kp) || !isfinite(Ki) || !isfinite(Kd) ||
+        !isfinite(Tsample) || !isfinite(minimum) || !isfinite(maximum) ||
+        !isfinite(Tau_f) || Kp < 0.0f || Ki < 0.0f || Kd < 0.0f ||
+        Tsample <= 0.0f || minimum >= maximum || Tau_f < 0.0f)
         return false;
-    }
-    /* Conditional integration: reject increments driving further into saturation. */
-    if ((command > pid->maximum && delta_i > 0.0f) ||
-        (command < pid->minimum && delta_i < 0.0f)) {
-        integral = pid->integral;
-        command = proportional + integral + derivative;
-    }
-    if (!isfinite(command)) {
-        Regelaar_Reset(pid);
+
+    Regelaar nieuw = {.Kp=Kp, .Ki=Ki, .Kd=Kd, .Tsample=Tsample,
+        .minimum=minimum, .maximum=maximum, .Tau_f=Tau_f};
+    if (!BerekenTustinCoefficienten(&nieuw))
         return false;
-    }
-    *output = fminf(pid->maximum, fmaxf(pid->minimum, command));
-    pid->integral = integral;
-    pid->previous_error = error;
-    pid->previous_measurement = measurement;
-    pid->derivative = derivative;
-    pid->initialized = true;
+    removeRegelaarHistory(&nieuw);
+    *regelaar = nieuw;
     return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
+/* Een regelstap: P/I/D berekenen, anti-windup, begrenzen, historie bewaren.
+ * Zonder begrenzing is deze PI gelijk aan de oude soort verschilvergelijking:
+ * u[n] = u[n-1] + (Kp+Ki*Tsample/2)*e[n] + (-Kp+Ki*Tsample/2)*e[n-1].
+ * P en I apart bewaren maakt anti-windup mogelijk. e_2/u_2 zijn voor PI niet nodig.
+ */
+bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
+{
+    if (uitgang == NULL)
+        return false;
+    *uitgang = 0.0f;
+    if (regelaar == NULL)
+        return false;
+    if (!isfinite(error) || !isfinite(meting))
+    {
+        removeRegelaarHistory(regelaar);
+        return false;
+    }
+
+    // 1. Regelbijdragen bepalen.
+    const float p_0 = regelaar->Kp * error;
+    const float delta_i = BerekenIntegratieStap(regelaar, error);
+    float i_0 = regelaar->motorHist.i_1 + delta_i;
+    const float d_0 = BerekenDTerm(regelaar, meting);
+    float u_0 = p_0 + i_0 + d_0;
+    if (!isfinite(i_0) || !isfinite(d_0) || !isfinite(u_0))
+    {
+        removeRegelaarHistory(regelaar);
+        return false;
+    }
+
+    // 2. Bij verzadiging de extra integratie zo nodig terugnemen.
+    if (!IntegratieToegestaan(regelaar, u_0, delta_i))
+    {
+        i_0 = regelaar->motorHist.i_1;
+        u_0 = p_0 + i_0 + d_0;
+    }
+    if (!isfinite(u_0))
+    {
+        removeRegelaarHistory(regelaar);
+        return false;
+    }
+
+    // 3. Uitgang begrenzen en historie doorschuiven.
+    *uitgang = BegrensUitgang(regelaar, u_0);
+    BewaarRegelaarHistory(regelaar, error, meting, i_0, d_0);
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// void removeRegelaarHistory(Regelaar *regelaar)
+/* Een ventilator heeft een historieblok; geen arm-index of N_MOTORS nodig. */
+void removeRegelaarHistory(Regelaar *regelaar)
+{
+    if (regelaar == NULL)
+        return;
+    regelaar->motorHist = (MotorIOhistory_t){0};
 }

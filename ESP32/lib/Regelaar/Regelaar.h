@@ -1,14 +1,32 @@
 #pragma once
 #include <stdbool.h>
-typedef struct {
-    float kp, ki, kd, dt, minimum, maximum, filter_tau;
-    float integral, previous_error, previous_measurement, derivative;
-    bool initialized;
-} Regelaar;
-bool Regelaar_Init(Regelaar *pid, float kp, float ki, float kd, float dt,
-                   float minimum, float maximum, float filter_tau);
-void Regelaar_Reset(Regelaar *pid);
-bool Regelaar_Step(Regelaar *pid, float setpoint, float measurement, float *output);
 
-/* Theoretical VFD PI: m/s input, 0-100% output, 100% = 50 Hz. */
-bool Regelaar_InitWindtunnel(Regelaar *pid, float dt);
+/* Zoals MotorIOhistory_t uit de deltarobot, nu voor een ventilator.
+ * PI heeft slechts een vorige fout en een integratietoestand nodig. */
+typedef struct
+{
+    float e_1;              // vorige fout [m/s]
+    float i_1;              // vorige I-bijdrage [%]
+    float meting_1;         // vorige luchtsnelheid [m/s], voor optionele D-term
+    float d_1;              // vorige gefilterde D-bijdrage [%]
+    bool gevuld;           // eerste meting heeft nog geen afgeleide
+} MotorIOhistory_t;
+
+typedef struct
+{
+    float Kp, Ki, Kd;
+    float Tsample, Tau_f;
+    float minimum, maximum;
+    float i_factor;         // Ki * Tsample / 2 (Tustin)
+    float d_a, d_b;         // coefficienten van de gefilterde D-term
+    MotorIOhistory_t motorHist;
+} Regelaar;
+
+bool Regelaar_INIT(Regelaar *regelaar, float Tsample);
+bool Regelaar_Instellen(Regelaar *regelaar, float Kp, float Ki, float Kd,
+                        float Tsample, float minimum, float maximum, float Tau_f);
+void removeRegelaarHistory(Regelaar *regelaar);
+/* error = gewenst - gemeten [m/s]. Uitgang in %, 100% = 50 Hz.
+ * meting is alleen nodig voor de optionele D-term zonder setpoint-kick.
+ * false betekent ongeldige berekening; uitgang wordt dan nul. */
+bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang);

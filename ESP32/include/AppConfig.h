@@ -35,7 +35,7 @@
 #define SENSOR_I2C_SCL_PIN 22
 #define SENSOR_I2C_HZ 100000
 
-/* PI gains: Regelaar_InitWindtunnel. */
+/* PI gains: Regelaar_INIT. */
 #define MAX_SETPOINT 30.0f
 #define MAX_OUTPUT 100.0f
 

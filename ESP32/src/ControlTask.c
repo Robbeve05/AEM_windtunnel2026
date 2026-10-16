@@ -94,7 +94,7 @@ void ControlTask(void *argument)
     ConfigureControlClock();
 
     Regelaar pid;
-    ESP_ERROR_CHECK(Regelaar_InitWindtunnel(&pid, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
+    ESP_ERROR_CHECK(Regelaar_INIT(&pid, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
 
     SetpointCurve curve = {0};
     bool curveRunning = false;
@@ -116,7 +116,7 @@ void ControlTask(void *argument)
             curveRunning = false;
             state.output = 0.0f;
             state.reason = "CLOCK_TIMEOUT";
-            Regelaar_Reset(&pid);
+            removeRegelaarHistory(&pid);
             PublishControlState(&state, now);
             continue;
         }
@@ -128,7 +128,7 @@ void ControlTask(void *argument)
             curveRunning = false;
             state.output = 0.0f;
             state.reason = "CLOCK_OVERRUN";
-            Regelaar_Reset(&pid);
+            removeRegelaarHistory(&pid);
             PublishControlState(&state, now);
             continue;
         }
@@ -174,7 +174,7 @@ void ControlTask(void *argument)
                 case CMD_PID:
                     if (!state.running)
                     {
-                        if (Regelaar_Init(&pid, command.values[0], command.values[1],
+                        if (Regelaar_Instellen(&pid, command.values[0], command.values[1],
                             command.values[2], CONTROL_CLOCK_PERIOD_S, 0.0f,
                             MAX_OUTPUT, 0.05f))
                         {
@@ -238,10 +238,15 @@ void ControlTask(void *argument)
                 state.running = false;
                 state.reason = "RAMP_FAULT";
             }
-            else if (!Regelaar_Step(&pid, state.control_setpoint, sample.value, &state.output))
+            else
             {
-                state.running = false;
-                state.reason = "PID_FAULT";
+                // Zoals bij de deltarobot: eerst de fout, daarna de regelaar.
+                const float error = state.control_setpoint - sample.value;
+                if (!PIDregelaar(&pid, error, sample.value, &state.output))
+                {
+                    state.running = false;
+                    state.reason = "PID_FAULT";
+                }
             }
         }
 
@@ -250,7 +255,7 @@ void ControlTask(void *argument)
             curveRunning = false;
             state.control_setpoint = sample.value;
             state.output = 0.0f;
-            Regelaar_Reset(&pid);
+            removeRegelaarHistory(&pid);
         }
 
         PublishControlState(&state, now);

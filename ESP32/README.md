@@ -1,5 +1,7 @@
 # Windtunnel PI-controller - ESP32 / FreeRTOS
 
+Begin bij [LEESWIJZER.md](LEESWIJZER.md) voor de vergelijking met de oude deltarobotcode en de losse functies.
+
 De ESP32 regelt luchtsnelheid; de Raspberry Pi stuurt setpoints en start/stop via UART1. De Siemens SINAMICS V20 6SL3210-5BE25-5UV1 ontvangt de motoropdracht via Modbus RTU/RS485. Zie [V20_MODBUS.md](V20_MODBUS.md) voor bedrading, commissioning, registers en beperkingen.
 
 ## Software
