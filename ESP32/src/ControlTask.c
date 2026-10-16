@@ -23,6 +23,7 @@
 #include "AppConfig.h"
 #include "PiProtocol.h"
 #include "Regelaar.h"
+#include "SetpointCurve.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // static void ControlClockInterrupt(void *argument)
@@ -95,6 +96,9 @@ void ControlTask(void *argument)
     Regelaar pid;
     ESP_ERROR_CHECK(Regelaar_InitWindtunnel(&pid, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
 
+    SetpointCurve curve = {0};
+    bool curveRunning = false;
+
     TickType_t lastCommand = xTaskGetTickCount();
     Telemetry state = {.reason = "STOPPED"};
     PublishControlState(&state, xTaskGetTickCount());
@@ -109,6 +113,7 @@ void ControlTask(void *argument)
         if (clockTicks == 0U)
         {
             state.running = false;
+            curveRunning = false;
             state.output = 0.0f;
             state.reason = "CLOCK_TIMEOUT";
             Regelaar_Reset(&pid);
@@ -120,6 +125,7 @@ void ControlTask(void *argument)
         if (clockTicks != 1U)
         {
             state.running = false;
+            curveRunning = false;
             state.output = 0.0f;
             state.reason = "CLOCK_OVERRUN";
             Regelaar_Reset(&pid);
@@ -197,34 +203,52 @@ void ControlTask(void *argument)
         if (stopRequested)
         {
             state.running = false;
+            curveRunning = false;
             state.reason = "STOPPED";
         }
         else if (!state.sensor_ok)
         {
             state.running = false;
+            curveRunning = false;
             state.reason = "SENSOR_FAULT";
         }
         else if (!state.motor_ok)
         {
             state.running = false;
+            curveRunning = false;
             state.reason = "MOTOR_FAULT";
         }
         else if ((TickType_t)(now - lastCommand) >= pdMS_TO_TICKS(COMMAND_TIMEOUT_MS))
         {
             state.running = false;
+            curveRunning = false;
             state.reason = "COMMAND_TIMEOUT";
         }
 
         state.output = 0.0f;
-        if (state.running &&
-            !Regelaar_Step(&pid, state.setpoint, sample.value, &state.output))
+        if (state.running)
         {
-            state.running = false;
-            state.reason = "PID_FAULT";
+            if (!curveRunning)
+                curveRunning = SetpointCurve_Init(&curve, sample.value,
+                    SETPOINT_TRANSITION_TIME_S, SETPOINT_MAX_ACCELERATION_MPS2,
+                    SETPOINT_MAX_JERK_MPS3);
+            if (!curveRunning || !SetpointCurve_Step(&curve, state.setpoint,
+                    CONTROL_CLOCK_PERIOD_S, &state.control_setpoint))
+            {
+                state.running = false;
+                state.reason = "RAMP_FAULT";
+            }
+            else if (!Regelaar_Step(&pid, state.control_setpoint, sample.value, &state.output))
+            {
+                state.running = false;
+                state.reason = "PID_FAULT";
+            }
         }
 
         if (!state.running)
         {
+            curveRunning = false;
+            state.control_setpoint = sample.value;
             state.output = 0.0f;
             Regelaar_Reset(&pid);
         }

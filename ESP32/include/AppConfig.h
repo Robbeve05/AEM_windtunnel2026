@@ -38,3 +38,10 @@
 /* PI gains: Regelaar_InitWindtunnel. */
 #define MAX_SETPOINT 30.0f
 #define MAX_OUTPUT 100.0f
+
+/* Vijfdegraads luchtsnelheid-setpointcurve. Zelf instelbaar.
+ * Gevraagde totale overgangstijd; automatisch langer als limieten dat vereisen.
+ * Voorlopige waarden, geen gemeten grenzen van de installatie. */
+#define SETPOINT_TRANSITION_TIME_S 5.0f
+#define SETPOINT_MAX_ACCELERATION_MPS2 2.0f
+#define SETPOINT_MAX_JERK_MPS3 2.0f

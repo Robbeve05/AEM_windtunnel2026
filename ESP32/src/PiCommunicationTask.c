@@ -55,8 +55,8 @@ void PiCommunicationTask(void *argument)
             if (xQueuePeek(telemetry, &t, 0)==pdTRUE) {
                 char buffer[256];
                 snprintf(buffer, sizeof(buffer),
-                    "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s sim=%d\n",
-                    t.running, t.sensor_ok, t.motor_ok, t.setpoint, t.measurement, t.output, t.reason, SIMULATION_MODE);
+                    "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s sim=%d sp_ramp=%.3f\n",
+                    t.running, t.sensor_ok, t.motor_ok, t.setpoint, t.measurement, t.output, t.reason, SIMULATION_MODE, t.control_setpoint);
                 reply(buffer);
             }
             sent=now;

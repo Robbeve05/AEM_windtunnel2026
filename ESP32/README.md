@@ -64,3 +64,19 @@ UART1 op TX17/RX16, 115200 8N1, 3,3 V TTL, gedeelde signaal-GND. UART0 blijft US
 ## Nog op hardware te doen
 
 Implementeer het werkelijke luchtsnelheidssensortype, kalibratie en omzetting naar m/s. Controleer ESP32-board, pinnen, klokbron en RS485-transceiver. Commission de V20 volgens V20_MODBUS.md en de motorgegevens. Test stop, kabelverlies, stale feedback, drivestoringen, responstijden en ramps op de installatie voordat de theoretische PI-gains worden gebruikt. Er is geen hardwaretest of flash uitgevoerd als onderdeel van deze wijziging.
+
+## Instelbare vijfdegraads setpointcurve
+
+Pas deze drie waarden aan in `include/AppConfig.h` en bouw/flash opnieuw:
+
+| Instelling | Voorlopige waarde | Betekenis |
+| --- | --- | --- |
+| `SETPOINT_TRANSITION_TIME_S` | 5,0 s | Gewenste totale tijd per overgang |
+| `SETPOINT_MAX_ACCELERATION_MPS2` | 2,0 m/s² | Maximale veranderingssnelheid van het luchtsnelheidsetpoint |
+| `SETPOINT_MAX_JERK_MPS3` | 2,0 m/s³ | Maximale verandering van die versnelling |
+
+Alle waarden moeten positief zijn. Het profiel is `v(q)=v0+(v1-v0)*(10q³-15q⁴+6q⁵)`, met `q=t/T`. Begin en eind hebben nul versnelling en nul jerk. De werkelijke duur is de grootste van de gevraagde tijd, `1,875*abs(v1-v0)/a_max` en `sqrt((10/sqrt(3))*abs(v1-v0)/j_max)`. Bijvoorbeeld 0 naar 10 m/s duurt met de standaardwaarden 9,375 s, omdat de versnellingsgrens de gevraagde 5 s verlengt. 0 naar 2 m/s duurt 5 s.
+
+Bij START begint het profiel bij de gemeten luchtsnelheid. Een nieuwe SETPOINT tijdens een lopend segment wordt pas na dat segment opgepakt; alleen het nieuwste doel telt. Dit voorkomt sprongen door herplanning. Voor onmiddellijk stoppen gebruik je STOP: stoppen en fouten omzeilen het profiel en sturen OFF1. Bij herstart begint een nieuw profiel bij de dan gemeten luchtsnelheid.
+
+`STATUS sp=...` blijft het gevraagde einddoel. Het extra veld `sp_ramp=...` toont het actuele setpoint dat naar de PI gaat. De grenzen gelden voor de berekende referentiecurve, niet als garantie op de echte luchtstroming of motorbeweging. Drive-rampen en plantdynamiek blijven afzonderlijk van toepassing. De curve wordt op 1 ms bemonsterd.

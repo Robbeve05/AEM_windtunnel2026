@@ -8,7 +8,7 @@ typedef struct { float value; TickType_t tick; bool valid; } Sample;
 typedef struct { float output; TickType_t tick; bool run; } MotorRequest;
 typedef struct { bool ready; bool ok; TickType_t tick; } MotorStatus;
 typedef struct {
-    float setpoint, measurement, output;
+    float setpoint, measurement, output, control_setpoint;
     bool running, sensor_ok, motor_ok;
     const char *reason;
 } Telemetry;

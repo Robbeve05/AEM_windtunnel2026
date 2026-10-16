@@ -14,4 +14,7 @@ try {
     $command = 'pushd "' + $output + '" && call "' + $vcvars + '" >nul && cl /nologo /W4 /WX /std:c11 /I"' + $project + '\lib\V20Modbus" "' + $project + '\tests\test_v20.c" "' + $project + '\lib\V20Modbus\V20Modbus.c" /Fe:v20_tests.exe && v20_tests.exe'
     & cmd.exe /d /s /c $command
     if ($LASTEXITCODE -ne 0) { throw 'V20 tests mislukt.' }
+    $command = 'pushd "' + $output + '" && call "' + $vcvars + '" >nul && cl /nologo /W4 /WX /std:c11 /I"' + $project + '\lib\SetpointCurve" "' + $project + '\tests\test_curve.c" "' + $project + '\lib\SetpointCurve\SetpointCurve.c" /Fe:curve_tests.exe && curve_tests.exe'
+    & cmd.exe /d /s /c $command
+    if ($LASTEXITCODE -ne 0) { throw 'Setpoint curve tests mislukt.' }
 } finally { Pop-Location }
