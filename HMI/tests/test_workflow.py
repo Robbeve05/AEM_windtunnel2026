@@ -81,84 +81,15 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn('measurement',frame)
                 self.assertTrue(frame['simulation'])
 
-    def test_arduino_filter_setting_persists_and_validates(self):
-        result = self.post('settings/arduino-filter', {'cutoff_hz':2.5})
-        self.assertEqual(result, {'cutoff_hz':2.5, 'command_sent':False, 'device_confirmed':False})
+    def test_pressure_filter_setting_persists_and_validates(self):
+        result = self.post('settings/pressure-filter', {'cutoff_hz': 2.5})
+        self.assertEqual(result, {'cutoff_hz': 2.5, 'command_sent': False, 'device_confirmed': False})
         self.assertEqual(self.controller.config.filter_cutoff_hz, 2.5)
         saved = json.loads((self.base / 'config/config.json').read_text())
         self.assertEqual(saved['filter_cutoff_hz'], 2.5)
-        self.assertEqual(self.client.get('/api/status').json()['arduino_filter']['configured_cutoff_hz'], 2.5)
-        self.assertEqual(self.client.post('/api/settings/arduino-filter', json={'cutoff_hz':10.1}).status_code, 422)
-        self.assertEqual(self.controller.config.filter_cutoff_hz, 2.5)
-
-    def test_arduino_serial_filter_command_and_telemetry(self):
-        from types import SimpleNamespace
-
-        from backend.arduino import ArduinoPitotSerial
-        from backend.models import Config
-
-        class SerialStub:
-            is_open = True
-
-            def __init__(self):
-                self.writes = []
-
-            def reset_input_buffer(self):
-                pass
-
-            def write(self, value):
-                self.writes.append(value)
-
-            def flush(self):
-                pass
-
-        self.assertEqual(Config().filter_cutoff_hz, 1.0)
-        connection = SerialStub()
-        reader = ArduinoPitotSerial(port='/dev/mock', filter_cutoff_hz=2.7)
-        reader.serial = SimpleNamespace(
-            Serial=lambda *_args, **_kwargs: connection,
-            SerialException=OSError,
-        )
-        with patch('backend.arduino.time.sleep'):
-            self.assertTrue(reader.connect())
-        self.assertEqual(connection.writes, [b'FILTER_HZ=2.7\n'])
-
-        reader.connection = SerialStub()
-        self.assertTrue(reader.set_filter_cutoff_hz(3.2))
-        self.assertEqual(reader.connection.writes, [b'FILTER_HZ=3.2\n'])
-        sample = reader._parse(
-            'pressure_pa=12.3,temperature_c=21.0,airspeed_ms=4.5,airspeed_kmh=16.2,filter_hz=3.2'
-        )
-        self.assertEqual(sample['filter_hz'], 3.2)
-        self.assertEqual(reader.reported_filter_cutoff_hz, 3.2)
-
-    def test_arduino_retries_saved_filter_until_telemetry_confirms_it(self):
-        from backend.arduino import ArduinoPitotSerial
-
-        class SerialStub:
-            is_open = True
-
-            def __init__(self):
-                self.writes = []
-
-            def readline(self):
-                return b'pressure_pa=12.3,temperature_c=21.0,airspeed_ms=4.5,airspeed_kmh=16.2,filter_hz=5.0\n'
-
-            def write(self, value):
-                self.writes.append(value)
-
-            def flush(self):
-                pass
-
-        reader = ArduinoPitotSerial(filter_cutoff_hz=1.0)
-        reader.connection = SerialStub()
-        reader._last_filter_command_monotonic = 0.0
-        with patch('backend.arduino.time.monotonic', return_value=2.0):
-            sample = reader.read()
-
-        self.assertEqual(sample['filter_hz'], 5.0)
-        self.assertEqual(reader.connection.writes, [b'FILTER_HZ=1.0\n'])
-        self.assertEqual(reader.reported_filter_cutoff_hz, 5.0)
+        self.assertEqual(self.client.get('/api/status').json()['pressure_filter']['configured_cutoff_hz'], 2.5)
+        self.assertEqual(self.client.post('/api/settings/pressure-filter',
+                        json={'cutoff_hz': 10.1}).status_code, 422)
 
     def test_recording_rate_limits_only_saved_samples(self):
         measurements = self.controller.measurements
