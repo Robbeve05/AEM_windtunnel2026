@@ -10,6 +10,9 @@ class Tap(BaseModel):
 
 class Config(BaseModel):
     simulation: bool = True
+    device_mode: Literal['arduino_usb', 'esp32_tcp'] = 'arduino_usb'
+    esp32_host: str = '192.168.50.10'
+    esp32_port: int = Field(default=5000, ge=1, le=65535)
     sample_rate_hz: float = Field(default=20, ge=1, le=100, allow_inf_nan=False)
     filter_cutoff_hz: float = Field(default=1.0, ge=0.1, le=10, allow_inf_nan=False)
     air_density: float = Field(default=1.225, gt=0, le=10, allow_inf_nan=False)
