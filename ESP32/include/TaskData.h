@@ -23,7 +23,7 @@ typedef struct {
 } Telemetry;
 extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat,tap_samples;
 extern EventGroupHandle_t events;
-extern TaskHandle_t control_task_handle;
+extern TaskHandle_t control_task_handle, sensor_task_handle;
 #define STOP_REQUEST BIT0
 void SafetyTask(void *argument);
 void ControlTask(void *argument);
