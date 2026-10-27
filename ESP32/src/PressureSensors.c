@@ -91,18 +91,17 @@ bool SensorLib_PitotStep(Sample *out)
         }
     }
 #endif
+    /* A single missed I2C slot must not restart the ten-valid-reading
+     * average. A prolonged absence makes the last queued sample stale and
+     * ControlTask faults through SENSOR_TIMEOUT_MS. */
     if (!valid_read) {
         error_count++;
-        samples_in_window = 0;
-        window_pressure = window_temperature = 0.0f;
-        previous_us = 0;
-        sample_valid = false;
-    } else {
-        window_pressure += p;
-        window_temperature += temp;
-        samples_in_window++;
+        return false;
     }
-    if (valid_read && samples_in_window < PITOT_AVERAGE_SAMPLES)
+    window_pressure += p;
+    window_temperature += temp;
+    samples_in_window++;
+    if (samples_in_window < PITOT_AVERAGE_SAMPLES)
         return false;
 
     /* One published sample per 10 control ticks (20 Hz for a 200 Hz loop). */
@@ -150,53 +149,101 @@ bool SensorLib_PitotStep(Sample *out)
     return true;
 }
 
-/* Core 0 only: pressure-tap I2C never executes in ControlTask. */
-void SensorLib_ReadTaps(Sample *out)
+/* Author: R.E. van Eekelen.
+ * Incremental pressure-tap scan on Core 0, one I2C transaction per 5 ms
+ * phase. A conversion is triggered and read in later phases; the entire
+ * sixteen-channel sweep never blocks the Core 1 control task.
+ *
+ * The two TCA9548A multiplexers are selected in distinct transactions.
+ * The 16 tap pressures are separate from the pitot/speed sensor.
+ */
+bool SensorLib_TapsStep(Sample *out)
 {
-    if (!out) return;
-    out->taps_valid = 0;
-    for (int i = 0; i < 16; ++i) out->taps[i] = NAN;
+    if (out == NULL) return false;
 #if PRESSURE_TAPS_ENABLED && !SIMULATION_MODE
-    static const uint8_t trigger[] = {0xaa, 0, 0};
-    uint16_t started = 0;
+    static Sample aggregate;
+    static unsigned channel;
+    static uint8_t stage;
+    static int64_t conversion_started_us;
+    static bool initialized;
+    if (!initialized) {
+        for (unsigned i = 0; i < 16; ++i) aggregate.taps[i] = NAN;
+        initialized = true;
+    }
     const uint8_t off = 0;
-    for (int i = 0; i < 16; ++i) {
-        const uint8_t channel = (uint8_t)(1u << (i % 8));
-        if (!I2CBus_Write(MUX_0_ADDRESS, &off, 1) ||
-            !I2CBus_Write(MUX_1_ADDRESS, &off, 1) ||
-            !I2CBus_Write(i < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS, &channel, 1) ||
-            !I2CBus_Write(ABP2_ADDRESS, trigger, sizeof(trigger))) {
-            out->errors++;
-            continue;
+    const uint8_t mask = (uint8_t)(1u << (channel % 8u));
+    const uint8_t trigger[] = {0xAA, 0, 0};
+    uint8_t data[4];
+    bool success = false;
+    switch(stage) {
+    case 0: /* Disarm first multiplexer. */
+        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1)) return false;
+        stage = 1;
+        return false;
+    case 1: /* Disarm second multiplexer. */
+        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1)) return false;
+        stage = 2;
+        return false;
+    case 2: /* Select exactly one channel. */
+        if (!I2CBus_TryWrite(channel < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS,
+                             &mask, 1)) {
+            aggregate.errors++;
+            stage = 5;
+            return false;
         }
-        started |= (uint16_t)(1u << i);
+        stage = 3;
+        return false;
+    case 3: /* Start conversion. */
+        if (!I2CBus_TryWrite(ABP2_ADDRESS, trigger, sizeof(trigger))) {
+            aggregate.errors++;
+            stage = 5;
+            return false;
+        }
+        conversion_started_us = esp_timer_get_time();
+        stage = 4;
+        return false;
+    case 4: /* >= 5 ms conversion; never delay a task to wait. */
+        if (esp_timer_get_time() - conversion_started_us < 5000)
+            return false;
+        success = I2CBus_TryRead(ABP2_ADDRESS, data, sizeof(data));
+        if (success)
+            success = !(data[0] & 0x25u) && (data[0] & 0x40u);
+        if (success) {
+            const uint32_t raw = ((uint32_t)data[1] << 16) |
+                ((uint32_t)data[2] << 8) | data[3];
+            success = raw >= ABP2_OUTPUT_MIN && raw <= ABP2_OUTPUT_MAX;
+            if (success) {
+                aggregate.taps[channel] = ((float)raw - ABP2_OUTPUT_MIN) *
+                    (ABP2_MAX_PA - ABP2_MIN_PA) /
+                    (ABP2_OUTPUT_MAX - ABP2_OUTPUT_MIN) + ABP2_MIN_PA;
+                aggregate.taps_valid |= (uint16_t)(1u << channel);
+            }
+        }
+        if (!success) {
+            aggregate.errors++;
+            aggregate.taps[channel] = NAN;
+            aggregate.taps_valid &= (uint16_t)~(1u << channel);
+        }
+        stage = 5;
+        return false;
+    case 5: /* Reset first mux before publishing anything. */
+        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1)) return false;
+        stage = 6;
+        return false;
+    case 6: /* Reset second mux before advancing. */
+        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1)) return false;
+        channel = (channel + 1u) % 16u;
+        stage = 0;
+        aggregate.tick = xTaskGetTickCount();
+        aggregate.sequence++;
+        *out = aggregate;
+        return true;
+    default:
+        stage = 0;
+        return false;
     }
-    (void)I2CBus_Write(MUX_0_ADDRESS, &off, 1);
-    (void)I2CBus_Write(MUX_1_ADDRESS, &off, 1);
-    vTaskDelay(pdMS_TO_TICKS(5) + 1);
-    for (int i = 0; i < 16; ++i) {
-        if (!(started & (1u << i))) continue;
-        const uint8_t channel = (uint8_t)(1u << (i % 8));
-        uint8_t bytes[4];
-        if (!I2CBus_Write(MUX_0_ADDRESS, &off, 1) ||
-            !I2CBus_Write(MUX_1_ADDRESS, &off, 1) ||
-            !I2CBus_Write(i < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS, &channel, 1) ||
-            !I2CBus_Read(ABP2_ADDRESS, bytes, sizeof(bytes)) ||
-            (bytes[0] & 0x25u) || !(bytes[0] & 0x40u)) {
-            out->errors++; continue;
-        }
-        const uint32_t raw = ((uint32_t)bytes[1] << 16) |
-            ((uint32_t)bytes[2] << 8) | bytes[3];
-        if (raw < ABP2_OUTPUT_MIN || raw > ABP2_OUTPUT_MAX) {
-            out->errors++; continue;
-        }
-        out->taps[i] = ((float)raw - ABP2_OUTPUT_MIN) *
-            (ABP2_MAX_PA - ABP2_MIN_PA) /
-            (ABP2_OUTPUT_MAX - ABP2_OUTPUT_MIN) + ABP2_MIN_PA;
-        out->taps_valid |= (uint16_t)(1u << i);
-    }
-    (void)I2CBus_Write(MUX_0_ADDRESS, &off, 1);
-    (void)I2CBus_Write(MUX_1_ADDRESS, &off, 1);
+#else
+    (void)out;
+    return false;
 #endif
-    out->tick = xTaskGetTickCount();
 }
