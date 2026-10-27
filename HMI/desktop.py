@@ -48,7 +48,7 @@ PANEL = "#1e2023"
 
 PAGES = (
     ("overview", "◫", "Overview", "Tunnel overview", "A clear view of your flow. Every parameter, in real time."),
-    ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the Arduino Uno / ASPD-4525 telemetry frame."),
+    ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the ESP32-S3 / ASPD-4525 telemetry frame."),
     ("cp", "⌁", "Cp Analysis", "Cp analysis", "Multi-point pressure distribution is the next measurement subsystem."),
     ("measurements", "▤", "Measurements", "Measurements", "Record and review real pitot-tube measurements."),
     ("storage", "▱", "Storage", "Storage & export", "Keep data local and export complete runs when needed."),
@@ -246,7 +246,7 @@ class HMIWindow(QMainWindow):
         self.exit_button.setObjectName("exitButton")
         self.exit_button.clicked.connect(self.close)
         nav_layout.addWidget(self.exit_button)
-        self.hardware_mode_badge = QLabel("ARDUINO USB")
+        self.hardware_mode_badge = QLabel("ESP32 ETHERNET")
         self.hardware_mode_badge.setObjectName("hardwareModeBadge")
         nav_layout.addWidget(self.hardware_mode_badge)
         facility_label = QLabel("Avans windtunnel test facility\nSUPERVISORY HMI · 2026")
@@ -290,7 +290,7 @@ class HMIWindow(QMainWindow):
         heading_left.addWidget(self.page_description)
         heading.addLayout(heading_left)
         heading.addStretch(1)
-        self.mode_tag = QLabel("WAITING FOR ARDUINO")
+        self.mode_tag = QLabel("WAITING FOR ESP32")
         self.mode_tag.setObjectName("tagAmber")
         heading.addWidget(self.mode_tag, 0, Qt.AlignmentFlag.AlignVCenter)
         main_layout.addLayout(heading)
@@ -366,7 +366,7 @@ class HMIWindow(QMainWindow):
         health_layout.addLayout(health_heading)
         self.health_labels = {}
         for key, label in (
-            ("host", "Host / Raspberry Pi"), ("arduino", "Arduino Uno"), ("serial", "USB serial"),
+            ("host", "Host / Raspberry Pi"), ("arduino", "ESP32-S3"), ("serial", "Ethernet TCP"),
             ("pitot", "Pitot sensor"), ("pressure_sensors", "Cp pressure taps"),
             ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
         ):
@@ -398,7 +398,7 @@ class HMIWindow(QMainWindow):
         notice_layout = QVBoxLayout(warning_notice)
         notice_layout.setContentsMargins(8, 7, 8, 7)
         notice_layout.setSpacing(0)
-        self.warnings = QLabel("Waiting for Arduino pitot data")
+        self.warnings = QLabel("Waiting for ESP32 pitot data")
         self.warnings.setObjectName("warningText")
         self.warnings.setWordWrap(True)
         notice_layout.addWidget(self.warnings)
@@ -662,7 +662,7 @@ class HMIWindow(QMainWindow):
         buttons.addWidget(self.record_stop)
         buttons.addStretch(1)
         recording.addLayout(buttons)
-        self.file_status = QLabel("Connect Arduino Uno via USB to record.")
+        self.file_status = QLabel("Connect ESP32-S3 via Ethernet to record.")
         self.file_status.setObjectName("hint")
         recording.addWidget(self.file_status)
 
@@ -727,8 +727,8 @@ class HMIWindow(QMainWindow):
         self.raw_empty = self._empty_state(
             "USB",
             "NO SENSOR DATA",
-            "Arduino Uno not connected",
-            "Connect the Arduino Uno via USB to start live pitot measurements.",
+            "ESP32-S3 not connected",
+            "Connect the ESP32-S3 via Ethernet to start live pitot measurements.",
         )
         self.raw_table = self._table(("Channel", "Raw value", "Calibrated", "Unit", "Host timestamp", "Status"))
         self.raw_json = QPlainTextEdit()
@@ -737,7 +737,7 @@ class HMIWindow(QMainWindow):
         self.raw_table.hide()
         self.raw_json.hide()
         layout.addWidget(self.raw_empty, 1)
-        self.raw_card, raw_box = self._card(layout, "Sensor telemetry", "Live Arduino Uno / ASPD-4525 pitot telemetry")
+        self.raw_card, raw_box = self._card(layout, "Sensor telemetry", "Live ESP32-S3 / ASPD-4525 pitot telemetry")
         raw_box.addWidget(self.raw_table)
         self.raw_json_card, json_box = self._card(layout, "Complete incoming frame")
         json_box.addWidget(self.raw_json)
@@ -851,7 +851,7 @@ class HMIWindow(QMainWindow):
             "REC",
             "NO MEASUREMENTS YET",
             "No recorded datasets are available",
-            "Connect the Arduino Uno and start a measurement from the overview to create your first dataset.",
+            "Connect the ESP32-S3 and start a measurement from the overview to create your first dataset.",
             min_height=250,
         )
         box.addWidget(self.measurements_empty)
@@ -982,7 +982,7 @@ class HMIWindow(QMainWindow):
         toggle_row.addWidget(self.flow_toggle)
         box.addLayout(toggle_row)
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Arduino pressure low-pass filter\nCutoff frequency · 0.1–10 Hz"))
+        filter_row.addWidget(QLabel("ESP32 pressure low-pass filter\nCutoff frequency · 0.1–10 Hz"))
         self.filter_cutoff = QDoubleSpinBox()
         self.filter_cutoff.setRange(0.1, 10.0)
         self.filter_cutoff.setSingleStep(0.1)
@@ -990,18 +990,18 @@ class HMIWindow(QMainWindow):
         self.filter_cutoff.setSuffix(" Hz")
         self.filter_cutoff.setValue(1.0)
         filter_row.addWidget(self.filter_cutoff)
-        self.filter_apply = QPushButton("Apply to Arduino")
+        self.filter_apply = QPushButton("Apply to ESP32")
         self.filter_apply.clicked.connect(self._apply_filter_cutoff)
         filter_row.addWidget(self.filter_apply)
         box.addLayout(filter_row)
-        self.filter_status = QLabel("Filter setting will be sent when the Arduino connects.")
+        self.filter_status = QLabel("Filter setting will be sent when the ESP32 connects.")
         self.filter_status.setObjectName("hint")
         box.addWidget(self.filter_status)
         self.settings_grid = QGridLayout()
         box.addLayout(self.settings_grid)
         box.addWidget(self._heading("Pressure-tap system"))
         box.addWidget(QLabel("IN DEVELOPMENT · Multi-point Cp hardware is not connected yet."))
-        box.addWidget(QLabel("Current hardware: Arduino Uno + ASPD-4525 differential pressure sensor over USB serial. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned."))
+        box.addWidget(QLabel("Current hardware: ESP32-S3 + ASPD-4525 differential pressure sensor over Ethernet TCP. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned."))
         layout.addWidget(card)
         layout.addStretch(1)
         self.pages.addWidget(page)
@@ -1167,7 +1167,7 @@ class HMIWindow(QMainWindow):
         names = (
             ("simulation", "Simulation mode"), ("sample_rate_hz", "Expected pitot rate · Hz"),
             ("air_density", "Air density · kg/m³"), ("max_airspeed_ms", "Graph maximum airspeed · m/s"),
-            ("serial_port", "Arduino serial port"), ("baud_rate", "Baud rate"),
+            ("esp32_host", "ESP32 Ethernet host"), ("baud_rate", "Baud rate"),
             ("data_directory", "Local data directory"), ("usb_mount_path", "USB mount path"),
             ("simulate_usb", "Simulated USB export"),
         )
@@ -1182,18 +1182,18 @@ class HMIWindow(QMainWindow):
         def done(data, error):
             self.filter_apply.setEnabled(True)
             if error:
-                self._show_error(f"Could not apply Arduino filter setting: {error}")
+                self._show_error(f"Could not apply ESP32 filter setting: {error}")
                 return
             self.config["filter_cutoff_hz"] = data["cutoff_hz"]
             if data["device_confirmed"]:
-                self.filter_status.setText(f"Arduino confirmed a {data['cutoff_hz']:.1f} Hz filter.")
+                self.filter_status.setText(f"ESP32 confirmed a {data['cutoff_hz']:.1f} Hz filter.")
             elif data["command_sent"]:
-                self.filter_status.setText("Command sent; waiting for Arduino telemetry confirmation.")
+                self.filter_status.setText("Command sent; waiting for ESP32 telemetry confirmation.")
             else:
-                self.filter_status.setText("Setting saved; it will be sent when the Arduino connects.")
+                self.filter_status.setText("Setting saved; it will be sent when the ESP32 connects.")
 
         self.filter_apply.setEnabled(False)
-        self._post("settings/arduino-filter", {"cutoff_hz": cutoff_hz}, done)
+        self._post("settings/pressure-filter", {"cutoff_hz": cutoff_hz}, done)
 
     def _poll(self):
         if self.poll_busy:
@@ -1220,25 +1220,25 @@ class HMIWindow(QMainWindow):
         if error:
             return
         self.state = data
-        filter_status = data.get("arduino_filter", {})
+        filter_status = data.get("pressure_filter", {})
         if self.page_key == "settings":
             configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 1.0))
             reported = filter_status.get("reported_cutoff_hz")
             if filter_status.get("confirmed"):
-                self.filter_status.setText(f"Arduino confirmed a {configured:.1f} Hz filter.")
+                self.filter_status.setText(f"ESP32 confirmed a {configured:.1f} Hz filter.")
             elif data.get("hardware_mode") and reported is not None:
                 self.filter_status.setText(
-                    f"Waiting for Arduino to apply {configured:.1f} Hz; it currently reports {reported:.1f} Hz."
+                    f"Waiting for ESP32 to apply {configured:.1f} Hz; it currently reports {reported:.1f} Hz."
                 )
             elif data.get("hardware_mode"):
                 self.filter_status.setText("Waiting for firmware telemetry to confirm the filter setting.")
             else:
-                self.filter_status.setText("Simulation mode · the filter is sent when Arduino hardware is connected.")
+                self.filter_status.setText("Simulation mode · the filter is sent when ESP32 hardware is connected.")
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
-        self.hardware_mode_badge.setText("ARDUINO CONNECTED" if live else "ARDUINO USB")
-        self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ARDUINO")
+        self.hardware_mode_badge.setText("ESP32 CONNECTED" if live else "ESP32 ETHERNET")
+        self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ESP32")
         enabled = self.config.get("flow_metrics_enabled", True)
         self.stability_unit.setVisible(enabled)
         stability = sample.get("flow_stability_pct") if enabled else None
@@ -1286,7 +1286,7 @@ class HMIWindow(QMainWindow):
         self.file_status.setText(
             measurement.get("error") or
             (f"{measurement.get('file_status')} · {measurement.get('name')}" if measurement.get("name") else
-             ("Ready · enter a measurement name" if live else "Connect Arduino Uno via USB to record."))
+             ("Ready · enter a measurement name" if live else "Connect ESP32-S3 via Ethernet to record."))
         )
         for key, label in self.health_labels.items():
             label.setText(str((data.get("system") or {}).get(key, "—")))
