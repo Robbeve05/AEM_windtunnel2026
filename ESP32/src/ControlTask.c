@@ -26,7 +26,15 @@ _Static_assert(CONTROL_PERIOD_US == (1000000u / CONTROL_FREQUENCY_HZ),
                "GPTimer and PI sample periods must be equal");
 _Static_assert(CONTROL_FREQUENCY_HZ == 200u,
                "The approved wind tunnel controller runs at 200 Hz");
+_Static_assert(IO_SCHEDULER_PERIOD_US * 2u == CONTROL_PERIOD_US,
+               "Alternating phase events must give exactly 5 ms per task");
+_Static_assert(I2C_PHASE_OFFSET_US == IO_SCHEDULER_PERIOD_US,
+               "Core 0 I2C phase must start halfway between control cycles");
 
+/* One 400 Hz hardware timer, but each task receives 200 Hz notifications.
+ * Phase A: Core 1 pitot/control, Phase B (2.5 ms later): Core 0 tap step.
+ * Do NOT run I2C code in the ISR.
+ */
 static bool IRAM_ATTR ControlClockInterrupt(
     gptimer_handle_t timer,
     const gptimer_alarm_event_data_t *event,
@@ -35,8 +43,12 @@ static bool IRAM_ATTR ControlClockInterrupt(
     (void)timer;
     (void)event;
     (void)argument;
+    static bool control_phase = true;
     BaseType_t wake = pdFALSE;
-    vTaskNotifyGiveFromISR(control_task_handle, &wake);
+    TaskHandle_t destination = control_phase ? control_task_handle : sensor_task_handle;
+    control_phase = !control_phase;
+    if (destination != NULL)
+        vTaskNotifyGiveFromISR(destination, &wake);
     return wake == pdTRUE;
 }
 
@@ -49,7 +61,7 @@ static void StartControlClock(void)
         .resolution_hz = 1000000
     };
     const gptimer_alarm_config_t alarm = {
-        .alarm_count = CONTROL_PERIOD_US,
+        .alarm_count = IO_SCHEDULER_PERIOD_US,
         .reload_count = 0,
         .flags.auto_reload_on_alarm = true
     };
