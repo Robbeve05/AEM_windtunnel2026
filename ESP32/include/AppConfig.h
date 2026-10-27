@@ -1,10 +1,9 @@
+/* Author: R.E. van Eekelen */
 #pragma once
 #include "BoardConfig.h"
-#define CONTROL_FREQUENCY_HZ 1000
+#define CONTROL_FREQUENCY_HZ 200
 #define SENSOR_FREQUENCY_HZ 25
-#define MODBUS_FREQUENCY_HZ 10
 #define SENSOR_PERIOD_MS (1000 / SENSOR_FREQUENCY_HZ)
-#define ACTUATOR_PERIOD_MS (1000 / MODBUS_FREQUENCY_HZ)
 #define SENSOR_TIMEOUT_MS 150
 #define CONTROL_CLOCK_TIMEOUT_MS 50
 #define COMMAND_TIMEOUT_MS 2000
@@ -15,7 +14,7 @@
 #define CONTROL_CLOCK_HZ CONTROL_FREQUENCY_HZ
 #define CONTROL_CLOCK_PERIOD_S (1.0f / CONTROL_CLOCK_HZ)
 #define MODBUS_SLAVE_ADDRESS 1
-#define MODBUS_BAUD 9600
+#define MODBUS_BAUD 115200
 #define MODBUS_PARITY UART_PARITY_EVEN
 #define MODBUS_STOP_BITS UART_STOP_BITS_1
 #define MODBUS_RESPONSE_TIMEOUT_MS 80
@@ -49,18 +48,87 @@
 #error Specify ABP2_MIN_PA, ABP2_MAX_PA, ABP2_OUTPUT_MIN and ABP2_OUTPUT_MAX from ordered part
 #endif
 #endif
-/* PI gains: Regelaar_INIT. */
+/* The existing PI and quintic ramp parameters are retained. */
 #define MAX_SETPOINT 30.0f
 #define MAX_OUTPUT 100.0f
-
-/* Vijfdegraads luchtsnelheid-setpointcurve. Zelf instelbaar.
- * Gevraagde totale overgangstijd; automatisch langer als limieten dat vereisen.
- * Voorlopige waarden, geen gemeten grenzen van de installatie. */
 #define SETPOINT_TRANSITION_TIME_S 5.0f
 #define SETPOINT_MAX_ACCELERATION_MPS2 2.0f
 #define SETPOINT_MAX_JERK_MPS3 2.0f
+#define CONTROL_PERIOD_US 5000u
+#define V20_SERVICE_BUDGET_US 1000u
+#define VFD_STATUS_PERIOD_US 100000u
+#define MODBUS_SILENCE_US 1750u
+#define MODBUS_WATCHDOG_MS 500u
+#define INPUT_TIMEOUT_MS 100u
+#define BUTTON_DEBOUNCE_MS 30u
+#define RESET_FEEDBACK_WINDOW_MS 5000u
+#define INIT_TIMEOUT_MS 15000u
+#define NORMAL_STOP_TIMEOUT_MS 30000u
+#define STOP_CONFIRM_HZ 0.1f
+#ifndef SAFETY_IO_COMMISSIONED
+#define SAFETY_IO_COMMISSIONED 0
+#endif
+#ifndef SAFETY_RELAY_OK_ACTIVE_LEVEL
+#define SAFETY_RELAY_OK_ACTIVE_LEVEL (-1)
+#endif
+#ifndef ESTOP_PRESSED_ACTIVE_LEVEL
+#define ESTOP_PRESSED_ACTIVE_LEVEL (-1)
+#endif
+#ifndef STOP_BUTTON_OK_ACTIVE_LEVEL
+#define STOP_BUTTON_OK_ACTIVE_LEVEL (-1)
+#endif
+#ifndef START_BUTTON_ACTIVE_LEVEL
+#define START_BUTTON_ACTIVE_LEVEL (-1)
+#endif
+#ifndef RESET_BUTTON_ACTIVE_LEVEL
+#define RESET_BUTTON_ACTIVE_LEVEL (-1)
+#endif
+#ifndef VFD_FAULT_DI_FITTED
+#define VFD_FAULT_DI_FITTED 0
+#endif
+#ifndef VFD_FAULT_DI_ACTIVE_LEVEL
+#define VFD_FAULT_DI_ACTIVE_LEVEL (-1)
+#endif
+#ifndef CONTACTOR_FEEDBACK_FITTED
+#define CONTACTOR_FEEDBACK_FITTED 0
+#endif
+#ifndef CONTACTOR_OK_ACTIVE_LEVEL
+#define CONTACTOR_OK_ACTIVE_LEVEL (-1)
+#endif
+#ifndef VFD_ENABLE_DO_BIT
+#define VFD_ENABLE_DO_BIT (-1)
+#endif
+#ifndef VFD_ENABLE_ACTIVE_LEVEL
+#define VFD_ENABLE_ACTIVE_LEVEL (-1)
+#endif
+#ifndef PI_HEARTBEAT_REQUIRED
+#define PI_HEARTBEAT_REQUIRED 1
+#endif
+#ifndef ALLOW_REMOTE_START
+#define ALLOW_REMOTE_START 0
+#endif
+#ifndef ETH_STATIC_IP_ENABLED
+#define ETH_STATIC_IP_ENABLED 0
+#endif
+#ifndef ETH_STATIC_IP
+#define ETH_STATIC_IP "192.168.50.10"
+#endif
+#ifndef ETH_STATIC_MASK
+#define ETH_STATIC_MASK "255.255.255.0"
+#endif
+#ifndef ETH_STATIC_GATEWAY
+#define ETH_STATIC_GATEWAY "192.168.50.1"
+#endif
+#if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL < 0 || ESTOP_PRESSED_ACTIVE_LEVEL < 0 || STOP_BUTTON_OK_ACTIVE_LEVEL < 0 || START_BUTTON_ACTIVE_LEVEL < 0 || RESET_BUTTON_ACTIVE_LEVEL < 0 || VFD_ENABLE_DO_BIT < 0 || VFD_ENABLE_DO_BIT > 7 || VFD_ENABLE_ACTIVE_LEVEL < 0)
+#error Commission all input levels and the non-safety K2 output before enabling hardware
+#endif
 
-/* Optional operational DI interlock: -1 = unassigned; DI index 0..7 otherwise.
- * Verify actual wiring/polarity before assigning. Never replaces hardware E-stop. */
-#define INTERLOCK_DI_INDEX (-1)
-#define INTERLOCK_OK_LEVEL 0
+#if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL > 1 || ESTOP_PRESSED_ACTIVE_LEVEL > 1 || STOP_BUTTON_OK_ACTIVE_LEVEL > 1 || START_BUTTON_ACTIVE_LEVEL > 1 || RESET_BUTTON_ACTIVE_LEVEL > 1 || VFD_ENABLE_ACTIVE_LEVEL > 1)
+#error Active levels must be zero or one
+#endif
+#if VFD_FAULT_DI_FITTED && (VFD_FAULT_DI_ACTIVE_LEVEL < 0 || VFD_FAULT_DI_ACTIVE_LEVEL > 1)
+#error Commission the optional VFD fault polarity before fitting it
+#endif
+#if CONTACTOR_FEEDBACK_FITTED && (CONTACTOR_OK_ACTIVE_LEVEL < 0 || CONTACTOR_OK_ACTIVE_LEVEL > 1)
+#error Commission the optional contactor feedback polarity before fitting it
+#endif

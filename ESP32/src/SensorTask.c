@@ -1,6 +1,6 @@
 #include "TaskData.h"
 #include "AppConfig.h"
-#include "WindtunnelHAL.h"
+#include "PressureSensors.h"
 #include "freertos/task.h"
 #include <math.h>
 void SensorTask(void *argument)

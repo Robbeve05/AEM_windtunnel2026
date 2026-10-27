@@ -1,30 +1,26 @@
+/* Author: R.E. van Eekelen. Polling backstop and non-safety K2 output owner. */
 #include "AppConfig.h"
 #include "TaskData.h"
-#include "driver/gpio.h"
+#include "SafetyIO.h"
+#include "Buttons.h"
+#include "I2CBus.h"
 #include "esp_task_wdt.h"
 #include "esp_err.h"
-
-void SafetyTask(void *argument)
-{
-    (void)argument;
-#if INTERLOCK_DI_INDEX >= 0
-    const int pins[]=BOARD_DI_PINS;
-    _Static_assert(INTERLOCK_DI_INDEX<8,"Invalid interlock input");
-    gpio_config_t config={.pin_bit_mask=1ULL<<pins[INTERLOCK_DI_INDEX],.mode=GPIO_MODE_INPUT};
-    ESP_ERROR_CHECK(gpio_config(&config));
-#endif
+void SafetyTask(void *argument) {
+    (void)argument; Buttons buttons={0}; SafetySnapshot previous={0};
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
-    for (;;) {
-#if INTERLOCK_DI_INDEX >= 0
-        if (gpio_get_level(pins[INTERLOCK_DI_INDEX])!=INTERLOCK_OK_LEVEL)
-            xEventGroupSetBits(events,INTERLOCK_OPEN|STOP_REQUEST);
-        else xEventGroupClearBits(events,INTERLOCK_OPEN);
-#endif
-        MotorRequest request={0};
-        if (xQueuePeek(motor_requests,&request,0)==pdTRUE && request.run &&
-            xTaskGetTickCount()-request.tick>=pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS))
-            xEventGroupSetBits(events,STOP_REQUEST);
+    TickType_t wake=xTaskGetTickCount();
+    for(;;) {
+        SafetySnapshot s=SafetyIO_Read();
+        s.start_sequence=previous.start_sequence; s.reset_sequence=previous.reset_sequence;
+        s.start_ms=previous.start_ms; s.reset_ms=previous.reset_ms;
+        Buttons_Update(&buttons,&s,s.tick_ms);
+        MotorRequest request={0}; xQueuePeek(motor_requests,&request,0);
+        bool fresh=xTaskGetTickCount()-request.tick<pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS);
+        bool enable=fresh&&request.permissive&&!SafetyIO_Inhibited();
+        s.outputs_ok=DigitalOutputs_Set(enable);
+        xQueueOverwrite(safety_status,&s); previous=s;
         ESP_ERROR_CHECK(esp_task_wdt_reset());
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelayUntil(&wake,pdMS_TO_TICKS(10));
     }
 }

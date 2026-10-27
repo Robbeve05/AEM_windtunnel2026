@@ -1,0 +1,229 @@
+
+/*
+ * Regelaar.c
+ *
+ * Created: 10/06/2026 19:47:54
+ *  Author: R.E. van Eekelen
+ */ 
+#include "Regelaar.h"
+///////////////////////////////////////////////////////////////////////////////
+// system includes
+#include <asf.h>
+#include <stdint.h>
+#include <math.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+#include "vPrintString.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// HAL includes for RTSW board
+
+
+///////////////////////////////////////////////////////////////////////////////
+// application includes
+#include "MachinePins.h"
+#include "ControlTask.h"
+
+//static float Kp = 4.723f;
+//static float Tau_d = 0.0375;
+//static float Tau_f = 0.00125;
+//static float Tau_i = 0.125;
+
+///////////////////////////////////////////////////////////////////////////////
+// Defines
+#define PI				(3.1415926535897932384626433832795f)
+#define DEG_TO_RAD		(PI / 180.0f) // conversiefactor van graden naar radialen
+#define RAD_TO_DEG		(180.0f / PI) // conversiefactor van radialen naar graden
+#define maxErrorM		(10.0f * DEG_TO_RAD * i_twk) //
+
+///////////////////////////////////////////////////////////////////////////////
+// REGELAAR constants 
+///////////////////////////////////////////////////////////////////////////////
+#define wb_factor (0.35f) //bandbreedte factor van de resonantiefrequentie
+//#define wb_factor (0.35f) //bandbreedte factor van de resonantiefrequentie
+#define Tsample (0.001f)
+
+#define Je1M (11.394e-6f) // kgm^2, op de motor
+#define Je2M (1.923e-6f) // kgm^2,
+
+
+//#define Je1M (1.0308e-5f) // kgm^2, op de motor
+//#define Je2M (7.3072e-7f) // kgm^2,
+
+
+#define K12M (0.0211f) // Nm/rad, onderarm
+
+#define Ka (0.2f)	// [A/V]
+#define Kt (0.0254f) // Nm/V (Ka [A/V] * Kt [Nm/A])
+#define Kact (Ka * Kt) // Nm/V, totale motorconstante
+
+// Regelaarcoefficienten uit de Tustinmethode
+static float Kp, a0, a1, a2, b0, b1, b2;
+
+//////////////////////////////////////////////////////////////////////////////
+// struct om historie waarden error en outputvoltage op te slaan.
+typedef struct
+{	
+	// Fout-historie (input)
+	float e_1;   // e[n-1]
+	float e_2;   // e[n-2]
+	
+	// voltage-historie (output)
+	float u_1;   // u[n-1]
+	float u_2;   // u[n-2]
+
+} MotorIOhistory_t;
+static MotorIOhistory_t motorHist[N_MOTORS]; //aanmaken struct
+
+///////////////////////////////////////////////////////////////////////////////
+// void Regelaar_INIT(void)
+/*
+ * Berekent eenmalig de digitale PID-coefficienten en wist de historie.
+ * Invoer: geen.
+ * Uitvoer: geen returnwaarde; interne regelaarvariabelen worden geinitialiseerd.
+ */
+void Regelaar_INIT(void)
+{
+	float w_resonantie = sqrt(K12M * ( (Je1M + Je2M) / (Je1M * Je2M) ));
+	float f_resoantie = w_resonantie / (2*PI);
+
+	float w_antiresonantie = sqrt(K12M / Je2M);
+	float f_antiresonantie = w_antiresonantie / (2*PI);
+
+	vPrintString("w_resonantie = %.3f\n", w_resonantie);
+	vPrintString("f_resonantie = %.3f\n", f_resoantie);
+	vPrintString("w_antiresonantie = %.3f\n", w_antiresonantie);
+	vPrintString("f_antiresonantie = %.3f\n", f_antiresonantie);
+
+	float wbM = wb_factor * w_resonantie;
+	float FbM = wbM / (2*PI);
+	
+	vPrintString("bandbreedte = %.3f [rad/s]\n", wbM);
+	vPrintString("Frequentie bandbreedte = %.3f [Hz]\n", FbM);
+	
+	float Ks = (wbM*wbM) * (Je1M + Je2M);
+	Kp = Ks / Kact;
+	float Tau_i = 10 / wbM;
+	float Tau_d = 3 / wbM;
+	float Tau_f = 1 / (10 * wbM);
+	
+	vPrintString("Ks = %.3f\n", Ks);
+	vPrintString("Kp = %.3f\n", Kp);
+	vPrintString("Tau_i = %.3f\n", Tau_i);
+	vPrintString("Tau_d = %.3f\n", Tau_d);
+	vPrintString("Tau_f = %.3f\n", Tau_f);
+	
+	//Eenmalig termen bepalen voor overzichtelijkheid
+	const float Ti_term = (2.0f * Tau_i) / Tsample;
+	const float Tf_term = (2.0f * Tau_f) / Tsample;
+	const float Td_term = (2.0f * Tau_d) / Tsample;
+
+	a0 = Ti_term * (1.0f + Tf_term); 	// u[n]
+	a1 = -2.0f * Ti_term * Tf_term;		// u[n-1]
+	a2 = -Ti_term * (1.0f - Tf_term);	// u[n-2]
+
+	b0 = (1.0f + Td_term) * (1.0f + Ti_term);	// e[n]
+	b1 = ((1.0f + Td_term) * (1.0f - Ti_term)) + ((1.0f - Td_term) * (1.0f + Ti_term));	// e[n-1]
+	b2 = (1.0f - Td_term) * (1.0f - Ti_term); // e[n-2]
+
+	//historie waarden op nul stellen
+	for (uint8_t arm = 0; arm < N_MOTORS; arm++)
+	{
+		motorHist[arm].e_1 = 0.0f;
+		motorHist[arm].e_2 = 0.0f;
+
+		motorHist[arm].u_1 = 0.0f;
+		motorHist[arm].u_2 = 0.0f;
+	}
+}//end-function
+
+//////////////////////////////////////////////////////////////////////////////
+// float PIDregelaar(uint8_t motorIndex, float error)
+float spikeError[N_MOTORS] = {0.0f, 0.0f, 0.0f};
+uint16_t printCount = 0U;
+/*
+ * Berekent de motorspanning met de digitale PID-regelaar.
+ * Invoer: motorIndex kiest de motor, error is de regelfout in motor-radialen.
+ * Uitvoer: gewenste motorspanning in volt.
+ */
+float PIDregelaar(uint8_t motorIndex, float error)
+{
+	 if (motorIndex >= N_MOTORS)
+	 {
+		 vPrintString("> Onbekende motor (Aoutput = 0V)");
+		 return 0.0f;
+	 }
+
+	// bij een extreme positiefout naar error gaan, om optoeren te voorkomen.
+	if ( fabsf(error) > maxErrorM)
+	{
+		vPrintString("> Te grote fout, namelijk: %.2f graden op de arm.\n", ( error * RAD_TO_DEG)/i_twk );
+		ToState(STATE_FAULT);
+		 return 0.0f;		
+	}
+	
+	 MotorIOhistory_t *hist = &motorHist[motorIndex];
+
+	
+	float u_0 = ( (Kp * (b0 * error + b1 * hist->e_1 + b2 * hist->e_2)) - (a1 * hist->u_1) - (a2 * hist->u_2) ) / a0;
+	
+	/*
+	// printing spike error
+	if (fabsf(error) > fabsf(spikeError[motorIndex]))
+	{
+		spikeError[motorIndex] = error;
+	}
+	
+	printCount++;
+	if (printCount >= 3000)
+	{
+		for (uint8_t i = 0; i < N_MOTORS; i++)
+		{
+			vPrintString("Arm %u error peak: %.6f deg\n",(unsigned int)i, ( (spikeError[motorIndex] * RAD_TO_DEG)/i_twk ));
+			spikeError[i] = 0.0f;
+		}
+		printCount = 0;
+	}
+	*/
+
+
+	 // Historie doorschuiven
+	 hist->e_2 = hist->e_1;
+	 hist->e_1 = error;
+
+	 hist->u_2 = hist->u_1;
+	 hist->u_1 = u_0;
+
+	 return u_0;
+}// end-function
+
+///////////////////////////////////////////////////////////////////////////////
+// void removeRegelaarHistory(void)
+/*
+ * Wist de regelaar historie.
+ * Invoer: arm/motor.
+ * Uitvoer: geen returnwaarde; interne regelaarvariabelen worden geinitialiseerd.
+ */
+void removeRegelaarHistory(uint8_t arm)
+{
+	//fout nullen
+	motorHist[arm].e_1 = 0.0f;
+	motorHist[arm].e_2 = 0.0f;
+	
+	//spanningnullen
+	motorHist[arm].u_1 = 0.0f;
+	motorHist[arm].u_2 = 0.0f;
+}//end-function
+
+//////////////////////////////////////////////////////////////////////////////
+// float FeedForward(float alpha)
+/*
+ * Berekent een feedforward-spanning uit de gewenste hoekacceleratie.
+ * Invoer: alpha is de gewenste motorhoekacceleratie.
+ * Uitvoer: feedforward-spanning in volt.
+ */
+float FeedForward(float alpha)
+{
+	return ((Je1M + Je2M) * alpha) / Kact;
+}

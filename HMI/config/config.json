@@ -1,13 +1,14 @@
 {
   "simulation": false,
-  "sample_rate_hz": 25,
+  "sample_rate_hz": 25.0,
+  "filter_cutoff_hz": 5.0,
   "air_density": 1.225,
-  "max_airspeed_ms": 42,
+  "max_airspeed_ms": 42.0,
   "serial_port": "auto",
   "baud_rate": 115200,
   "data_directory": "data/measurements",
   "usb_mount_path": "",
   "simulate_usb": true,
-  "pressure_taps": [],
-  "flow_metrics_enabled": true
+  "flow_metrics_enabled": true,
+  "pressure_taps": []
 }

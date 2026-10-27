@@ -26,7 +26,7 @@ void Ethernet_Init(void)
     esp_netif_config_t netconfig=ESP_NETIF_DEFAULT_ETH();
     esp_netif_t *netif=esp_netif_new(&netconfig);
     ESP_ERROR_CHECK(netif ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+
     spi_bus_config_t bus={.mosi_io_num=ETH_MOSI_PIN,.miso_io_num=ETH_MISO_PIN,
         .sclk_io_num=ETH_SCLK_PIN,.quadwp_io_num=-1,.quadhd_io_num=-1};
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_CH_AUTO));
@@ -50,5 +50,13 @@ void Ethernet_Init(void)
     ESP_ERROR_CHECK(esp_netif_attach(netif,esp_eth_new_netif_glue(handle)));
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT,ESP_EVENT_ANY_ID,ethernet_event,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_ETH_GOT_IP,ethernet_event,NULL));
+#if ETH_STATIC_IP_ENABLED
+    esp_netif_ip_info_t info={0};
+    ESP_ERROR_CHECK(esp_netif_str_to_ip4(ETH_STATIC_IP,&info.ip));
+    ESP_ERROR_CHECK(esp_netif_str_to_ip4(ETH_STATIC_MASK,&info.netmask));
+    ESP_ERROR_CHECK(esp_netif_str_to_ip4(ETH_STATIC_GATEWAY,&info.gw));
+    ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif));
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(netif,&info));
+#endif
     ESP_ERROR_CHECK(esp_eth_start(handle));
 }

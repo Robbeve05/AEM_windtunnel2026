@@ -15,3 +15,12 @@
 #define BOARD_DI_PINS {4,5,6,7,8,9,10,11}
 #define BOARD_DO_I2C_ADDRESS 0x20
 #define BOARD_RTC_I2C_ADDRESS 0x51
+
+/* Functional allocation; field polarity is deliberately uncommissioned. */
+#define SAFETY_RELAY_OK_GPIO 4
+#define ESTOP_PRESSED_GPIO 5
+#define STOP_BUTTON_OK_GPIO 6
+#define START_BUTTON_GPIO 7
+#define RESET_BUTTON_GPIO 8
+#define VFD_FAULT_DI_GPIO 9
+#define CONTACTOR_FEEDBACK_GPIO 10
