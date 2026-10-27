@@ -14,6 +14,7 @@
 #include "V20Modbus.h"
 #include "SafetyIO.h"
 #include "ControlTiming.h"
+#include "PressureSensors.h"
 
 #include <stdint.h>
 #include "driver/gptimer.h"
@@ -107,6 +108,7 @@ void ControlTask(void *argument)
     StateMachine machine;
     StateMachine_Init(&machine, (uint32_t)(esp_timer_get_time() / 1000));
 
+    const bool pitot_initialized = SensorLib_Init();
     const bool v20_initialized = V20Modbus_Init();
     if (!v20_initialized)
         StateMachine_Fault(&machine, FAULT_MODBUS,
@@ -146,6 +148,13 @@ void ControlTask(void *argument)
             window_start_us = started_us;
         }
 
+        /* Core 1 exclusively samples the pitot once per control tick.
+         * Publish a new 10-sample average approximately every 50 ms.
+         * Keep using the last published valid sample between updates.
+         * All other pressure taps remain on Core 0. */
+        Sample updated_pitot = {0};
+        if (pitot_initialized && SensorLib_PitotStep(&updated_pitot))
+            xQueueOverwrite(sensors, &updated_pitot);
         Sample sample = {0};
         SafetySnapshot safety = {0};
         PiHeartbeat heartbeat = {0};
