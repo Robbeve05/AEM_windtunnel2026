@@ -1,6 +1,6 @@
 {
   "simulation": false,
-  "sample_rate_hz": 25,
+  "sample_rate_hz": 20,
   "filter_cutoff_hz": 5,
   "air_density": 1.225,
   "max_airspeed_ms": 42,
