@@ -29,6 +29,16 @@ bool I2CBus_TryRead(uint8_t a, uint8_t *p, size_t n) {
     xSemaphoreGive(mutex);
     return result == ESP_OK;
 }
+/* Core 0: one non-waiting pressure-tap I2C operation per phase. */
+bool I2CBus_TryWrite(uint8_t a, const uint8_t *p, size_t n) {
+    if (!ready || mutex == NULL || p == NULL || n == 0 ||
+        xSemaphoreTake(mutex, 0) != pdTRUE)
+        return false;
+    const esp_err_t result = i2c_master_write_to_device(
+        I2C_NUM_0, a, p, n, pdMS_TO_TICKS(PITOT_I2C_TIMEOUT_MS));
+    xSemaphoreGive(mutex);
+    return result == ESP_OK;
+}
 bool DigitalOutputs_Set(bool enabled) {
 #if SIMULATION_MODE
     (void)enabled; return true;
