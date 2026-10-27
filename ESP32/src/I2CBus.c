@@ -1,4 +1,4 @@
-/* Author: R.E. van Eekelen. Core 0 only; never called by ControlTask. */
+/* Author: R.E. van Eekelen. Shared Core 0/Core 1 I2C bus; short Core 1 pitot transactions. */
 #include "I2CBus.h"
 #include "AppConfig.h"
 #include "SafetyIO.h"
@@ -16,6 +16,18 @@ bool I2CBus_Read(uint8_t a,uint8_t *p,size_t n) {
     if(!ready||xSemaphoreTake(mutex,pdMS_TO_TICKS(I2C_TIMEOUT_MS))!=pdTRUE) return false;
     bool ok=i2c_master_read_from_device(0,a,p,n,pdMS_TO_TICKS(I2C_TIMEOUT_MS))==ESP_OK;
     xSemaphoreGive(mutex); return ok;
+}
+/* No mutex wait: never hold up the 200 Hz controller behind Core 0. 
+ * ESP-IDF's legacy I2C driver still has a finite hardware timeout: verify 
+ * the real execution time and overrun counters on the board. */
+bool I2CBus_TryRead(uint8_t a, uint8_t *p, size_t n) {
+    if (!ready || mutex == NULL || p == NULL || n == 0 ||
+        xSemaphoreTake(mutex, 0) != pdTRUE)
+        return false;
+    const esp_err_t result = i2c_master_read_from_device(
+        I2C_NUM_0, a, p, n, pdMS_TO_TICKS(PITOT_I2C_TIMEOUT_MS));
+    xSemaphoreGive(mutex);
+    return result == ESP_OK;
 }
 bool DigitalOutputs_Set(bool enabled) {
 #if SIMULATION_MODE
