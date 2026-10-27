@@ -27,7 +27,7 @@ async function api(path, body) {
 }
 function toast(message, error=false) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').className=error?'error':''; $('toast').style.display='block'; toastTimer=setTimeout(()=>$('toast').style.display='none',5000); }
 function action(id, fn) { const el=$(id); if (!el) return; el.addEventListener('click', async()=>{el.disabled=true; try{await fn();}catch(e){toast(e.message,true);}finally{el.disabled=false;updateControls();}}); }
-function badge(id,text){const el=$(id);if(!el)return;el.textContent=text;el.className='tag '+(['FAULT','ERROR','NO DATA'].includes(text)?'error':['IDLE','COMPLETED'].includes(text)?'muted':['WAITING','IN DEVELOPMENT','SAVING'].includes(text)?'amber':'');}
+function badge(id,text){const el=$(id);if(!el)return;el.textContent=text;el.className='tag '+(['FAULT','ERROR','NO DATA','UNKNOWN'].includes(text)?'error':['IDLE','COMPLETED'].includes(text)?'muted':['WAITING','IN DEVELOPMENT','SAVING'].includes(text)?'amber':'');}
 function updateControls(){
   const recording=state?.measurement.state==='RECORDING';
   const valid=/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,79}$/.test($('measurement-name').value.trim());
@@ -44,6 +44,16 @@ action('exit-hmi',async()=>{if(!window.confirm('Close the Windtunnel HMI and ret
 $('measurement-name').addEventListener('input',updateControls);
 action('record-start',async()=>{await api('measurement/start',{name:$('measurement-name').value.trim(),recording_rate_hz:Number($('recording-rate').value)});toast('Recording started · live pitot data');});
 action('record-stop',async()=>{await api('measurement/stop',{});toast('Measurement saved');await refresh();});
+action('tunnel-stop',async()=>{await api('tunnel/stop',{});toast('Operational OFF1 STOP requested');});
+$('setpoint-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  try {
+    const val=Number($('setpoint').value);
+    if(!Number.isFinite(val)||val<0||val>config.max_airspeed_ms)throw new Error('Setpoint out of range');
+    await api('tunnel/setpoint',{airspeed_ms:val});
+    toast('Setpoint sent to ESP32');
+  }catch(error){toast(error.message,true);}
+});
 action('refresh-measurements',refresh);
 action('export-selected',async()=>{if(!$('export-select').value)throw new Error('Select a completed measurement');await api('storage/export/'+encodeURIComponent($('export-select').value),{});toast('Measurement exported');await refresh();});
 action('export-all',async()=>{await api('storage/export-all',{});toast('All completed measurements exported');await refresh();});
@@ -113,6 +123,8 @@ function onFrame(frame){
     }
     const ctrl=$('setpoint-form');
     if(ctrl)ctrl.hidden=false;
+    $('setpoint').disabled=drive.stale;
+    $('apply-setpoint').disabled=drive.stale;
     const stop=$('tunnel-stop');
     if(stop){stop.hidden=false;stop.disabled=drive.stale;}
     const start=$('tunnel-start');
@@ -166,7 +178,7 @@ async function loadDetail(id){
 async function init(){
   config=await api('config');$('density').value=config.air_density;
   const flowToggle=$('flow-metrics-toggle');flowToggle.checked=flowMetricsEnabled();flowToggle.addEventListener('change',async()=>{flowToggle.disabled=true;try{const result=await api('settings/flow-metrics',{enabled:flowToggle.checked});config.flow_metrics_enabled=result.enabled;history.forEach(p=>p.mean=null);toast(result.enabled?'5 s flow statistics enabled':'5 s flow statistics disabled');if(state)onFrame(state);}catch(e){flowToggle.checked=!flowToggle.checked;toast(e.message,true);}finally{flowToggle.disabled=false;}});velocity.setYRange(0,Math.max(45,Math.ceil(config.max_airspeed_ms/5)*5));
-  const fields={simulation:'Simulation mode',sample_rate_hz:'Expected pitot rate · Hz',filter_cutoff_hz:'Arduino filter cutoff · Hz',air_density:'Air density · kg/m³',max_airspeed_ms:'Graph maximum airspeed · m/s',serial_port:'Arduino serial port',baud_rate:'Baud rate',data_directory:'Local data directory',usb_mount_path:'USB mount path',simulate_usb:'Simulated USB export'};
+  const fields={device_mode:'Acquisition mode',esp32_host:'ESP32 Ethernet address',esp32_port:'ESP32 TCP port',simulation:'Simulation mode',sample_rate_hz:'Expected pitot rate · Hz',filter_cutoff_hz:'Arduino filter cutoff · Hz',air_density:'Air density · kg/m³',max_airspeed_ms:'Graph maximum airspeed · m/s',serial_port:'Arduino serial port',baud_rate:'Baud rate',data_directory:'Local data directory',usb_mount_path:'USB mount path',simulate_usb:'Simulated USB export'};
   $('settings-grid').innerHTML=Object.entries(fields).map(([key,label])=>`<div class="setting"><span>${label}</span>${escape(String(config[key]??'')||'Not configured')}</div>`).join('');
   $('filter-cutoff').value=Number(config.filter_cutoff_hz??1).toFixed(1);
   $('apply-filter').addEventListener('click',async()=>{
