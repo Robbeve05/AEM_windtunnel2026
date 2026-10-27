@@ -9,7 +9,7 @@ bool PiProtocol_Parse(const char *s, PiCommand *out)
     if (!s || !out) return false;
     static const struct { const char *name; CommandType type; int count; } commands[] = {
         {"STOP", CMD_STOP, 0}, {"START", CMD_START, 0},
-        {"SETPOINT", CMD_SETPOINT, 1}, {"PID", CMD_PID, 3}, {"PING", CMD_PING, 0}
+        {"SETPOINT", CMD_SETPOINT, 1}, {"PID", CMD_PID, 3}, {"PING", CMD_PING, 0}, {"FILTER", CMD_FILTER, 1}
     };
     while (isspace((unsigned char)*s)) ++s;
     for (unsigned i=0; i<sizeof(commands)/sizeof(commands[0]); ++i) {

@@ -18,6 +18,8 @@ int main(void)
     assert(PiProtocol_Parse("STOP", &c) && c.type==CMD_STOP);
     assert(PiProtocol_Parse("START", &c) && c.type==CMD_START);
     assert(PiProtocol_Parse("PING", &c) && c.type==CMD_PING);
+    assert(PiProtocol_Parse("FILTER 2.5", &c) && c.type==CMD_FILTER && c.values[0]==2.5f);
+    assert(!PiProtocol_Parse("FILTER nan", &c));
     const char *bad[] = {"", "START extra", "STARTNOW", "PID 1 2", "PID 1 2 3 4",
         "SETPOINT nan", "SETPOINT inf", "SETPOINT 1e999", "SETPOINT 2junk", "PID 1+2 3", "UNKNOWN"};
     for (unsigned i=0; i<sizeof(bad)/sizeof(bad[0]); ++i) assert(!PiProtocol_Parse(bad[i], &c));

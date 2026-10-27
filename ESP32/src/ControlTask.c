@@ -1,7 +1,7 @@
 /*
  * ControlTask.c
  *
- * Windtunnel control loop, synchronised to the external 1 kHz clock.
+ * Windtunnel control loop, synchronised to the internal 1 kHz GPTimer.
  */
 #include "TaskData.h"
 ///////////////////////////////////////////////////////////////////////////////
@@ -10,7 +10,9 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // ESP32 HAL includes
-#include "driver/gpio.h"
+#include "driver/gptimer.h"
+#include "esp_timer.h"
+#include "esp_task_wdt.h"
 #include "esp_err.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -28,45 +30,31 @@
 ///////////////////////////////////////////////////////////////////////////////
 // static void ControlClockInterrupt(void *argument)
 /*
- * Wordt op iedere opgaande flank van de externe 1 kHz-klok aangeroepen.
+ * Wordt op iedere alarm van de interne 1 kHz-GPTimer aangeroepen.
  * De ISR doet geen sensor-, regel- of motor-I/O; hij wekt alleen ControlTask.
  */
-static void IRAM_ATTR ControlClockInterrupt(void *argument)
+static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
+    const gptimer_alarm_event_data_t *event, void *argument)
 {
-    (void)argument;
-
-    BaseType_t higherPriorityTaskWoken = pdFALSE;
-    if (control_task_handle != NULL)
-    {
-        vTaskNotifyGiveFromISR(control_task_handle, &higherPriorityTaskWoken);
-        if (higherPriorityTaskWoken == pdTRUE)
-        {
-            portYIELD_FROM_ISR();
-        }
-    }
+    (void)timer; (void)event; (void)argument;
+    BaseType_t wake = pdFALSE;
+    vTaskNotifyGiveFromISR(control_task_handle, &wake);
+    /* GPTimer driver performs the ISR yield when this callback returns true. */
+    return wake == pdTRUE;
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// static void ConfigureControlClock(void)
-/*
- * Configureert de externe klok als opgaande-flankinterrupt op CONTROL_CLOCK_GPIO.
- */
 static void ConfigureControlClock(void)
 {
-    const gpio_config_t clockPin = {
-        .pin_bit_mask = 1ULL << CONTROL_CLOCK_GPIO,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-
-    ESP_ERROR_CHECK(gpio_config(&clockPin));
-    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(
-        (gpio_num_t)CONTROL_CLOCK_GPIO, ControlClockInterrupt, NULL));
-    ESP_ERROR_CHECK(gpio_set_intr_type(
-        (gpio_num_t)CONTROL_CLOCK_GPIO, GPIO_INTR_POSEDGE));
+    gptimer_handle_t timer;
+    const gptimer_config_t config = {.clk_src=GPTIMER_CLK_SRC_DEFAULT,
+        .direction=GPTIMER_COUNT_UP, .resolution_hz=1000000};
+    ESP_ERROR_CHECK(gptimer_new_timer(&config, &timer));
+    const gptimer_alarm_config_t alarm = {.alarm_count=1000000 / CONTROL_FREQUENCY_HZ,
+        .reload_count=0, .flags.auto_reload_on_alarm=true};
+    const gptimer_event_callbacks_t callbacks = {.on_alarm=ControlClockInterrupt};
+    ESP_ERROR_CHECK(gptimer_set_alarm_action(timer, &alarm));
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer, &callbacks, NULL));
+    ESP_ERROR_CHECK(gptimer_enable(timer));
+    ESP_ERROR_CHECK(gptimer_start(timer));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -84,14 +72,14 @@ static void PublishControlState(Telemetry *state, TickType_t now)
 ///////////////////////////////////////////////////////////////////////////////
 // void ControlTask(void *argument)
 /*
- * Verwerkt op iedere externe klokflank de PI(D)-regelaar en systeemstatus.
+ * Verwerkt op ieder intern timeralarm de PI(D)-regelaar en systeemstatus.
  */
 void ControlTask(void *argument)
 {
     (void)argument;
 
     control_task_handle = xTaskGetCurrentTaskHandle();
-    ConfigureControlClock();
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
 
     Regelaar pid;
     ESP_ERROR_CHECK(Regelaar_INIT(&pid, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
@@ -103,18 +91,40 @@ void ControlTask(void *argument)
     Telemetry state = {.reason = "STOPPED"};
     PublishControlState(&state, xTaskGetTickCount());
 
+    int64_t previous = 0, window = esp_timer_get_time();
+    uint32_t cycles = 0;
+    bool timingFault = false;
+    ConfigureControlClock();
     for (;;)
     {
         /* Een gemiste klok betekent dat de vaste Tustin-sampletijd niet geldt. */
         const uint32_t clockTicks = ulTaskNotifyTake(
             pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS));
         const TickType_t now = xTaskGetTickCount();
+        int64_t started = esp_timer_get_time();
+        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        if (previous) {
+            int64_t jitter = started - previous - 1000;
+            if (jitter < 0) jitter = -jitter;
+            if (started-previous >= 2000 && clockTicks==1) {
+                timingFault=true; state.missed_deadlines+=(started-previous)/1000-1;
+            }
+            if ((uint64_t)jitter > state.max_jitter_us) state.max_jitter_us = jitter;
+        }
+        previous = started;
+        cycles++;
+        if (started-window >= 1000000) {
+            state.control_hz = cycles * 1000000.0f / (started-window);
+            cycles=0; window=started;
+        }
+        state.stack_free = uxTaskGetStackHighWaterMark(NULL);
 
         if (clockTicks == 0U)
         {
             state.running = false;
             curveRunning = false;
             state.output = 0.0f;
+            timingFault = true; state.missed_deadlines += CONTROL_CLOCK_TIMEOUT_MS;
             state.reason = "CLOCK_TIMEOUT";
             removeRegelaarHistory(&pid);
             PublishControlState(&state, now);
@@ -127,6 +137,7 @@ void ControlTask(void *argument)
             state.running = false;
             curveRunning = false;
             state.output = 0.0f;
+            timingFault = true; state.missed_deadlines += clockTicks-1;
             state.reason = "CLOCK_OVERRUN";
             removeRegelaarHistory(&pid);
             PublishControlState(&state, now);
@@ -144,6 +155,7 @@ void ControlTask(void *argument)
         state.motor_ok = motor.ready && motor.ok &&
             (TickType_t)(now - motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
 
+        bool interlockOpen = (xEventGroupGetBits(events)&INTERLOCK_OPEN)!=0;
         bool stopRequested =
             (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) &
                 STOP_REQUEST) != 0;
@@ -156,7 +168,7 @@ void ControlTask(void *argument)
             switch (command.type)
             {
                 case CMD_START:
-                    if (!stopRequested && state.sensor_ok && state.motor_ok)
+                    if (!stopRequested && !interlockOpen && !timingFault && state.sensor_ok && state.motor_ok)
                     {
                         state.running = true;
                         state.reason = "RUNNING";
@@ -192,9 +204,10 @@ void ControlTask(void *argument)
                     break;
 
                 case CMD_STOP:
-                    stopRequested = true;
+                    stopRequested = true; timingFault = false;
                     break;
 
+                case CMD_FILTER: /* handled in the network task */
                 case CMD_PING:
                     break;
             }
@@ -205,7 +218,11 @@ void ControlTask(void *argument)
             state.running = false;
             curveRunning = false;
             state.reason = "STOPPED";
+            if (xEventGroupWaitBits(events,RESET_TIMING_FAULT,pdTRUE,pdFALSE,0)&RESET_TIMING_FAULT)
+                timingFault = false;
         }
+        else if (interlockOpen) { state.running=false; state.reason="INTERLOCK_OPEN"; }
+        else if (timingFault) { state.running=false; state.reason="CLOCK_FAULT"; }
         else if (!state.sensor_ok)
         {
             state.running = false;
@@ -259,5 +276,11 @@ void ControlTask(void *argument)
         }
 
         PublishControlState(&state, now);
+        state.execution_us = (uint32_t)(esp_timer_get_time()-started);
+        if (state.execution_us >= 1000) {
+            state.overruns++; timingFault=true; state.running=false; state.output=0;
+            state.reason="CONTROL_OVERRUN"; removeRegelaarHistory(&pid);
+            PublishControlState(&state, now);
+        }
     }
 }

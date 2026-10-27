@@ -4,6 +4,16 @@
 #include "freertos/portmacro.h"
 #include <math.h>
 
+static portMUX_TYPE filter_lock = portMUX_INITIALIZER_UNLOCKED;
+static float filter_hz=PITOT_FILTER_HZ;
+void SensorLib_SetFilter(float hz) {
+    if (!isfinite(hz) || hz<0.1f || hz>10.0f) return;
+    portENTER_CRITICAL(&filter_lock); filter_hz=hz; portEXIT_CRITICAL(&filter_lock);
+}
+float SensorLib_FilterHz(void) {
+    portENTER_CRITICAL(&filter_lock); float hz=filter_hz; portEXIT_CRITICAL(&filter_lock);
+    return hz;
+}
 #if SIMULATION_MODE
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static float drive, velocity;
@@ -30,11 +40,9 @@ bool MotorLib_Write(bool run, float value)
     Simulation_SetOutput(run ? value : 0.0f);
     return true;
 }
+void SensorLib_Details(Sample *s) { s->pressure_pa=0.5f*AIR_DENSITY*s->value*s->value; s->temperature_c=20; }
+void MotorLib_Details(MotorStatus *s) { s->actual_hz=drive*0.5f; s->status=0x0201; }
 #else
-/* TODO: I2C-sensortype, adres, kalibratie en conversie naar m/s invullen.
- * Geen fictieve geldige sensorwaarden bij ontbrekende hardware. */
-bool SensorLib_Init(void) { return false; }
-bool SensorLib_Read(float *value) { (void)value; return false; }
 /* Motor driver: V20Transport.c. */
 void Simulation_SetOutput(float value) { (void)value; }
 #endif

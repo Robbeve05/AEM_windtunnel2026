@@ -1,3 +1,5 @@
+> Industriële migratie: lees eerst [MIGRATION.md](MIGRATION.md). Onderstaande uitleg van de regelaar blijft bruikbaar; oude externe-klok/UART/DevKit-instructies zijn vervangen.
+
 # Leeswijzer: van deltarobot naar windtunnel
 
 Begin bij `lib/Regelaar/Regelaar.c`. De indeling volgt je oude bestand: includes, constanten, rekenfuncties, initialisatie, regelstap en historie wissen.
