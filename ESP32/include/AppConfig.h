@@ -2,7 +2,11 @@
 #pragma once
 #include "BoardConfig.h"
 #define CONTROL_FREQUENCY_HZ 200
-#define SENSOR_FREQUENCY_HZ 25
+/* The pitot is sampled at 200 Hz and published every 10 valid reads (20 Hz).
+ * Taps are serviced separately in a time-multiplexed, incremental scanner. */
+#define SENSOR_FREQUENCY_HZ 20
+#define I2C_PHASE_OFFSET_US 2500u
+#define IO_SCHEDULER_PERIOD_US (CONTROL_PERIOD_US / 2u)
 #define SENSOR_PERIOD_MS (1000 / SENSOR_FREQUENCY_HZ)
 #define SENSOR_TIMEOUT_MS 150
 #define CONTROL_CLOCK_TIMEOUT_MS 50
