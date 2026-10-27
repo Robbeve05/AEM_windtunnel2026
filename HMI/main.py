@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.arduino import ArduinoPitotSerial
+from backend.esp32 import ESP32Client
 from backend.measurements import Measurements
 from backend.models import ArduinoFilterSetting, Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint
 from backend.simulator import Simulator
@@ -27,8 +28,11 @@ class Controller:
         self.base = Path(base)
         self.config = Config.model_validate_json((base / 'config/config.json').read_text(encoding='utf-8'))
         self.simulation = self.config.simulation
+        self.esp32_mode = not self.simulation and self.config.device_mode == 'esp32_tcp'
+        self.esp32 = ESP32Client(self.config.esp32_host, self.config.esp32_port) if self.esp32_mode else None
+        self.esp32_frame = {}
         self.tunnel = Simulator(self.config) if self.simulation else None
-        self.arduino = None if self.simulation else ArduinoPitotSerial(
+        self.arduino = None if self.simulation or self.esp32_mode else ArduinoPitotSerial(
             self.config.serial_port, self.config.baud_rate, self.config.filter_cutoff_hz
         )
         self.measurements = Measurements(base / self.config.data_directory, self.config)
@@ -43,6 +47,8 @@ class Controller:
         self.started_monotonic = time.monotonic()
         if self.simulation:
             self.event('Simulation mode active.')
+        elif self.esp32_mode:
+            self.event('ESP32 Ethernet mode active. Physical START and RESET required.')
         else:
             self.event('Arduino USB acquisition starting. Fan control and pressure taps are in development.')
 
@@ -87,15 +93,15 @@ class Controller:
         )
 
     def sensor_fresh(self) -> bool:
-        return self.last_valid_sample_monotonic is not None and time.monotonic() - self.last_valid_sample_monotonic < 2.0
+        return (self.esp32.fresh and bool(self.esp32_frame.get('sensor_ok'))) if self.esp32_mode else (self.last_valid_sample_monotonic is not None and time.monotonic() - self.last_valid_sample_monotonic < 2.0)
 
     @property
     def setpoint(self):
-        return self.tunnel.setpoint if self.simulation else None
+        return self.tunnel.setpoint if self.simulation else (self.esp32.snapshot().get('sp') if self.esp32_mode else None)
 
     @property
     def tunnel_state(self):
-        return self.tunnel.state if self.simulation else 'IN DEVELOPMENT'
+        return self.tunnel.state if self.simulation else (self.esp32.snapshot()['state'] if self.esp32_mode else 'IN DEVELOPMENT')
 
     def status(self):
         age = None if self.last_valid_sample_monotonic is None else max(0.0, time.monotonic() - self.last_valid_sample_monotonic)
@@ -103,6 +109,20 @@ class Controller:
             system = {'host': 'OK', 'arduino': 'SIMULATED', 'serial': 'SIMULATED', 'pitot': 'OK',
                       'pressure_sensors': 'SIMULATED', 'vfd': 'SIMULATED', 'logger': self.measurements.state, 'storage': 'LOCAL'}
             warnings = ['Simulation mode active']
+        elif self.esp32_mode:
+            frame = self.esp32.snapshot()
+            system = {'host':'OK', 'arduino':'NOT USED', 'serial':'ETHERNET',
+                      'pitot':'OK' if self.sensor_fresh() else 'NO DATA',
+                      'pressure_sensors':'ONLINE' if frame.get('taps_valid') else 'NOT COMMISSIONED',
+                      'vfd':'OK' if frame.get('motor_ok') else 'UNAVAILABLE',
+                      'logger':self.measurements.state, 'storage':'LOCAL'}
+            warnings = [] if self.esp32.fresh else ['ESP32 status UNKNOWN - fan may still be rotating.']
+            if frame.get('estop_pressed') is True or frame.get('estop_pressed') == 1:
+                warnings.append('EMERGENCY STOP PRESSED - fan may continue to coast.')
+            elif frame.get('fault') == 'EMERGENCY_STOP':
+                warnings.append('Emergency stop released; physical RESET required. Fan may still rotate.')
+            if not frame.get('commissioned'):
+                warnings.append('Physical safety and VFD commissioning is incomplete.')
         else:
             serial_status = 'CONNECTED' if self.arduino and self.arduino.connected else 'DISCONNECTED'
             if self.arduino and self.arduino.connected and self.arduino.port:
@@ -144,10 +164,38 @@ class Controller:
             cp=[],
             system=system,
             warnings=warnings,
+            esp32=self.esp32.snapshot() if self.esp32_mode else None,
+            device_mode='simulation' if self.simulation else ('esp32_tcp' if self.esp32_mode else 'arduino_usb'),
             errors=[self.measurements.error] if self.measurements.error else [],
         )
 
+    async def _esp32_status(self, frame: dict):
+        now = time.monotonic()
+        self.esp32_frame = frame
+        if frame.get('sensor_ok') != 1:
+            return
+        raw = {'airspeed_ms':frame['pv'], 'pressure_pa':frame.get('pressure_pa', 0.0),
+               'temperature_c':frame.get('temperature_c', 0.0)}
+        async with self.lock:
+            self.last_valid_sample_monotonic = now
+            self.sample = self._hardware_sample(raw, now)
+            self.sample['fan_output_pct'] = frame.get('out')
+            self.sample['state'] = frame['state']
+            self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
+            for index in range(16):
+                if frame.get('taps_valid', 0) & (1 << index):
+                    self.sample['pressure_pa'].append(frame.get(f'p{index}'))
+            try:
+                await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
+            except Exception as exc:
+                logging.exception('Measurement logger failed')
+                await asyncio.to_thread(self.measurements.fail, str(exc))
+                self.event('Logger error: ' + str(exc), 'error')
+
     async def loop(self):
+        if self.esp32_mode:
+            await self.esp32.run(self._esp32_status, self.event)
+            return
         if self.simulation:
             last = time.monotonic()
             while self.running:
@@ -198,6 +246,8 @@ async def lifespan(app):
     controller.running = False
     if controller.arduino:
         controller.arduino.close()
+    if controller.esp32:
+        await controller.esp32.close()
     if controller.tunnel:
         controller.tunnel.stop()
     if controller.measurements.state == 'RECORDING':
@@ -262,6 +312,9 @@ async def set_arduino_filter(body: ArduinoFilterSetting):
     config_path = c.base / 'config/config.json'
     config_path.write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
     command_sent = bool(c.arduino and c.arduino.set_filter_cutoff_hz(body.cutoff_hz))
+    if c.esp32_mode:
+        await c.esp32.command(f'FILTER {body.cutoff_hz:.2f}')
+        command_sent = True
     c.event(
         f'Arduino pressure low-pass filter set to {body.cutoff_hz:.1f} Hz.'
         if command_sent else
@@ -282,7 +335,7 @@ async def set_arduino_filter(body: ArduinoFilterSetting):
 async def start_tunnel():
     c = control()
     if not c.simulation:
-        raise ValueError('Fan/VFD control is in development and is not enabled yet')
+        raise ValueError('The fan can only START using the physical Start button.')
     c.tunnel.start()
     c.event('Tunnel start requested')
     return c.status()
@@ -291,8 +344,12 @@ async def start_tunnel():
 @app.post('/api/tunnel/stop')
 async def stop_tunnel():
     c = control()
+    if c.esp32_mode:
+        await c.esp32.command('STOP')
+        c.event('Operational OFF1 STOP requested from HMI.', 'warning')
+        return c.status()
     if not c.simulation:
-        raise ValueError('Fan/VFD control is in development and is not enabled yet')
+        raise ValueError('Fan/VFD control is not available in Arduino mode')
     c.tunnel.stop()
     c.event('Software stop requested.', 'warning')
     return c.status()
@@ -301,8 +358,14 @@ async def stop_tunnel():
 @app.post('/api/tunnel/setpoint')
 async def setpoint(body: Setpoint):
     c = control()
+    if body.airspeed_ms > c.config.max_airspeed_ms:
+        raise ValueError('Setpoint exceeds configured maximum wind speed')
+    if c.esp32_mode:
+        await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
+        c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
+        return c.status()
     if not c.simulation:
-        raise ValueError('Airspeed setpoint control is in development')
+        raise ValueError('Airspeed setpoint control is unavailable in Arduino mode')
     if body.airspeed_ms > c.config.max_airspeed_ms:
         raise ValueError('Setpoint exceeds configured maximum wind speed')
     c.tunnel.setpoint = body.airspeed_ms
@@ -315,7 +378,7 @@ async def start_measurement(body: MeasurementRequest):
     c = control()
     async with c.lock:
         if not c.simulation and not c.sensor_fresh():
-            raise ValueError('No live Arduino pitot data. Connect the Uno before recording.')
+            raise ValueError('No fresh pitot data. Check the acquisition connection before recording.')
         result = await asyncio.to_thread(
             c.measurements.start, body.name.strip(), body.recording_rate_hz
         )
