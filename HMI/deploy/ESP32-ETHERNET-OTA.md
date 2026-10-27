@@ -44,7 +44,8 @@ cat ~/windtunnel-firmware-staged/firmware.json
 ## Useful checks
 
 ```sh
-python3 -m unittest HMI.tests.test_esp32_ethernet
+cd HMI
+python3 -m unittest discover -s tests -p 'test_esp32_ethernet.py'
 ```
 
 From ESP32 project:
