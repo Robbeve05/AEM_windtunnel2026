@@ -1,14 +1,17 @@
 {
   "simulation": false,
-  "sample_rate_hz": 25.0,
-  "filter_cutoff_hz": 5.0,
+  "sample_rate_hz": 25,
+  "filter_cutoff_hz": 5,
   "air_density": 1.225,
-  "max_airspeed_ms": 42.0,
+  "max_airspeed_ms": 42,
   "serial_port": "auto",
   "baud_rate": 115200,
   "data_directory": "data/measurements",
   "usb_mount_path": "",
   "simulate_usb": true,
   "flow_metrics_enabled": true,
-  "pressure_taps": []
+  "pressure_taps": [],
+  "device_mode": "arduino_usb",
+  "esp32_host": "192.168.50.10",
+  "esp32_port": 5000
 }
