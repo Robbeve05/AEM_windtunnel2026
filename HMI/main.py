@@ -278,7 +278,7 @@ async def stop_tunnel():
         c.event('Operational OFF1 STOP requested from HMI.', 'warning')
         return c.status()
     if not c.simulation:
-        raise ValueError('Fan/VFD control is not available in Arduino mode')
+        raise ValueError('Fan/VFD control is not available in this mode')
     c.tunnel.stop()
     c.event('Software stop requested.', 'warning')
     return c.status()
@@ -294,7 +294,7 @@ async def setpoint(body: Setpoint):
         c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
         return c.status()
     if not c.simulation:
-        raise ValueError('Airspeed setpoint control is unavailable in Arduino mode')
+        raise ValueError('Airspeed setpoint control is unavailable in this mode')
     if body.airspeed_ms > c.config.max_airspeed_ms:
         raise ValueError('Setpoint exceeds configured maximum wind speed')
     c.tunnel.setpoint = body.airspeed_ms
