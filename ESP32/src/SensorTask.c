@@ -1,21 +1,19 @@
+/* Author: R.E. van Eekelen.
+ * Core 0 owns ONLY optional airfoil pressure taps.
+ * The pitot is sampled by ControlTask on Core 1.
+ */
 #include "TaskData.h"
 #include "AppConfig.h"
 #include "PressureSensors.h"
 #include "freertos/task.h"
-#include <math.h>
 void SensorTask(void *argument)
 {
     (void)argument;
-    bool ready = SensorLib_Init();
-    TickType_t last = xTaskGetTickCount();
-    uint32_t sequence=0;
+    TickType_t wake = xTaskGetTickCount();
     for (;;) {
-        Sample s = {.tick=xTaskGetTickCount()};
-        s.valid = ready && SensorLib_Read(&s.value) && isfinite(s.value) && s.value >= 0;
-        SensorLib_Details(&s);
-        s.sequence=++sequence;
-        xQueueOverwrite(sensors, &s);
-        if (xTaskGetTickCount()-last >= pdMS_TO_TICKS(SENSOR_PERIOD_MS)) last=xTaskGetTickCount();
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(SENSOR_PERIOD_MS));
+        Sample taps = {0};
+        SensorLib_ReadTaps(&taps);
+        xQueueOverwrite(tap_samples, &taps);
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(SENSOR_PERIOD_MS));
     }
 }
