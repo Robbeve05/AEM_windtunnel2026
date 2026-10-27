@@ -96,18 +96,40 @@ function onFrame(frame){
     const t=Date.parse(s.host_timestamp)/1000;
     history.push({x:t,y:s.airspeed_ms,mean:s.flow_mean_ms});while(history.length&&history[0].x<t-60)history.shift();
     if(page==='overview'){const series=[{color:'#c8291e',width:3.2,points:history}];if(flowMetricsEnabled())series.push({color:'#2f3338',width:2.0,dashed:true,points:history.map(p=>({x:p.x,y:p.mean}))});velocity.update(series,t-60,t);}
-    $('stream-note').textContent=`LIVE ARDUINO USB · ${frame.sample_age_s===null?'—':frame.sample_age_s.toFixed(1)} s sample age`;
+    $('stream-note').textContent=`${frame.device_mode==='esp32_tcp'?'ESP32 ETHERNET':'ARDUINO USB'} · ${frame.sample_age_s===null?'—':frame.sample_age_s.toFixed(1)} s sample age`;
   }
-  badge('tunnel-state','IN DEVELOPMENT');badge('measurement-badge',m.state);
+  if(frame.device_mode==='esp32_tcp'){
+    const drive=frame.esp32||{};
+    const current=drive.stale?'UNKNOWN':drive.state;
+    badge('tunnel-state',current);
+    const detail=$('esp32-machine-detail');
+    if(detail){
+      detail.textContent=drive.stale?'ESP32 telemetry unavailable. Fan may still rotate.':
+        drive.fault==='EMERGENCY_STOP'?
+          (drive.estop_pressed?'EMERGENCY STOP PRESSED - fan coasting':'EMERGENCY STOP RELEASED - physical RESET required; fan may still rotate'):
+          'VFD '+fixed(drive.actual_hz,2)+' Hz · Setpoint '+fixed(drive.sp,2)+' m/s · Fault '+drive.fault;
+      detail.dataset.state=drive.stale?'UNKNOWN':drive.fault==='EMERGENCY_STOP'?
+        (drive.estop_pressed?'ESTOP_PRESSED':'ESTOP_RELEASED'):drive.state;
+    }
+    const ctrl=$('setpoint-form');
+    if(ctrl)ctrl.hidden=false;
+    const stop=$('tunnel-stop');
+    if(stop){stop.hidden=false;stop.disabled=drive.stale;}
+    const start=$('tunnel-start');
+    if(start)start.hidden=true;
+  }else{
+    badge('tunnel-state',frame.simulation?frame.tunnel_state:'IN DEVELOPMENT');
+  }
+  badge('measurement-badge',m.state);
   $('elapsed').textContent=duration(m.elapsed_s);$('samples').textContent=m.samples.toLocaleString();$('sample-rate').textContent=m.actual_sample_rate_hz?`${Number(m.actual_sample_rate_hz).toFixed(1)} Hz`:`Target ${m.recording_rate_hz||'—'} Hz`;
-  $('file-status').textContent=m.error||(m.name?`${m.file_status} · ${m.name}`:(frame.sensor_fresh?'Ready · enter a measurement name':'Connect Arduino Uno via USB to record.'));
+  $('file-status').textContent=m.error||(m.name?`${m.file_status} · ${m.name}`:(frame.sensor_fresh?'Ready · enter a measurement name':(frame.device_mode==='esp32_tcp'?'Waiting for ESP32 pitot telemetry':'Connect Arduino Uno via USB to record.')));
   if(m.state==='RECORDING')$('measurement-name').value=m.name;
   const labels={host:'Host / Raspberry Pi',arduino:'Arduino Uno',serial:'USB serial',pitot:'Pitot sensor',pressure_sensors:'Cp pressure taps',vfd:'Fan / VFD',logger:'Measurement logger',storage:'Storage'};
   $('system-health').innerHTML=Object.entries(frame.system).map(([key,value])=>`<div class="health-row"><span>${escape(labels[key]||key)}</span><b>${escape(value)}</b></div>`).join('');
   $('warnings').textContent=[...frame.errors,...frame.warnings].join(' · ')||'No warnings';
   const eventSignature=JSON.stringify(frame.events);if(eventSignature!==lastEvents){$('event-log').innerHTML=frame.events.slice(0,8).map(e=>`<div class="event"><time>${clock(e.timestamp)}</time>${escape(e.message)}</div>`).join('');lastEvents=eventSignature;}
-  $('mode-tag').textContent=frame.sensor_fresh?'● LIVE HARDWARE':'WAITING FOR ARDUINO';$('mode-tag').className='tag '+(frame.sensor_fresh?'':'amber');
-  $('hardware-mode-badge').textContent=frame.sensor_fresh?'ARDUINO CONNECTED':'ARDUINO USB';
+  $('mode-tag').textContent=frame.device_mode==='esp32_tcp'?(frame.esp32?.stale?'ESP32 STATUS UNKNOWN':'ESP32 ETHERNET CONNECTED'):(frame.sensor_fresh?'● LIVE HARDWARE':'WAITING FOR ARDUINO');$('mode-tag').className='tag '+(frame.sensor_fresh?'':'amber');
+  $('hardware-mode-badge').textContent=frame.device_mode==='esp32_tcp'?'ESP32 ETHERNET':(frame.sensor_fresh?'ARDUINO CONNECTED':'ARDUINO USB');
   const filter=frame.arduino_filter;
   if(filter){
     $('filter-status').textContent=filter.confirmed
