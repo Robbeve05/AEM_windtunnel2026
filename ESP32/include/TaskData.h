@@ -21,7 +21,7 @@ typedef struct {
     uint32_t crc_errors,exceptions,late_replies,exception_code;
     uint32_t service_us,service_max_us,rtt_median_us,rtt_p95_us,rtt_max_us,request_id,transitions;
 } Telemetry;
-extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat;
+extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat,tap_samples;
 extern EventGroupHandle_t events;
 extern TaskHandle_t control_task_handle;
 #define STOP_REQUEST BIT0
