@@ -8,7 +8,7 @@
 
 QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry, safety_status, pi_heartbeat, tap_samples;
 EventGroupHandle_t events;
-TaskHandle_t control_task_handle;
+TaskHandle_t control_task_handle, sensor_task_handle;
 void StartApplicationTasks(void)
 {
     SafetyIO_Init();
@@ -25,7 +25,7 @@ void StartApplicationTasks(void)
     ESP_ERROR_CHECK(commands && sensors && motor_requests && motor_status && telemetry && events && safety_status && pi_heartbeat && tap_samples
                     ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SafetyTask,"SafetyTask",3072,NULL,5,NULL,0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3, NULL, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3, &sensor_task_handle, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(ControlTask, "ControlTask", 6144, NULL, 4,
         &control_task_handle, 1)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 6144, NULL, 2, NULL, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
