@@ -30,6 +30,7 @@ class Controller:
         self.esp32_mode = not self.simulation
         self.esp32 = ESP32Client(self.config.esp32_host, self.config.esp32_port) if self.esp32_mode else None
         self.esp32_frame = {}
+        self._last_pitot_sequence = None
         self.tunnel = Simulator(self.config) if self.simulation else None
         self.measurements = Measurements(base / self.config.data_directory, self.config)
         self.storage = Storage(base, self.config, self.measurements)
@@ -144,6 +145,12 @@ class Controller:
         self.esp32_frame = frame
         if frame.get('sensor_ok') != 1:
             return
+        # The 50 Hz STATUS stream repeats the same 20 Hz pitot sample.
+        # Only record/plot a new measurement when its sequence increments.
+        sequence = frame.get('sample_seq')
+        if sequence is not None and sequence == self._last_pitot_sequence:
+            return
+        self._last_pitot_sequence = sequence
         raw = {'airspeed_ms':frame['pv'], 'pressure_pa':frame.get('pressure_pa', 0.0),
                'temperature_c':frame.get('temperature_c', 0.0)}
         async with self.lock:
