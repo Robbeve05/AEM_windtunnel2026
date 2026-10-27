@@ -359,3 +359,24 @@ body.collapsed{grid-template-columns:72px minmax(0,1fr) 304px}
 .empty-state.development-empty{border-left:4px solid #c58a1b}
 .compact-empty{min-height:250px;margin:14px 0 0}
 #raw-data-content{min-height:0}
+
+/* ESP32 Ethernet operational status; never implies physical standstill. */
+#esp32-machine-detail { display:block; padding:12px; border-radius:5px; font-weight:700; }
+#esp32-machine-detail[data-state="RUNNING"] { background:#e6f5ed; color:#11592d; }
+#esp32-machine-detail[data-state="READY"] { background:#e6f5ed; color:#11592d; }
+#esp32-machine-detail[data-state="STOP"],
+#esp32-machine-detail[data-state="WAIT"] { background:#fff0cf; color:#714600; }
+#esp32-machine-detail[data-state="UNKNOWN"],
+#esp32-machine-detail[data-state="FAULT"],
+#esp32-machine-detail[data-state="ESTOP_PRESSED"] { background:#ffdddd; color:#9c1717; }
+#esp32-machine-detail[data-state="ESTOP_RELEASED"] {
+  background:#ffdddd; color:#9c1717;
+  animation: esp32-estop-warning 1s step-end infinite;
+}
+@keyframes esp32-estop-warning {
+  0%, 49% { background:#9c1717; color:white; }
+  50%, 100% { background:#ffdddd; color:#9c1717; }
+}
+@media (prefers-reduced-motion:reduce) {
+  #esp32-machine-detail[data-state="ESTOP_RELEASED"] { animation:none; }
+}
