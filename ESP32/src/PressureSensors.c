@@ -188,6 +188,8 @@ bool SensorLib_TapsStep(Sample *out)
         if (!I2CBus_TryWrite(channel < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS,
                              &mask, 1)) {
             aggregate.errors++;
+            aggregate.taps[channel] = NAN;
+            aggregate.taps_valid &= (uint16_t)~(1u << channel);
             stage = 5;
             return false;
         }
@@ -196,6 +198,8 @@ bool SensorLib_TapsStep(Sample *out)
     case 3: /* Start conversion. */
         if (!I2CBus_TryWrite(ABP2_ADDRESS, trigger, sizeof(trigger))) {
             aggregate.errors++;
+            aggregate.taps[channel] = NAN;
+            aggregate.taps_valid &= (uint16_t)~(1u << channel);
             stage = 5;
             return false;
         }
