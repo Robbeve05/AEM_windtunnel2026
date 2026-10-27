@@ -106,6 +106,8 @@ void PiCommunicationTask(void *argument)
             if (xQueuePeek(telemetry, &t, 0)==pdTRUE) {
                 Sample sample={0}; MotorStatus motor={0};
                 xQueuePeek(sensors,&sample,0); xQueuePeek(motor_status,&motor,0);
+                Sample taps={0};
+                (void)xQueuePeek(tap_samples,&taps,0);
                 char buffer[2304];
                 int length=snprintf(buffer,sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s sim=%d sp_ramp=%.3f"
@@ -122,7 +124,7 @@ void PiCommunicationTask(void *argument)
                     t.control_hz,(unsigned long)t.execution_us,(unsigned long)t.max_jitter_us,
                     (unsigned long)t.missed_deadlines,(unsigned long)t.overruns,(unsigned long)sample.errors,
                     (unsigned long)motor.errors,(unsigned long)motor.timeouts,(unsigned long)t.stack_free,
-                    (unsigned)uxTaskGetStackHighWaterMark(NULL),sample.taps_valid,SensorLib_FilterHz(),(unsigned long)sample.sequence,
+                    (unsigned)uxTaskGetStackHighWaterMark(NULL),taps.taps_valid,SensorLib_FilterHz(),(unsigned long)sample.sequence,
                     StateMachine_Name(t.state),FaultReason_Name(t.fault),FaultReason_Name(t.last_fault),
                     t.safety.estop_pressed,t.safety.relay_ok,t.reset_required,!t.safety.stop_ok,t.safety.valid,t.pi_ok,t.safety.commissioned,
                     t.safety.estop_pressed,t.safety.relay_ok,t.safety.stop_ok,t.pi_ok,(unsigned long)((xTaskGetTickCount()-sample.tick)*portTICK_PERIOD_MS),
@@ -133,7 +135,7 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.transitions,ALLOW_REMOTE_START,(unsigned long)t.crc_errors,(unsigned long)t.exceptions,(unsigned long)t.exception_code,(unsigned long)t.late_replies);
                 for (int tap=0;tap<16 && length>0 && length<(int)sizeof(buffer)-32;tap++)
                     length+=snprintf(buffer+length,sizeof(buffer)-length," p%d=%.3f",tap,
-                        (sample.taps_valid&(1u<<tap)) ? sample.taps[tap] : 0.0f);
+                        (taps.taps_valid&(1u<<tap)) ? taps.taps[tap] : 0.0f);
                 if (length>0 && length<(int)sizeof(buffer)-2) { buffer[length++]='\n'; buffer[length]=0; }
                 reply(buffer);
             }
