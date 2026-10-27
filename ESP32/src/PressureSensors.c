@@ -1,6 +1,6 @@
 /* Author: R.E. van Eekelen.
  * Pitot ASPD-4525 is read only by ControlTask (Core 1).
- * One bounded I2C transaction every 5 ms, 10-point rolling average.
+ * One bounded I2C transaction every 5 ms, 10-point batch average.
  * Pressure tap acquisition is separately owned by SensorTask (Core 0).
  * Hardware I2C latency is NOT hard real-time: verify overruns on target.
  */
