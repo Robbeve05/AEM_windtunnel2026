@@ -5,7 +5,7 @@
 bool SensorLib_Init(void);
 bool SensorLib_PitotStep(Sample *sample);
 /* Only SensorTask on Core 0 may read the remaining pressure taps. */
-void SensorLib_ReadTaps(Sample *sample);
+bool SensorLib_TapsStep(Sample *sample);
 void SensorLib_SetFilter(float hz);
 float SensorLib_FilterHz(void);
 void Simulation_SetOutput(float value);
