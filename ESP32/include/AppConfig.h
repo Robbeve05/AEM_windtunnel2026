@@ -21,6 +21,9 @@
 #define MOTOR_STATUS_TIMEOUT_MS 600
 #define SENSOR_I2C_HZ 100000
 #define I2C_TIMEOUT_MS 10
+/* Pitot on Core 1: at most one I2C attempt per 5 ms tick. */
+#define PITOT_I2C_TIMEOUT_MS 1u
+#define PITOT_AVERAGE_SAMPLES 10u
 #define PI_TCP_PORT 5000
 #define PITOT_ADDRESS 0x28
 #define AIR_DENSITY 1.225f
