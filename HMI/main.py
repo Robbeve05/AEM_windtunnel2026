@@ -13,10 +13,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.arduino import ArduinoPitotSerial
 from backend.esp32 import ESP32Client
 from backend.measurements import Measurements
-from backend.models import ArduinoFilterSetting, Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint
+from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting
 from backend.simulator import Simulator
 from backend.storage import Storage
 
@@ -28,13 +27,10 @@ class Controller:
         self.base = Path(base)
         self.config = Config.model_validate_json((base / 'config/config.json').read_text(encoding='utf-8'))
         self.simulation = self.config.simulation
-        self.esp32_mode = not self.simulation and self.config.device_mode == 'esp32_tcp'
+        self.esp32_mode = not self.simulation
         self.esp32 = ESP32Client(self.config.esp32_host, self.config.esp32_port) if self.esp32_mode else None
         self.esp32_frame = {}
         self.tunnel = Simulator(self.config) if self.simulation else None
-        self.arduino = None if self.simulation or self.esp32_mode else ArduinoPitotSerial(
-            self.config.serial_port, self.config.baud_rate, self.config.filter_cutoff_hz
-        )
         self.measurements = Measurements(base / self.config.data_directory, self.config)
         self.storage = Storage(base, self.config, self.measurements)
         self.events = deque(maxlen=80)
@@ -49,8 +45,6 @@ class Controller:
             self.event('Simulation mode active.')
         elif self.esp32_mode:
             self.event('ESP32 Ethernet mode active. Physical START and RESET required.')
-        else:
-            self.event('Arduino USB acquisition starting. Fan control and pressure taps are in development.')
 
     def event(self, message, level='info'):
         self.events.appendleft(dict(timestamp=datetime.now(timezone.utc).isoformat(), message=message, level=level))
@@ -93,25 +87,25 @@ class Controller:
         )
 
     def sensor_fresh(self) -> bool:
-        return (self.esp32.fresh and bool(self.esp32_frame.get('sensor_ok'))) if self.esp32_mode else (self.last_valid_sample_monotonic is not None and time.monotonic() - self.last_valid_sample_monotonic < 2.0)
+        return (self.esp32.fresh and bool(self.esp32_frame.get('sensor_ok'))) if self.esp32_mode else True
 
     @property
     def setpoint(self):
-        return self.tunnel.setpoint if self.simulation else (self.esp32.snapshot().get('sp') if self.esp32_mode else None)
+        return self.tunnel.setpoint if self.simulation else self.esp32.snapshot().get('sp')
 
     @property
     def tunnel_state(self):
-        return self.tunnel.state if self.simulation else (self.esp32.snapshot()['state'] if self.esp32_mode else 'IN DEVELOPMENT')
+        return self.tunnel.state if self.simulation else self.esp32.snapshot()['state']
 
     def status(self):
         age = None if self.last_valid_sample_monotonic is None else max(0.0, time.monotonic() - self.last_valid_sample_monotonic)
         if self.simulation:
-            system = {'host': 'OK', 'arduino': 'SIMULATED', 'serial': 'SIMULATED', 'pitot': 'OK',
+            system = {'host': 'OK', 'connection': 'SIMULATION', 'pitot': 'OK',
                       'pressure_sensors': 'SIMULATED', 'vfd': 'SIMULATED', 'logger': self.measurements.state, 'storage': 'LOCAL'}
             warnings = ['Simulation mode active']
         elif self.esp32_mode:
             frame = self.esp32.snapshot()
-            system = {'host':'OK', 'arduino':'NOT USED', 'serial':'ETHERNET',
+            system = {'host':'OK', 'connection':'ESP32 ETHERNET',
                       'pitot':'OK' if self.sensor_fresh() else 'NO DATA',
                       'pressure_sensors':'ONLINE' if frame.get('taps_valid') else 'NOT COMMISSIONED',
                       'vfd':'OK' if frame.get('motor_ok') else 'UNAVAILABLE',
@@ -123,32 +117,8 @@ class Controller:
                 warnings.append('Emergency stop released; physical RESET required. Fan may still rotate.')
             if not frame.get('commissioned'):
                 warnings.append('Physical safety and VFD commissioning is incomplete.')
-        else:
-            serial_status = 'CONNECTED' if self.arduino and self.arduino.connected else 'DISCONNECTED'
-            if self.arduino and self.arduino.connected and self.arduino.port:
-                serial_status += f' · {self.arduino.port}'
-            system = {'host': 'OK', 'arduino': 'CONNECTED' if self.sensor_fresh() else 'WAITING',
-                      'serial': serial_status, 'pitot': 'ACTIVE' if self.sensor_fresh() else 'NO DATA',
-                      'pressure_sensors': 'IN DEVELOPMENT', 'vfd': 'IN DEVELOPMENT',
-                      'logger': self.measurements.state, 'storage': 'LOCAL'}
-            warnings = []
-            if not self.sensor_fresh():
-                detail = self.arduino.last_error if self.arduino and self.arduino.last_error else 'Waiting for Arduino pitot data'
-                warnings.append(detail)
-            warnings += ['Pressure-tap Cp system in development', 'Fan/VFD control in development', 'Angle-of-attack sensing in development']
-        arduino_filter = {
-            'configured_cutoff_hz': self.config.filter_cutoff_hz,
-            'reported_cutoff_hz': self.arduino.reported_filter_cutoff_hz if self.arduino else None,
-            'confirmed': bool(
-                self.arduino
-                and self.arduino.reported_filter_cutoff_hz is not None
-                and math.isclose(
-                    self.arduino.reported_filter_cutoff_hz,
-                    self.config.filter_cutoff_hz,
-                    abs_tol=0.06,
-                )
-            ),
-        }
+        reported_filter = self.esp32_frame.get('filter_hz') if self.esp32_mode and self.esp32.fresh else None
+        pressure_filter = {'configured_cutoff_hz': self.config.filter_cutoff_hz, 'reported_cutoff_hz': reported_filter, 'confirmed': reported_filter is not None and math.isclose(reported_filter, self.config.filter_cutoff_hz, abs_tol=0.06)}
         measurement = self.measurements.status()
         return dict(
             sample=self.sample,
@@ -157,7 +127,7 @@ class Controller:
             measurement=measurement,
             simulation=self.simulation,
             hardware_mode=not self.simulation,
-            arduino_filter=arduino_filter,
+            pressure_filter=pressure_filter,
             sensor_fresh=self.sensor_fresh() if not self.simulation else True,
             sample_age_s=age,
             events=list(self.events),
@@ -165,7 +135,7 @@ class Controller:
             system=system,
             warnings=warnings,
             esp32=self.esp32.snapshot() if self.esp32_mode else None,
-            device_mode='simulation' if self.simulation else ('esp32_tcp' if self.esp32_mode else 'arduino_usb'),
+            device_mode='simulation' if self.simulation else 'esp32_tcp',
             errors=[self.measurements.error] if self.measurements.error else [],
         )
 
@@ -211,30 +181,6 @@ class Controller:
                 await asyncio.sleep(max(0.001, 1 / self.config.sample_rate_hz - (time.monotonic() - now)))
             return
 
-        was_fresh = False
-        while self.running:
-            raw = await asyncio.to_thread(self.arduino.read)
-            now = time.monotonic()
-            if raw is None:
-                fresh = self.sensor_fresh()
-                if was_fresh and not fresh:
-                    self.event('Arduino pitot telemetry lost.', 'warning')
-                was_fresh = fresh
-                await asyncio.sleep(0.05)
-                continue
-            async with self.lock:
-                self.last_valid_sample_monotonic = now
-                self.sample = self._hardware_sample(raw, now)
-                self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
-                try:
-                    await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
-                except Exception as exc:
-                    logging.exception('Measurement logger failed')
-                    await asyncio.to_thread(self.measurements.fail, str(exc))
-                    self.event('Logger error: ' + str(exc), 'error')
-            if not was_fresh:
-                self.event(f'Arduino pitot connected on {self.arduino.port}.')
-            was_fresh = True
 
 
 @asynccontextmanager
@@ -244,8 +190,6 @@ async def lifespan(app):
     task = asyncio.create_task(controller.loop())
     yield
     controller.running = False
-    if controller.arduino:
-        controller.arduino.close()
     if controller.esp32:
         await controller.esp32.close()
     if controller.tunnel:
@@ -305,30 +249,15 @@ async def set_flow_metrics(body: FlowMetricsSetting):
     return {'enabled': c.config.flow_metrics_enabled}
 
 
-@app.post('/api/settings/arduino-filter')
-async def set_arduino_filter(body: ArduinoFilterSetting):
+@app.post('/api/settings/pressure-filter')
+async def set_pressure_filter(body: PressureFilterSetting):
     c = control()
-    c.config.filter_cutoff_hz = body.cutoff_hz
-    config_path = c.base / 'config/config.json'
-    config_path.write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
-    command_sent = bool(c.arduino and c.arduino.set_filter_cutoff_hz(body.cutoff_hz))
     if c.esp32_mode:
         await c.esp32.command(f'FILTER {body.cutoff_hz:.2f}')
-        command_sent = True
-    c.event(
-        f'Arduino pressure low-pass filter set to {body.cutoff_hz:.1f} Hz.'
-        if command_sent else
-        f'Arduino pressure low-pass filter saved at {body.cutoff_hz:.1f} Hz; awaiting Arduino connection.'
-    )
-    return {
-        'cutoff_hz': c.config.filter_cutoff_hz,
-        'command_sent': command_sent,
-        'device_confirmed': bool(
-            c.arduino
-            and c.arduino.reported_filter_cutoff_hz is not None
-            and math.isclose(c.arduino.reported_filter_cutoff_hz, body.cutoff_hz, abs_tol=0.06)
-        ),
-    }
+    c.config.filter_cutoff_hz = body.cutoff_hz
+    (c.base / 'config/config.json').write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
+    c.event(f'Pitot pressure filter setpoint: {body.cutoff_hz:.1f} Hz')
+    return {'cutoff_hz':body.cutoff_hz, 'command_sent':c.esp32_mode, 'device_confirmed':False}
 
 
 @app.post('/api/tunnel/start')
