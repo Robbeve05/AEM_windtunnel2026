@@ -31,7 +31,7 @@ restore_config() {
 trap restore_config EXIT
 
 git -C "$REPOSITORY_DIR" restore --source=HEAD --staged --worktree -- HMI/config/config.json
-git -C "$REPOSITORY_DIR" pull --ff-only origin RaspberryPi
+git -C "$REPOSITORY_DIR" pull --ff-only origin feature/raspberry-pi-ethernet-hmi
 
 restore_config
 trap - EXIT
