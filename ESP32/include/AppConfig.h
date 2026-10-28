@@ -99,7 +99,7 @@
 #define VFD_ENABLE_DO_BIT 0 /* DO1 / EXIO1: K2 operational permissive relay */
 #endif
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
-#define VFD_ENABLE_ACTIVE_LEVEL (-1)
+#define VFD_ENABLE_ACTIVE_LEVEL 1 /* Waveshare TCA9554 EXIO1 high = DO1 active; K2 remains inhibited until commissioning */
 #endif
 #ifndef PI_HEARTBEAT_REQUIRED
 #define PI_HEARTBEAT_REQUIRED 1
