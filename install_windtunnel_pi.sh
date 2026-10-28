@@ -35,8 +35,26 @@ fi
 if [[ -L "$LINK" ]]; then
   [[ "$(readlink -f "$LINK")" == "$(readlink -f "$HMI")" ]] ||
     die "$LINK links to another directory; refusing to replace it."
+elif [[ -d "$LINK" ]]; then
+  # Preserve an existing standalone Pi HMI installation, rather than
+  # overwriting it or requiring a manual directory migration.
+  log "Backing up the existing standalone HMI directory"
+  if systemctl --user is-active --quiet windtunnel-hmi.service; then
+    systemctl --user stop windtunnel-hmi.service
+  fi
+  old_hmi="$HOME/HMI-backup-$stamp"
+  mv -- "$LINK" "$old_hmi"
+  if [[ -f "$old_hmi/config/config.json" ]]; then
+    cp -a "$old_hmi/config/config.json" "$HMI/config/config.json"
+  fi
+  if [[ -d "$old_hmi/data" ]]; then
+    mkdir -p "$HMI/data"
+    cp -an "$old_hmi/data/." "$HMI/data/"
+  fi
+  ln -s "$HMI" "$LINK"
+  log "Old standalone HMI backed up at $old_hmi"
 elif [[ -e "$LINK" ]]; then
-  die "$LINK exists independently; back it up before continuing."
+  die "$LINK exists but is not a directory. Refusing to overwrite."
 else
   ln -s "$HMI" "$LINK"
 fi
