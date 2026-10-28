@@ -15,6 +15,7 @@
 #include "SafetyIO.h"
 #include "ControlTiming.h"
 #include "PressureSensors.h"
+#include "OtaUpdate.h"
 
 #include <stdint.h>
 #include "driver/gptimer.h"
@@ -185,7 +186,7 @@ void ControlTask(void *argument)
         start = start && machine.state == STATE_READY &&
             (int32_t)(safety.start_ms - machine.entered_ms) > 0;
 
-        bool stop = SafetyIO_Stop() ||
+        bool stop = OtaUpdate_Active() || SafetyIO_Stop() ||
             (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) &
              STOP_REQUEST) != 0;
 
@@ -254,7 +255,7 @@ void ControlTask(void *argument)
             .stop = stop,
             .start = start,
             .reset = reset,
-            .urgent_fault = SafetyIO_Fault(),
+            .urgent_fault = OtaUpdate_Active() ? FAULT_INTERLOCK : SafetyIO_Fault(),
             .timing_fault = latched_timing_fault,
             .stop_confirmed = stop_confirmed
         };
