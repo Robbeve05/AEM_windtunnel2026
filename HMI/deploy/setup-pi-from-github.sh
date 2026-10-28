@@ -71,7 +71,6 @@ ln -s "$REPOSITORY_DIR/HMI" "$APP_LINK"
 
 if [[ -f "$USER_DATA/config.json" ]]; then
   cp -a -- "$USER_DATA/config.json" "$APP_LINK/config/config.json"
-  "$APP_LINK/.venv/bin/python" -c "" 2>/dev/null || true
 fi
 if [[ -d "$USER_DATA/data" ]]; then
   mkdir -p "$APP_LINK/data"
