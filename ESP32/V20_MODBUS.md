@@ -42,9 +42,9 @@ Iedere opdracht krijgt een begrensde response-wachttijd van 80 ms, plus zend- en
 - `pio run -e waveshare_s3`: echte Modbus- en ASPD-4525-code, SIMULATION_MODE=0.
 - `./tests/run_host_tests.ps1`: controller/protocol en V20-mocktests met Visual Studio C++ tools.
 
-De ASPD-4525-driver gebruikt de bestaande Uno-conversie en filtering. Houd de pitot bij opstart in stilstaande lucht voor nulkalibratie. De interne GPTimer wekt ControlTask op 1 kHz; sensoren nominal 25 Hz en actuator 10 Hz. Zie MIGRATION.md voor bedrading, foutrespons en hardwaretests.
+De ASPD-4525-driver gebruikt de bestaande Uno-conversie en filtering. Houd de pitot bij opstart in stilstaande lucht voor nulkalibratie. De GPTimer geeft afwisselend Core 1 en Core 0 iedere 2,5 ms een notificatie. De ControlTask blijft op 200 Hz en de pitot publiceert circa 20 Hz. Zie MIGRATION.md voor bedrading, foutrespons en hardwaretests.
 
-De PI gebruikt het vfd_proxy-model uit windtunnel_pi_design.py: G(s)=0,8/(0,6s+1), crossover 0,20 Hz, PI-nulpunt 0,02 Hz. Kp=1,557722505 Hz/(m/s), Ki=0,195749183 Hz/m; de C-uitgang in procenten gebruikt tweemaal deze gains. Tustin gebruikt de werkelijke sampletijd van de aanroeper (1 ms). De oude torque-modus en robot-Ka/Kt worden niet gebruikt. Het Python-bronbestand zelf is niet gewijzigd. De bestaande simulator (30 m/s bij 100%, tau 0,5 s) blijft een afzonderlijk testmodel.
+De PI gebruikt het vfd_proxy-model uit windtunnel_pi_design.py: G(s)=0,8/(0,6s+1), crossover 0,20 Hz, PI-nulpunt 0,02 Hz. Kp=1,557722505 Hz/(m/s), Ki=0,195749183 Hz/m; de C-uitgang in procenten gebruikt tweemaal deze gains. Tustin gebruikt de vaste ControlTask-sampletijd van 5 ms. De oude torque-modus en robot-Ka/Kt worden niet gebruikt. Het Python-bronbestand zelf is niet gewijzigd. De bestaande simulator (30 m/s bij 100%, tau 0,5 s) blijft een afzonderlijk testmodel.
 
 Bron: [Siemens V20 Operating Instructions 12/2024, sectie 7.2 en parameterlijst](https://support.industry.siemens.com/cs/attachments/109977897/V20_op_instr_1224_en-US.pdf).
 
