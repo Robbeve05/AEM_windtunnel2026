@@ -29,6 +29,10 @@
 #define PITOT_I2C_TIMEOUT_MS 1u
 #define PITOT_AVERAGE_SAMPLES 10u
 #define PI_TCP_PORT 5000
+/* Local configuration is intentionally NOT checked into source control. */
+#if __has_include("OtaLocalConfig.h")
+#include "OtaLocalConfig.h"
+#endif
 /* OTA is disabled until two VERIFIED physical maintenance / isolation
  * inputs have been wired and a secret provisioned outside Git.
  * Do not make these inputs software-derived.
