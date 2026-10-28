@@ -96,7 +96,7 @@
 #define CONTACTOR_OK_ACTIVE_LEVEL (-1)
 #endif
 #ifndef VFD_ENABLE_DO_BIT
-#define VFD_ENABLE_DO_BIT (-1)
+#define VFD_ENABLE_DO_BIT 0 /* DO1 / EXIO1: K2 operational permissive relay */
 #endif
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
 #define VFD_ENABLE_ACTIVE_LEVEL (-1)
