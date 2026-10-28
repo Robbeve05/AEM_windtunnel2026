@@ -3,6 +3,9 @@
 # Single Pi entrypoint for ESP32 wind-tunnel native desktop installation/update.
 # Refuses to claim or attempt firmware flashing unless an OTA receiver is verified.
 set -Eeuo pipefail
+OTA_REQUESTED=0
+if [[ "${1:-}" == "--ota" ]]; then OTA_REQUESTED=1; shift; fi
+[[ $# -eq 0 ]] || { echo "Usage: bash install_windtunnel_pi.sh [--ota]" >&2; exit 2; }
 BRANCH="feature/raspberry-pi-ethernet-hmi"
 URL="https://github.com/Robbeve05/AEM_windtunnel2026.git"
 REPO="$HOME/AEM_windtunnel2026"
@@ -101,3 +104,29 @@ print("and an independently verified physical maintenance interlock is required.
 print("Until then, do not treat copying firmware to the Pi as flashing the ESP32.")
 PY
 log "Pi native HMI updated. ESP32 remains unchanged."
+
+if [[ "$OTA_REQUESTED" == "1" ]]; then
+  log "Explicit firmware update requested"
+  [[ -f "$REPO/ESP32/include/OtaLocalConfig.h" ]] ||
+    die "OTA local safety input pins and secret not configured. See ESP32/OTA-SETUP.md."
+  [[ -f "$HOME/.config/windtunnel/ota_secret" ]] ||
+    die "Missing Pi OTA secret file. See ESP32/OTA-SETUP.md."
+  log "Building ESP32 firmware on Pi (may require toolchain installation)"
+  if [[ ! -x "$HOME/.local/share/windtunnel-pio/bin/pio" ]]; then
+    python3 -m venv "$HOME/.local/share/windtunnel-pio"
+    "$HOME/.local/share/windtunnel-pio/bin/python" -m pip install platformio
+  fi
+  "$HOME/.local/share/windtunnel-pio/bin/pio" run -d "$REPO/ESP32" -e waveshare_s3 ||
+    die "Firmware build failed; ESP32 has not been modified."
+  firmware="$REPO/ESP32/.pio/build/waveshare_s3/firmware.bin"
+  [[ -f "$firmware" ]] || die "Firmware app image not found."
+  host="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["esp32_host"])' "$HMI/config/config.json")"
+  printf '\nMotor supply must be independently isolated.\n'
+  printf 'Physical MAINTENANCE and MOTOR ISOLATED feedback must be asserted.\n'
+  printf 'ESP32: %s; firmware: %s\n' "$host" "$firmware"
+  read -r -p "Type UPDATE to upload the new firmware: " approval
+  [[ "$approval" == "UPDATE" ]] || die "Upload cancelled."
+  python3 "$HMI/tools/ota_upload.py" --host "$host" --firmware "$firmware" ||
+    die "OTA transfer or verification failed. Keep the motor isolated."
+  log "OTA accepted. Verify restart, control timing and state in the desktop HMI."
+fi
