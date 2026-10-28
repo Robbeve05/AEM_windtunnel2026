@@ -30,6 +30,12 @@ class Config(BaseModel):
         return self
 
 
+class ManualFrequency(BaseModel):
+    hz: float = Field(ge=0, le=20, allow_inf_nan=False)
+
+class ControlMode(BaseModel):
+    mode: Literal['AUTO','MANUAL']
+
 class Setpoint(BaseModel):
     airspeed_ms: float = Field(ge=0, allow_inf_nan=False)
 

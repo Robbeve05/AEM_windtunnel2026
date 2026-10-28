@@ -118,6 +118,8 @@ void ControlTask(void *argument)
 
     SetpointCurve curve = {0};
     bool curve_running = false;
+    bool manual_mode=false;
+    float manual_hz=0.0f, applied_hz=0.0f;
     StateMachine machine;
     StateMachine_Init(&machine, (uint32_t)(esp_timer_get_time() / 1000));
 
@@ -196,7 +198,21 @@ void ControlTask(void *argument)
              ++i) {
             switch (command.type) {
             case CMD_SETPOINT:
-                status.setpoint = command.values[0];
+                if (!manual_mode) status.setpoint=command.values[0];
+                break;
+            case CMD_MODE_AUTO:
+                if(machine.state==STATE_READY){manual_mode=false;manual_hz=applied_hz=0;removeRegelaarHistory(&controller);curve_running=false;}
+                break;
+            case CMD_MODE_MANUAL:
+                if(machine.state==STATE_READY && safety.valid && safety.commissioned && safety.relay_ok &&
+                   !safety.estop_pressed && !SafetyIO_Inhibited()){
+                    manual_mode=true;manual_hz=applied_hz=0;removeRegelaarHistory(&controller);curve_running=false;
+                }
+                break;
+            case CMD_FREQ:
+                if(manual_mode && (machine.state==STATE_READY || machine.state==STATE_RUNNING) &&
+                   command.values[0]>=0 && command.values[0]<=MANUAL_MAX_HZ)
+                    manual_hz=command.values[0];
                 break;
             case CMD_PID:
                 if (machine.state != STATE_RUNNING && machine.state != STATE_STOP)
@@ -204,14 +220,6 @@ void ControlTask(void *argument)
                         command.values[0], command.values[1], command.values[2],
                         CONTROL_CLOCK_PERIOD_S, 0.0f, MAX_OUTPUT, 0.05f);
                 break;
-            case CMD_STOP:
-                stop = true;
-                break;
-#if ALLOW_REMOTE_START
-            case CMD_START:
-                if (machine.state == STATE_READY) start = true;
-                break;
-#endif
             case CMD_FILTER:
             case CMD_PING:
             default:
@@ -280,6 +288,15 @@ void ControlTask(void *argument)
 
         status.output = 0.0f;
         if (machine.state == STATE_RUNNING && clock_fault == FAULT_NONE) {
+            if (manual_mode) {
+                const float step=MANUAL_RAMP_HZ_PER_S*CONTROL_CLOCK_PERIOD_S;
+                const float difference=manual_hz-applied_hz;
+                if(difference>step)applied_hz+=step;
+                else if(difference< -step)applied_hz-=step;
+                else applied_hz=manual_hz;
+                status.control_setpoint=applied_hz;
+                status.output=100.0f*applied_hz/V20_REFERENCE_HZ;
+            } else {
             if (!curve_running)
                 curve_running = SetpointCurve_Init(&curve, sample.value,
                     SETPOINT_TRANSITION_TIME_S, SETPOINT_MAX_ACCELERATION_MPS2,
@@ -294,13 +311,21 @@ void ControlTask(void *argument)
                 StateMachine_Fault(&machine, FAULT_INTERNAL, now_ms);
                 V20Modbus_Disarm();
             }
+            }
         }
         if (machine.state != STATE_RUNNING) {
             curve_running = false;
             status.control_setpoint = sample.value;
             status.output = 0.0f;
             removeRegelaarHistory(&controller);
+            applied_hz=0;
+            if(machine.state==STATE_STOP || machine.state==STATE_FAULT) {
+                manual_mode=false;manual_hz=0;
+            }
         }
+        status.manual_mode=manual_mode;
+        status.manual_hz_requested=manual_hz;
+        status.manual_hz_applied=applied_hz;
 
         if (machine.state == STATE_RUNNING &&
             (motor.status & 0x0040u) != 0 &&

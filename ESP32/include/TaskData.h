@@ -12,7 +12,8 @@ typedef struct { float output; TickType_t tick; bool run,permissive,coast; uint3
 typedef struct { bool ready,ok; float actual_hz; uint16_t status; uint32_t errors,timeouts; TickType_t tick; } MotorStatus;
 typedef struct { bool connected; TickType_t tick; } PiHeartbeat;
 typedef struct {
-    float setpoint,measurement,output,control_setpoint;
+    float setpoint,measurement,output,control_setpoint,manual_hz_requested,manual_hz_applied;
+    bool manual_mode;
     bool running,sensor_ok,motor_ok,pi_ok,reset_required;
     SystemState_t state; FaultReason_t fault,last_fault; SafetySnapshot safety;
     const char *reason;

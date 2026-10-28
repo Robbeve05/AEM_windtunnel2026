@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.esp32 import ESP32Client
 from backend.measurements import Measurements
-from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting
+from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
 from backend.simulator import Simulator
 from backend.storage import Storage
 
@@ -279,6 +279,7 @@ async def start_tunnel():
 
 @app.post('/api/tunnel/stop')
 async def stop_tunnel():
+    raise ValueError("STOP is exclusively the physical pushbutton")
     c = control()
     if c.esp32_mode:
         await c.esp32.command('STOP')
@@ -290,6 +291,23 @@ async def stop_tunnel():
     c.event('Software stop requested.', 'warning')
     return c.status()
 
+
+@app.post('/api/tunnel/mode')
+async def select_mode(body: ControlMode):
+    c=control()
+    if not c.esp32_mode or c.esp32.snapshot().get('state')!='READY':
+        raise ValueError('Physical READY state required')
+    await c.esp32.command('MODE '+body.mode)
+    return c.status()
+
+@app.post('/api/tunnel/frequency')
+async def select_frequency(body: ManualFrequency):
+    c=control()
+    s=c.esp32.snapshot() if c.esp32_mode else {}
+    if s.get('mode')!='MANUAL' or s.get('state') not in ('READY','RUNNING'):
+        raise ValueError('Manual mode and live ESP32 required')
+    await c.esp32.command(f'FREQ {body.hz:.3f}')
+    return c.status()
 
 @app.post('/api/tunnel/setpoint')
 async def setpoint(body: Setpoint):

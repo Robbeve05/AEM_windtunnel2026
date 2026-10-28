@@ -63,9 +63,10 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
         await self.server.wait_closed()
 
     async def test_commands_and_no_remote_start(self):
-        self.assertEqual(await self.client.command("STOP"), "OK QUEUED")
+        self.assertEqual(await self.client.command("MODE AUTO"), "OK QUEUED")
+        self.assertEqual(await self.client.command("FREQ 5.000"), "OK QUEUED")
         self.assertEqual(await self.client.command("SETPOINT 12.000"), "OK QUEUED")
-        for denied in ("START", "RESET", "OFF2", "SETPOINT nan"):
+        for denied in ("START", "STOP", "RESET", "OFF2", "SETPOINT nan", "FREQ 40", "FREQ nan"):
             with self.assertRaises(ValueError):
                 await self.client.command(denied)
         self.assertEqual(self.client.snapshot()["fault"], "EMERGENCY_STOP")

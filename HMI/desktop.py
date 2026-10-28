@@ -349,10 +349,15 @@ class HMIWindow(QMainWindow):
         self.setpoint_apply = QPushButton("Apply setpoint")
         self.setpoint_apply.setEnabled(False)
         self.setpoint_apply.clicked.connect(self._apply_setpoint)
-        self.operational_stop = QPushButton("Request OFF1 STOP")
-        self.operational_stop.setEnabled(False)
-        self.operational_stop.setObjectName("stopButton")
-        self.operational_stop.clicked.connect(self._request_stop)
+        self.mode_select=QComboBox()
+        self.mode_select.addItems(["AUTO","MANUAL"])
+        self.mode_apply=QPushButton("Apply control mode (READY only)")
+        self.mode_apply.clicked.connect(self._apply_mode)
+        self.manual_hz=QDoubleSpinBox()
+        self.manual_hz.setRange(0,20)
+        self.manual_hz.setSuffix(" Hz")
+        self.manual_apply=QPushButton("Apply frequency")
+        self.manual_apply.clicked.connect(self._apply_hz)
         self.vfd_status_text = QLabel("VFD: UNKNOWN")
         self.vfd_status_text.setObjectName("hint")
         self.vfd_status_text.setWordWrap(True)
@@ -363,11 +368,14 @@ class HMIWindow(QMainWindow):
         control_layout.addWidget(self.tunnel_state_detail)
         control_layout.addWidget(self.setpoint_spin)
         control_layout.addWidget(self.setpoint_apply)
-        control_layout.addWidget(self.operational_stop)
+        control_layout.addWidget(self.mode_select)
+        control_layout.addWidget(self.mode_apply)
+        control_layout.addWidget(self.manual_hz)
+        control_layout.addWidget(self.manual_apply)
         control_layout.addWidget(self.vfd_status_text)
         control_layout.addWidget(self.timing_status_text)
         right_layout.addWidget(control)
-        self.safety_note = QLabel("START and RESET are physical buttons.\nOFF1 is operational, not an E-stop.")
+        self.safety_note = QLabel("START, STOP, RESET and E-STOP are physical buttons only.")
         self.safety_note.setObjectName("safetyNote")
         self.safety_note.setWordWrap(True)
         self.safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1225,20 +1233,16 @@ class HMIWindow(QMainWindow):
 
         self._post("tunnel/setpoint", {"airspeed_ms": target}, done)
 
-    def _request_stop(self):
-        # Operational request only. Never represents a safety-rated E-stop.
-        if self.state.get("simulation") or (self.state.get("esp32") or {}).get("stale", True):
-            self._show_error("ESP32 telemetry is not available.")
+    def _apply_mode(self):
+        if (self.state.get('esp32') or {}).get('state')!='READY':
+            self._show_error('Mode changes require READY')
             return
-        self.operational_stop.setEnabled(False)
+        self._post('tunnel/mode',{'mode':self.mode_select.currentText()},
+                   lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
-        def done(data, error):
-            if error:
-                self._show_error(f"OFF1 STOP not acknowledged: {error}")
-            else:
-                self._on_status(data, None)
-
-        self._post("tunnel/stop", {}, done)
+    def _apply_hz(self):
+        self._post('tunnel/frequency',{'hz':self.manual_hz.value()},
+                   lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
     def _apply_filter_cutoff(self):
         cutoff_hz = self.filter_cutoff.value()
@@ -1325,7 +1329,13 @@ class HMIWindow(QMainWindow):
         online = not stale and not is_sim
         self.setpoint_spin.setEnabled(online)
         self.setpoint_apply.setEnabled(online)
-        self.operational_stop.setEnabled(online)
+        self.mode_apply.setEnabled(online and machine_state=='READY')
+        self.mode_select.setEnabled(online and machine_state=='READY')
+        self.manual_hz.setEnabled(online and drive.get('mode')=='MANUAL')
+        self.manual_apply.setEnabled(online and drive.get('mode')=='MANUAL')
+        if online and not self.mode_select.hasFocus():
+            self.mode_select.setCurrentText(drive.get('mode','AUTO'))
+        self.setpoint_apply.setEnabled(online and drive.get('mode')!='MANUAL')
         if online and not self.setpoint_initialized:
             try:
                 self.setpoint_spin.setValue(float(drive.get("sp", 0)))

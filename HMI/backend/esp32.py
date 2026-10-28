@@ -7,7 +7,7 @@ import re
 import time
 
 STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"}
-FLOATS = {"sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
+FLOATS = {"manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
           "control_hz", "modbus_hz", "filter_hz"}
 INTS = {"running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
         "estop", "relay", "reset_required", "stop", "inputs_valid", "pi", "commissioned",
@@ -64,8 +64,10 @@ class ESP32Client:
                     pv=None, sp=None, out=None, warning="Fan may still be rotating.")
 
     async def command(self, command):
-        if command == "STOP" or command == "PING":
+        if command == "PING" or command in ("MODE AUTO","MODE MANUAL"):
             pass
+        elif re.fullmatch(r"FREQ [0-9]+(?:\.[0-9]{1,3})?",command):
+            if float(command.split()[1])>20: raise ValueError("Manual frequency too high")
         elif re.fullmatch(r"SETPOINT [0-9]+(?:\.[0-9]{1,3})?", command):
             pass
         elif command.startswith("FILTER "):

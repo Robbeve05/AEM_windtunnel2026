@@ -88,6 +88,9 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #endif
 #endif
 /* The existing PI and quintic ramp parameters are retained. */
+#define V20_REFERENCE_HZ 50.0f
+#define MANUAL_MAX_HZ 20.0f
+#define MANUAL_RAMP_HZ_PER_S 2.0f
 #define MAX_SETPOINT 30.0f
 #define MAX_OUTPUT 100.0f
 #define SETPOINT_TRANSITION_TIME_S 5.0f

@@ -41,10 +41,8 @@ static void process(const char *line)
         PiHeartbeat heartbeat={.connected=true,.tick=xTaskGetTickCount()};
         xQueueOverwrite(pi_heartbeat,&heartbeat); reply("OK PING\n"); return;
     }
-#if !ALLOW_REMOTE_START
-    if(c.type==CMD_START) { reply("ERR PHYSICAL_START_REQUIRED\n"); return; }
-#endif
-    if ((c.type==CMD_SETPOINT && (c.values[0]<0 || c.values[0]>MAX_SETPOINT)) ||
+    if ((c.type==CMD_FREQ && (c.values[0]<0 || c.values[0]>MANUAL_MAX_HZ)) ||
+        (c.type==CMD_SETPOINT && (c.values[0]<0 || c.values[0]>MAX_SETPOINT)) ||
         (c.type==CMD_PID && (c.values[0]<0 || c.values[0]>1000 || c.values[1]<0 ||
           c.values[1]>1000 || c.values[2]<0 || c.values[2]>1000))) {
         reply("ERR RANGE\n"); return;
@@ -53,10 +51,7 @@ static void process(const char *line)
         if (c.values[0]<0.1f || c.values[0]>10.0f) { reply("ERR RANGE\n"); return; }
         SensorLib_SetFilter(c.values[0]); reply("OK FILTER\n"); return;
     }
-    if (c.type==CMD_STOP) {
-        xEventGroupSetBits(events, STOP_REQUEST);
-        reply("OK STOP_REQUESTED\n");
-    } else if (xQueueSend(commands, &c, 0)==pdTRUE) reply("OK QUEUED\n");
+    if (xQueueSend(commands,&c,0)==pdTRUE) reply("OK QUEUED\n");
     else reply("ERR BUSY\n");
 }
 void PiCommunicationTask(void *argument)
@@ -118,9 +113,9 @@ void PiCommunicationTask(void *argument)
                     " state=%s fault=%s last_fault=%s estop=%d relay=%d reset_required=%d stop=%d inputs_valid=%d pi=%d commissioned=%d"
                     " estop_pressed=%d safety_relay_ok=%d stop_button_ok=%d pi_connected=%d sensor_age_ms=%lu"
                     " raw_di=%lu start=%d reset=%d vfd_fault_available=%d contactor_available=%d contactor=%d"
-                    " control_period_us=%u service_us=%lu service_max_us=%lu rtt_median_us=%lu rtt_p95_us=%lu rtt_max_us=%lu request_id=%lu modbus_hz=%.2f transitions=%lu remote_start=%d crc_errors=%lu exceptions=%lu exception_code=%lu late_replies=%lu",
+                    " mode=%s manual_hz=%.2f applied_hz=%.2f control_period_us=%u service_us=%lu service_max_us=%lu rtt_median_us=%lu rtt_p95_us=%lu rtt_max_us=%lu request_id=%lu modbus_hz=%.2f transitions=%lu remote_start=%d crc_errors=%lu exceptions=%lu exception_code=%lu late_replies=%lu",
                     t.running,(sample.valid && xTaskGetTickCount()-sample.tick<pdMS_TO_TICKS(SENSOR_TIMEOUT_MS)),t.motor_ok,t.setpoint,sample.value,t.output,t.reason,SIMULATION_MODE,t.control_setpoint,
-                    sample.pressure_pa,sample.temperature_c,motor.actual_hz,t.output*0.5f,motor.status,!!(motor.status&8),
+                    sample.pressure_pa,sample.temperature_c,motor.actual_hz,t.output*(V20_REFERENCE_HZ/100.0f),motor.status,!!(motor.status&8),
                     t.control_hz,(unsigned long)t.execution_us,(unsigned long)t.max_jitter_us,
                     (unsigned long)t.missed_deadlines,(unsigned long)t.overruns,(unsigned long)sample.errors,
                     (unsigned long)motor.errors,(unsigned long)motor.timeouts,(unsigned long)t.stack_free,
@@ -129,7 +124,8 @@ void PiCommunicationTask(void *argument)
                     t.safety.estop_pressed,t.safety.relay_ok,t.reset_required,!t.safety.stop_ok,t.safety.valid,t.pi_ok,t.safety.commissioned,
                     t.safety.estop_pressed,t.safety.relay_ok,t.safety.stop_ok,t.pi_ok,(unsigned long)((xTaskGetTickCount()-sample.tick)*portTICK_PERIOD_MS),
                     (unsigned long)t.safety.raw_levels,t.safety.start_pressed,t.safety.reset_pressed,t.safety.vfd_fault_available,
-                    t.safety.contactor_available,t.safety.contactor_ok,CONTROL_PERIOD_US,
+                    t.safety.contactor_available,t.safety.contactor_ok,
+                    t.manual_mode?"MANUAL":"AUTO",t.manual_hz_requested,t.manual_hz_applied,CONTROL_PERIOD_US,
                     (unsigned long)t.service_us,(unsigned long)t.service_max_us,(unsigned long)t.rtt_median_us,
                     (unsigned long)t.rtt_p95_us,(unsigned long)t.rtt_max_us,(unsigned long)t.request_id,t.modbus_hz,
                     (unsigned long)t.transitions,ALLOW_REMOTE_START,(unsigned long)t.crc_errors,(unsigned long)t.exceptions,(unsigned long)t.exception_code,(unsigned long)t.late_replies);

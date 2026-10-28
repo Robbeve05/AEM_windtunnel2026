@@ -44,7 +44,8 @@ action('exit-hmi',async()=>{if(!window.confirm('Close the Windtunnel HMI and ret
 $('measurement-name').addEventListener('input',updateControls);
 action('record-start',async()=>{await api('measurement/start',{name:$('measurement-name').value.trim(),recording_rate_hz:Number($('recording-rate').value)});toast('Recording started · live pitot data');});
 action('record-stop',async()=>{await api('measurement/stop',{});toast('Measurement saved');await refresh();});
-action('tunnel-stop',async()=>{await api('tunnel/stop',{});toast('Operational OFF1 STOP requested');});
+action('mode-apply',async()=>{await api('tunnel/mode',{mode:$('mode-select').value});toast('Mode requested');});
+  $('manual-frequency-form')?.addEventListener('submit',async e=>{e.preventDefault();await api('tunnel/frequency',{hz:Number($('manual-frequency').value)});toast('Frequency requested');});
 $('setpoint-form').addEventListener('submit',async event=>{
   event.preventDefault();
   try {
@@ -125,10 +126,11 @@ function onFrame(frame){
     if(ctrl)ctrl.hidden=false;
     $('setpoint').disabled=drive.stale;
     $('apply-setpoint').disabled=drive.stale;
-    const stop=$('tunnel-stop');
-    if(stop){stop.hidden=false;stop.disabled=drive.stale;}
-    const start=$('tunnel-start');
-    if(start)start.hidden=true;
+    $('mode-select').disabled=drive.stale||drive.state!=='READY';
+    $('mode-apply').disabled=drive.stale||drive.state!=='READY';
+    $('manual-frequency').disabled=drive.stale||drive.mode!=='MANUAL';
+    $('manual-apply').disabled=drive.stale||drive.mode!=='MANUAL';
+    if(!drive.stale&&document.activeElement!==$('mode-select'))$('mode-select').value=drive.mode||'AUTO';
   }else{
     badge('tunnel-state',frame.simulation?frame.tunnel_state:'IN DEVELOPMENT');
   }

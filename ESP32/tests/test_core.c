@@ -15,8 +15,10 @@ int main(void)
     PiCommand c;
     assert(PiProtocol_Parse("SETPOINT 12.5", &c) && c.type==CMD_SETPOINT && c.values[0]==12.5f);
     assert(PiProtocol_Parse(" PID 2 1 0 \r", &c) && c.type==CMD_PID);
-    assert(PiProtocol_Parse("STOP", &c) && c.type==CMD_STOP);
-    assert(PiProtocol_Parse("START", &c) && c.type==CMD_START);
+    assert(PiProtocol_Parse("MODE AUTO", &c) && c.type==CMD_MODE_AUTO);
+    assert(PiProtocol_Parse("MODE MANUAL", &c) && c.type==CMD_MODE_MANUAL);
+    assert(PiProtocol_Parse("FREQ 12.5", &c) && c.type==CMD_FREQ);
+    assert(!PiProtocol_Parse("START", &c) && !PiProtocol_Parse("STOP", &c));
     assert(PiProtocol_Parse("PING", &c) && c.type==CMD_PING);
     assert(PiProtocol_Parse("FILTER 2.5", &c) && c.type==CMD_FILTER && c.values[0]==2.5f);
     assert(!PiProtocol_Parse("FILTER nan", &c));

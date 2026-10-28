@@ -64,7 +64,8 @@ bool I2CBus_Init(void) {
     ready=i2c_param_config(0,&c)==ESP_OK&&i2c_driver_install(0,I2C_MODE_MASTER,0,0,0)==ESP_OK;
     /* Load the inactive latch before enabling outputs. Unassigned pins stay low. */
     uint8_t direction[]={3,0};
-    bool ok=ready&&DigitalOutputs_Set(false)&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,direction,2);
+    uint8_t off[]={1,0};
+    bool ok=ready&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,off,2)&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,direction,2);
     if(!ok) ready=false;
     return ok;
 #endif
