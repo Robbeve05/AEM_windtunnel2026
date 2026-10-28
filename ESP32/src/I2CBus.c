@@ -66,6 +66,17 @@ bool I2CBus_Init(void) {
     uint8_t direction[]={3,0};
     uint8_t off[]={1,0};
     bool ok=ready&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,off,2)&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,direction,2);
+    /* Register 0x01 = output latch, register 0x03 = direction.
+     * Fail closed if readback is missing or either register differs. */
+    uint8_t observed_latch=0xff, observed_direction=0xff;
+    if(ok) {
+        const uint8_t latch_register=1, direction_register=3;
+        ok=I2CBus_Write(BOARD_DO_I2C_ADDRESS,&latch_register,1) &&
+            I2CBus_Read(BOARD_DO_I2C_ADDRESS,&observed_latch,1) &&
+            I2CBus_Write(BOARD_DO_I2C_ADDRESS,&direction_register,1) &&
+            I2CBus_Read(BOARD_DO_I2C_ADDRESS,&observed_direction,1) &&
+            observed_latch==0 && observed_direction==0;
+    }
     if(!ok) ready=false;
     return ok;
 #endif

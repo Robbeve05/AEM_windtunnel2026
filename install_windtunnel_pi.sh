@@ -6,7 +6,7 @@ set -Eeuo pipefail
 OTA_REQUESTED=0
 if [[ "${1:-}" == "--ota" ]]; then OTA_REQUESTED=1; shift; fi
 [[ $# -eq 0 ]] || { echo "Usage: bash install_windtunnel_pi.sh [--ota]" >&2; exit 2; }
-BRANCH="feature/raspberry-pi-ethernet-hmi"
+BRANCH="integration/windtunnel-bench-ready"
 URL="https://github.com/Robbeve05/AEM_windtunnel2026.git"
 REPO="$HOME/AEM_windtunnel2026"
 HMI="$REPO/HMI"

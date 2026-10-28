@@ -34,8 +34,9 @@ static bool maintenance_ok(void) {
     const SafetySnapshot s=SafetyIO_Read();
     return gpio_get_level(OTA_MAINTENANCE_GPIO)==OTA_MAINTENANCE_ACTIVE_LEVEL &&
            gpio_get_level(OTA_MOTOR_ISOLATED_GPIO)==OTA_MOTOR_ISOLATED_ACTIVE_LEVEL &&
-           !s.estop_pressed && s.stop_ok && !s.start_pressed &&
-           (!s.contactor_available || !s.contactor_ok);
+           s.valid && s.estop_pressed && !s.relay_ok &&
+           s.commissioned && s.contactor_available && !s.contactor_ok &&
+           s.stop_ok && !s.start_pressed;
 #else
     return false;
 #endif

@@ -280,16 +280,6 @@ async def start_tunnel():
 @app.post('/api/tunnel/stop')
 async def stop_tunnel():
     raise ValueError("STOP is exclusively the physical pushbutton")
-    c = control()
-    if c.esp32_mode:
-        await c.esp32.command('STOP')
-        c.event('Operational OFF1 STOP requested from HMI.', 'warning')
-        return c.status()
-    if not c.simulation:
-        raise ValueError('Fan/VFD control is not available in this mode')
-    c.tunnel.stop()
-    c.event('Software stop requested.', 'warning')
-    return c.status()
 
 
 @app.post('/api/tunnel/mode')

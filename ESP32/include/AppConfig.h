@@ -88,7 +88,11 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #endif
 #endif
 /* The existing PI and quintic ramp parameters are retained. */
+/* Must equal the commissioned SINAMICS V20 parameter P2000.
+ * Keep RUN disabled until the actual VFD scaling has been verified. */
+#ifndef V20_REFERENCE_HZ
 #define V20_REFERENCE_HZ 50.0f
+#endif
 #define MANUAL_MAX_HZ 20.0f
 #define MANUAL_RAMP_HZ_PER_S 2.0f
 #define MAX_SETPOINT 30.0f
@@ -107,6 +111,9 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #define INIT_TIMEOUT_MS 15000u
 #define NORMAL_STOP_TIMEOUT_MS 30000u
 #define STOP_CONFIRM_HZ 0.1f
+#ifndef V20_RUN_COMMISSIONED
+#define V20_RUN_COMMISSIONED 0
+#endif
 #ifndef SAFETY_IO_COMMISSIONED
 #define SAFETY_IO_COMMISSIONED 0
 #endif

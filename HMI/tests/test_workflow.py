@@ -52,7 +52,8 @@ class WorkflowTests(unittest.TestCase):
         started = self.post('measurement/start', {'name':'Verification_Run_01'})
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'Duplicate'}).status_code, 400)
         time.sleep(.25)
-        self.post('tunnel/stop')
+        # Physical-only STOP applies in both live and simulation API routes.
+        self.assertEqual(self.client.post('/api/tunnel/stop').status_code, 400)
         self.assertEqual(self.controller.measurements.state, 'RECORDING')
         result = self.post('measurement/stop')
         self.assertGreater(result['samples'], 0)
@@ -73,6 +74,9 @@ class WorkflowTests(unittest.TestCase):
         self.post('storage/reconnect')
         self.post('storage/export-all')
         self.assertEqual(self.client.get('/api/measurements/' + started['id']).status_code,200)
+
+    def test_no_remote_stop(self):
+        self.assertEqual(self.client.post('/api/tunnel/stop').status_code, 400)
 
     def test_websocket_reconnect(self):
         for _ in range(2):
