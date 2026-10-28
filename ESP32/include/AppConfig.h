@@ -51,8 +51,11 @@
 #ifndef OTA_SHARED_SECRET
 #define OTA_SHARED_SECRET ""
 #endif
-#if OTA_MAINTENANCE_ENABLED && (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 || OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0 || sizeof(OTA_SHARED_SECRET) < 33)
-#error OTA requires two wired physical inputs and >=32 byte pre-shared secret
+#if OTA_MAINTENANCE_ENABLED && (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 || OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0)
+#error OTA requires two wired physical inputs
+#endif
+#if OTA_MAINTENANCE_ENABLED
+_Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at least 32 bytes");
 #endif
 #define PITOT_ADDRESS 0x28
 #define AIR_DENSITY 1.225f
