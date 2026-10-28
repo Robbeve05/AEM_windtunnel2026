@@ -322,9 +322,9 @@ class HMIWindow(QMainWindow):
         tunnel_heading.setObjectName("sidebarTitle")
         right_layout.addWidget(tunnel_heading)
         tunnel_status = QHBoxLayout()
-        tunnel_badge = QLabel("IN DEVELOPMENT")
-        tunnel_badge.setObjectName("tagAmber")
-        tunnel_status.addWidget(tunnel_badge)
+        self.tunnel_badge = QLabel("UNKNOWN")
+        self.tunnel_badge.setObjectName("tagAmber")
+        tunnel_status.addWidget(self.tunnel_badge)
         tunnel_status.addWidget(QLabel("Fan / VFD control"))
         tunnel_status.addStretch(1)
         right_layout.addLayout(tunnel_status)
@@ -332,21 +332,46 @@ class HMIWindow(QMainWindow):
         control.setObjectName("development")
         control_layout = QVBoxLayout(control)
         control_layout.setContentsMargins(10, 9, 10, 9)
-        control_layout.setSpacing(3)
-        control_label = QLabel("AIRSPEED SETPOINT")
+        control_layout.setSpacing(6)
+        control_label = QLabel("AIRSPEED SETPOINT · m/s")
         control_label.setObjectName("smallLabel")
-        control_state = QLabel("IN DEVELOPMENT")
-        control_state.setObjectName("developmentText")
-        control_note = QLabel("Manual fan operation for now")
-        control_note.setObjectName("hint")
+        self.tunnel_state_detail = QLabel("ESP32 telemetry unavailable. Fan may still rotate.")
+        self.tunnel_state_detail.setObjectName("safetyNote")
+        self.tunnel_state_detail.setWordWrap(True)
+        self.tunnel_state_detail.setMinimumHeight(35)
+        self.setpoint_spin = QDoubleSpinBox()
+        self.setpoint_spin.setRange(0, 30)
+        self.setpoint_spin.setDecimals(2)
+        self.setpoint_spin.setSingleStep(0.5)
+        self.setpoint_spin.setSuffix(" m/s")
+        self.setpoint_spin.setEnabled(False)
+        self.setpoint_initialized = False
+        self.setpoint_apply = QPushButton("Apply setpoint")
+        self.setpoint_apply.setEnabled(False)
+        self.setpoint_apply.clicked.connect(self._apply_setpoint)
+        self.operational_stop = QPushButton("Request OFF1 STOP")
+        self.operational_stop.setEnabled(False)
+        self.operational_stop.setObjectName("stopButton")
+        self.operational_stop.clicked.connect(self._request_stop)
+        self.vfd_status_text = QLabel("VFD: UNKNOWN")
+        self.vfd_status_text.setObjectName("hint")
+        self.vfd_status_text.setWordWrap(True)
+        self.timing_status_text = QLabel("Control cycle: awaiting telemetry")
+        self.timing_status_text.setObjectName("hint")
+        self.timing_status_text.setWordWrap(True)
         control_layout.addWidget(control_label)
-        control_layout.addWidget(control_state)
-        control_layout.addWidget(control_note)
+        control_layout.addWidget(self.tunnel_state_detail)
+        control_layout.addWidget(self.setpoint_spin)
+        control_layout.addWidget(self.setpoint_apply)
+        control_layout.addWidget(self.operational_stop)
+        control_layout.addWidget(self.vfd_status_text)
+        control_layout.addWidget(self.timing_status_text)
         right_layout.addWidget(control)
-        safety_note = QLabel("Data acquisition is active.\nFan control remains manual until commissioned.")
-        safety_note.setObjectName("safetyNote")
-        safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_layout.addWidget(safety_note)
+        self.safety_note = QLabel("START and RESET are physical buttons.\nOFF1 is operational, not an E-stop.")
+        self.safety_note.setObjectName("safetyNote")
+        self.safety_note.setWordWrap(True)
+        self.safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_layout.addWidget(self.safety_note)
         readings = QHBoxLayout()
         self.side_speed = self._side_reading(readings, "LIVE AIRSPEED")
         self.side_stability = self._side_reading(readings, "FLOW STABILITY")
@@ -366,7 +391,7 @@ class HMIWindow(QMainWindow):
         health_layout.addLayout(health_heading)
         self.health_labels = {}
         for key, label in (
-            ("host", "Host / Raspberry Pi"), ("arduino", "ESP32-S3"), ("serial", "Ethernet TCP"),
+            ("host", "Host / Raspberry Pi"), ("connection", "ESP32 Ethernet"),
             ("pitot", "Pitot sensor"), ("pressure_sensors", "Cp pressure taps"),
             ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
         ):
@@ -685,7 +710,7 @@ class HMIWindow(QMainWindow):
             ("VARIATION σ", "— m/s"),
             ("5 S MIN / MAX", "—"),
             ("ANGLE OF ATTACK", "IN DEVELOPMENT"),
-            ("FAN / VFD CONTROL", "IN DEVELOPMENT"),
+            ("FAN / VFD CONTROL", "LIVE ESP32 STATUS"),
             ("REYNOLDS NUMBER", "IN DEVELOPMENT"),
         )
         for index, (title, text) in enumerate(fields):
@@ -1059,6 +1084,9 @@ class HMIWindow(QMainWindow):
             #rightSidebar #eyebrow {{ color:#ff776e; }}
             #rightSidebar #sidebarTitle {{ color:white; font-size:18px; }}
             #rightSidebar #tagAmber {{ background:#fff1d8; border-color:#ead0a2; color:#975900; }}
+            #rightSidebar #tagError {{ background:#b12322; border:1px solid #df6661; border-radius:3px; color:white; padding:4px 7px; font-size:9px; font-weight:800; }}
+            #rightSidebar #tagSuccess {{ background:#e6f3ed; border-color:#badbca; color:#16865f; }}
+            #rightSidebar #stopButton {{ border:1px solid #d36c67; color:#a82020; font-weight:800; }}
             #rightSidebar #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
             #rightSidebar #healthLabel {{ color:#bdc0c4; font-size:10px; }}
             #rightSidebar #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
@@ -1167,7 +1195,7 @@ class HMIWindow(QMainWindow):
         names = (
             ("simulation", "Simulation mode"), ("sample_rate_hz", "Expected pitot rate · Hz"),
             ("air_density", "Air density · kg/m³"), ("max_airspeed_ms", "Graph maximum airspeed · m/s"),
-            ("esp32_host", "ESP32 Ethernet host"), ("baud_rate", "Baud rate"),
+            ("esp32_host", "ESP32 Ethernet host"), ("esp32_port", "ESP32 TCP port"),
             ("data_directory", "Local data directory"), ("usb_mount_path", "USB mount path"),
             ("simulate_usb", "Simulated USB export"),
         )
@@ -1175,6 +1203,42 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(label), index, 0)
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
+
+    def _set_machine_badge(self, value, style):
+        if self.tunnel_badge.text() != value or self.tunnel_badge.objectName() != style:
+            self.tunnel_badge.setText(value)
+            self.tunnel_badge.setObjectName(style)
+            self.tunnel_badge.style().unpolish(self.tunnel_badge)
+            self.tunnel_badge.style().polish(self.tunnel_badge)
+
+    def _apply_setpoint(self):
+        if self.state.get("simulation") or (self.state.get("esp32") or {}).get("stale", True):
+            self._show_error("ESP32 telemetry is not available.")
+            return
+        target = self.setpoint_spin.value()
+        self.setpoint_apply.setEnabled(False)
+
+        def done(data, error):
+            if error:
+                self._show_error(f"ESP32 setpoint rejected: {error}")
+            self._on_status(data, None) if not error else None
+
+        self._post("tunnel/setpoint", {"airspeed_ms": target}, done)
+
+    def _request_stop(self):
+        # Operational request only. Never represents a safety-rated E-stop.
+        if self.state.get("simulation") or (self.state.get("esp32") or {}).get("stale", True):
+            self._show_error("ESP32 telemetry is not available.")
+            return
+        self.operational_stop.setEnabled(False)
+
+        def done(data, error):
+            if error:
+                self._show_error(f"OFF1 STOP not acknowledged: {error}")
+            else:
+                self._on_status(data, None)
+
+        self._post("tunnel/stop", {}, done)
 
     def _apply_filter_cutoff(self):
         cutoff_hz = self.filter_cutoff.value()
@@ -1234,6 +1298,61 @@ class HMIWindow(QMainWindow):
                 self.filter_status.setText("Waiting for firmware telemetry to confirm the filter setting.")
             else:
                 self.filter_status.setText("Simulation mode · the filter is sent when ESP32 hardware is connected.")
+        drive = data.get("esp32") or {}
+        is_sim = bool(data.get("simulation"))
+        stale = bool(drive.get("stale", True)) if not is_sim else False
+        machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
+        machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
+        estop_pressed = drive.get("estop_pressed") == 1
+        if stale:
+            self._set_machine_badge("UNKNOWN", "tagError")
+            self.tunnel_state_detail.setText("ESP32 status UNKNOWN. Fan may still rotate.")
+        elif machine_fault == "EMERGENCY_STOP":
+            self._set_machine_badge("E-STOP", "tagError")
+            self.tunnel_state_detail.setText(
+                "E-stop PRESSED; fan may coast." if estop_pressed else
+                "E-stop released; physical RESET required. Fan may still rotate."
+            )
+        elif machine_state == "FAULT" or machine_fault not in ("NONE", None):
+            self._set_machine_badge("FAULT", "tagError")
+            self.tunnel_state_detail.setText(f"Fault: {machine_fault}. Physical RESET required.")
+        else:
+            self._set_machine_badge(machine_state,
+                                    "tagSuccess" if machine_state in ("READY", "RUNNING") else "tagAmber")
+            self.tunnel_state_detail.setText(
+                f"State: {machine_state} · physical START/RESET only"
+            )
+        online = not stale and not is_sim
+        self.setpoint_spin.setEnabled(online)
+        self.setpoint_apply.setEnabled(online)
+        self.operational_stop.setEnabled(online)
+        if online and not self.setpoint_initialized:
+            try:
+                self.setpoint_spin.setValue(float(drive.get("sp", 0)))
+                self.setpoint_initialized = True
+            except (ValueError, TypeError):
+                pass
+        if stale:
+            self.setpoint_initialized = False
+        self.vfd_status_text.setText(
+            "VFD: no current status" if stale else
+            f"VFD: {self._fixed(drive.get('actual_hz'), 2)} Hz"
+            f" · motor_ok={int(bool(drive.get('motor_ok')))}"
+            f" · sensor_ok={int(bool(drive.get('sensor_ok')))}"
+        )
+        self.timing_status_text.setText(
+            "Control cycle: awaiting telemetry" if stale else
+            f"Control: {self._fixed(drive.get('control_hz'), 1)} Hz"
+            f" · execution {drive.get('execution_us', '—')} µs"
+            f" · overruns {drive.get('overruns', '—')}"
+            f" · missed {drive.get('missed_deadlines', '—')}"
+        )
+        self.safety_note.setText(
+            "Physical START and RESET required. OFF1 is not an E-stop.\n"
+            + ("Commissioning incomplete; motor RUN inhibited."
+               if not is_sim and not drive.get("commissioned") else
+               "Verify hardware safety independently before enabling the drive.")
+        )
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
@@ -1342,7 +1461,7 @@ class HMIWindow(QMainWindow):
             ("Flow stability", sample.get("flow_stability_pct"), "%", "5 S WINDOW"),
             ("Static pressure", None, "Pa", "IN DEVELOPMENT"),
             ("Angle of attack", None, "°", "IN DEVELOPMENT"),
-            ("Fan / VFD output", None, "%", "IN DEVELOPMENT"),
+            ("Fan / VFD output", sample.get("fan_output_pct"), "%", "ESP32"),
         )
         self.raw_table.setRowCount(len(rows))
         for row_index, (name, value, unit, state) in enumerate(rows):
