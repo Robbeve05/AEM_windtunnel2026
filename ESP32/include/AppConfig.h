@@ -29,6 +29,31 @@
 #define PITOT_I2C_TIMEOUT_MS 1u
 #define PITOT_AVERAGE_SAMPLES 10u
 #define PI_TCP_PORT 5000
+/* OTA is disabled until two VERIFIED physical maintenance / isolation
+ * inputs have been wired and a secret provisioned outside Git.
+ * Do not make these inputs software-derived.
+ */
+#ifndef OTA_MAINTENANCE_ENABLED
+#define OTA_MAINTENANCE_ENABLED 0
+#endif
+#ifndef OTA_MAINTENANCE_GPIO
+#define OTA_MAINTENANCE_GPIO (-1)
+#endif
+#ifndef OTA_MAINTENANCE_ACTIVE_LEVEL
+#define OTA_MAINTENANCE_ACTIVE_LEVEL (-1)
+#endif
+#ifndef OTA_MOTOR_ISOLATED_GPIO
+#define OTA_MOTOR_ISOLATED_GPIO (-1)
+#endif
+#ifndef OTA_MOTOR_ISOLATED_ACTIVE_LEVEL
+#define OTA_MOTOR_ISOLATED_ACTIVE_LEVEL (-1)
+#endif
+#ifndef OTA_SHARED_SECRET
+#define OTA_SHARED_SECRET ""
+#endif
+#if OTA_MAINTENANCE_ENABLED && (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 || OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0 || sizeof(OTA_SHARED_SECRET) < 33)
+#error OTA requires two wired physical inputs and >=32 byte pre-shared secret
+#endif
 #define PITOT_ADDRESS 0x28
 #define AIR_DENSITY 1.225f
 #define PITOT_MIN_PA (-6894.757f)
