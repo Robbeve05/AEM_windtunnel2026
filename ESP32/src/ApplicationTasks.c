@@ -29,6 +29,7 @@ void StartApplicationTasks(void)
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3, &sensor_task_handle, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(ControlTask, "ControlTask", 6144, NULL, 4,
         &control_task_handle, 1)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaMarkValidTask, "OtaVerify", 3072, NULL, 1, NULL, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaUpdateTask, "OtaUpdate", 6144, NULL, 1, NULL, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 6144, NULL, 2, NULL, 0)==pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 }
