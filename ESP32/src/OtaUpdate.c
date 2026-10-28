@@ -133,7 +133,6 @@ static void handle_client(int fd) {
     }
     reply(fd,"OK REBOOT\n");
     shutdown(fd,SHUT_RDWR);
-    close(fd);
     vTaskDelay(pdMS_TO_TICKS(250));
     esp_restart();
 #endif
