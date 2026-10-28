@@ -29,7 +29,7 @@ else
     [[ "$path" == "HMI/config/config.json" || "$path" == HMI/data/* ]] && continue
     fail "Local source change '$path' must be committed/stashed before update."
   done < <(git -C "$ROOT" status --porcelain --untracked-files=normal)
-  cp -a "$ROOT/HMI/config/config.json" "$HOME/.windtunnel-config-backup.json" || true
+  if [[ -f "$ROOT/HMI/config/config.json" ]]; then cp -a "$ROOT/HMI/config/config.json" "$HOME/.windtunnel-config-backup.json"; fi
   git -C "$ROOT" restore -- HMI/config/config.json
   git -C "$ROOT" merge --ff-only "origin/$BRANCH"
   [[ -f "$HOME/.windtunnel-config-backup.json" ]] && cp -a "$HOME/.windtunnel-config-backup.json" "$ROOT/HMI/config/config.json"
@@ -68,7 +68,7 @@ if [[ "$MODE" != install ]]; then
     (cd "$ROOT/ESP32" && pio run -e waveshare_s3) || fail "ESP32 build failed"
     image="$ROOT/ESP32/.pio/build/waveshare_s3/firmware.bin"
     [[ -s "$image" ]] || fail "ESP32 build produced no firmware.bin"
-    "$ROOT/HMI/.venv/bin/python" "$ROOT/HMI/tools/stage_firmware.py" "$image" || fail "Firmware staging failed"
+    python3 "$ROOT/HMI/tools/stage_firmware.py" "$image" || fail "Firmware staging failed"
     say "Firmware staged. It has NOT been uploaded to ESP32."
   fi
 fi
