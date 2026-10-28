@@ -1250,9 +1250,9 @@ class HMIWindow(QMainWindow):
     def _tick_indicator(self):
         """100% local Qt animation; no hardware outputs or motor commands."""
         if self._last_status_ok and time.monotonic() - self._last_status_ok > 2.0:
+            self._last_status_ok = 0.0
             self._set_signal_indicator("UNKNOWN", "#808080", False,
                                        "HMI status feed stale; fan may still rotate")
-            self._last_status_ok = 0.0
         elapsed = time.monotonic() - self._indicator_epoch
         lit = (not self._indicator_blink or (elapsed % 1.0) < 0.5)
         color = self._indicator_color if lit else "#b0b0ad"
