@@ -196,8 +196,17 @@ class HMIWindow(QMainWindow):
         self.last_refresh = 0.0
         self.last_sample_timestamp = None
         self.selected_run_id = None
+        self._indicator_color = "#808080"
+        self._indicator_blink = False
+        self._indicator_label = "UNKNOWN"
+        self._indicator_detail = "Awaiting ESP32 telemetry"
+        self._indicator_epoch = time.monotonic()
+        self._last_status_ok = 0.0
         self._build_ui()
         self._apply_style()
+        self.indicator_timer = QTimer(self)
+        self.indicator_timer.timeout.connect(self._tick_indicator)
+        self.indicator_timer.start(150)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
         self.timer.start(100)
@@ -268,6 +277,17 @@ class HMIWindow(QMainWindow):
         self.clock = QLabel("--:--:--")
         header_layout.addWidget(QLabel("AVANS HOGESCHOOL   /   AEROSPACE ENGINEERING   /   WINDTUNNEL 2026"))
         header_layout.addStretch(1)
+        # Always-visible, non-safety signal tower for the physical tunnel.
+        self.status_lamp = QLabel("●")
+        self.status_lamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_lamp.setFixedWidth(28)
+        self.status_lamp.setAccessibleName("Windtunnel status indicator")
+        self.status_lamp.setToolTip("ESP32 status UNKNOWN")
+        self.status_label = QLabel("UNKNOWN")
+        self.status_label.setMinimumWidth(82)
+        self.status_label.setToolTip("Waiting for fresh ESP32 telemetry")
+        header_layout.addWidget(self.status_lamp)
+        header_layout.addWidget(self.status_label)
         header_layout.addWidget(self.connection)
         header_layout.addWidget(self.clock)
         center_layout.addWidget(header)
@@ -1212,6 +1232,70 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
 
+    def _set_signal_indicator(self, label, color, blink=False, detail=""):
+        """Non-safety indication; based solely on fresh status telemetry."""
+        signature = (label, color, blink, detail)
+        if signature != (self._indicator_label, self._indicator_color,
+                         self._indicator_blink, self._indicator_detail):
+            self._indicator_epoch = time.monotonic()
+        self._indicator_label = label
+        self._indicator_color = color
+        self._indicator_blink = blink
+        self._indicator_detail = detail
+        self.status_label.setText(label)
+        self.status_label.setToolTip(detail)
+        self.status_lamp.setToolTip(detail)
+        self._tick_indicator()
+
+    def _tick_indicator(self):
+        """100% local Qt animation; no hardware outputs or motor commands."""
+        if self._last_status_ok and time.monotonic() - self._last_status_ok > 2.0:
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "HMI status feed stale; fan may still rotate")
+            self._last_status_ok = 0.0
+        elapsed = time.monotonic() - self._indicator_epoch
+        lit = (not self._indicator_blink or (elapsed % 1.0) < 0.5)
+        color = self._indicator_color if lit else "#b0b0ad"
+        self.status_lamp.setStyleSheet(
+            f"color: {color}; font-size: 27px; font-weight: 900;")
+        self.status_label.setStyleSheet(
+            "font-size: 10px; font-weight: 800; letter-spacing: 0.4px;")
+
+    def _update_signal_from_status(self, drive, is_sim, stale, state, fault, pressed):
+        if is_sim:
+            self._set_signal_indicator("SIMULATION", "#808080", False,
+                                       "Simulated data; hardware status is not verified")
+        elif stale:
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "ESP32 disconnected/stale; fan may still rotate")
+        elif pressed:
+            self._set_signal_indicator("E-STOP", "#d33226", False,
+                                       "Physical emergency stop pressed; fan may coast")
+        elif fault == "EMERGENCY_STOP":
+            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
+                                       "Emergency stop released; physical reset required")
+        elif state == "FAULT" or fault not in ("NONE", None):
+            self._set_signal_indicator("FAULT", "#d33226", True,
+                                       "Fault present; physical reset required")
+        elif drive.get("reset_required") in (1, True) and state not in ("INIT",):
+            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
+                                       "Physical reset required")
+        elif state == "RUNNING":
+            self._set_signal_indicator("RUNNING", "#20a65a", True,
+                                       "Operational state RUNNING; not safety-certified")
+        elif state == "READY":
+            self._set_signal_indicator("READY", "#20a65a", False,
+                                       "Operational state READY; physical START required")
+        elif state in ("WAIT", "STOP"):
+            self._set_signal_indicator(state, "#d99923", True,
+                                       "Waiting for physical reset/start or completion of stop")
+        elif state == "INIT":
+            self._set_signal_indicator("INIT", "#d99923", False,
+                                       "Initializing hardware and communications")
+        else:
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "Unexpected state; fan may still rotate")
+
     def _set_machine_badge(self, value, style):
         if self.tunnel_badge.text() != value or self.tunnel_badge.objectName() != style:
             self.tunnel_badge.setText(value)
@@ -1271,6 +1355,9 @@ class HMIWindow(QMainWindow):
         def done(data, error):
             self.poll_busy = False
             if error:
+                self._last_status_ok = 0.0
+                self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                           "HMI backend unreachable; fan may still rotate")
                 self.connection.setText("RECONNECTING")
                 self.connection.setObjectName("tagAmber")
                 self.connection.style().unpolish(self.connection)
@@ -1286,7 +1373,11 @@ class HMIWindow(QMainWindow):
 
     def _on_status(self, data, error):
         if error:
+            self._last_status_ok = 0.0
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "HMI status request failed; fan may still rotate")
             return
+        self._last_status_ok = time.monotonic()
         self.state = data
         filter_status = data.get("pressure_filter", {})
         if self.page_key == "settings":
@@ -1308,6 +1399,8 @@ class HMIWindow(QMainWindow):
         machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
         machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
         estop_pressed = drive.get("estop_pressed") == 1
+        self._update_signal_from_status(drive, is_sim, stale,
+                                        machine_state, machine_fault, estop_pressed)
         if stale:
             self._set_machine_badge("UNKNOWN", "tagError")
             self.tunnel_state_detail.setText("ESP32 status UNKNOWN. Fan may still rotate.")
