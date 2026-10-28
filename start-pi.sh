@@ -7,7 +7,13 @@ BRANCH="feature/raspberry-pi-ethernet-hmi"
 if [[ -d "$ROOT/.git" ]]; then
   cd "$ROOT"
   git fetch origin "$BRANCH"
-  git switch "$BRANCH"
+  if [[ "$(git branch --show-current)" != "$BRANCH" ]]; then
+    if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+      echo "Local edits found. Back up your HMI/config/config.json and resolve changes before switching branches."
+      exit 1
+    fi
+    git switch "$BRANCH" || git switch -c "$BRANCH" --track "origin/$BRANCH"
+  fi
   bash HMI/deploy/update-pi.sh
 else
   bash <(curl -fsSL "https://raw.githubusercontent.com/Robbeve05/AEM_windtunnel2026/$BRANCH/HMI/deploy/setup-pi-from-github.sh")
