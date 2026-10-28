@@ -164,3 +164,26 @@ void OtaUpdateTask(void *argument) {
     vTaskDelete(NULL);
 #endif
 }
+
+/* Confirm new OTA image only after a healthy control timer has run long enough.
+ * A factory USB image remains the recovery baseline; failed OTA images roll back.
+ */
+void OtaMarkValidTask(void *argument) {
+    (void)argument;
+    const esp_partition_t *running=esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if(!running || esp_ota_get_state_partition(running,&state)!=ESP_OK ||
+       state!=ESP_OTA_IMG_PENDING_VERIFY) {
+        vTaskDelete(NULL);return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(12000));
+    Telemetry t={0};
+    const bool good=xQueuePeek(telemetry,&t,0)==pdTRUE &&
+        t.control_hz>185.0f && t.control_hz<215.0f &&
+        t.overruns==0 && t.missed_deadlines==0;
+    if(good)
+        ESP_ERROR_CHECK(esp_ota_mark_app_valid_cancel_rollback());
+    else
+        (void)esp_ota_mark_app_invalid_rollback_and_reboot();
+    vTaskDelete(NULL);
+}
