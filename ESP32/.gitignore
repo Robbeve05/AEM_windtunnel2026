@@ -3,3 +3,6 @@
 build/
 sdkconfig.*
 !sdkconfig.defaults
+
+# Per-device secret and physical isolation I/O configuration
+include/OtaLocalConfig.h
