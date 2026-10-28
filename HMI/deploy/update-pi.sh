@@ -37,7 +37,7 @@ restore_config
 trap - EXIT
 
 # Preserve existing user data, but migrate legacy Arduino settings to ESP32.
-python3 - "$APP_LINK/config/config.json" <<'PY'
+python3 - "$APP_DIR/config/config.json" <<'PY'
 import json
 import pathlib
 import sys
