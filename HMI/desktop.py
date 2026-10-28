@@ -1348,7 +1348,7 @@ class HMIWindow(QMainWindow):
             f" · missed {drive.get('missed_deadlines', '—')}"
         )
         self.safety_note.setText(
-            "Physical START and RESET required. OFF1 is not an E-stop.\n"
+            "Physical START and RESET required. OFF1 is not an E-stop.\\n"
             + ("Commissioning incomplete; motor RUN inhibited."
                if not is_sim and not drive.get("commissioned") else
                "Verify hardware safety independently before enabling the drive.")
