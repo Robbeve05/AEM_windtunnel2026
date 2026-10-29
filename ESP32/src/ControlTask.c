@@ -1,11 +1,33 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * ControlTask.c
- * Core 1: 200 Hz (5 ms) state machine, PI controller and non-blocking V20 service.
+ *
+ * Wind tunnel system control and state machine coordination.
  *
  * Author: R.E. van Eekelen
- *
- * Operational control only. Independent hardware must implement E-stop.
  */
+///////////////////////////////////////////////////////////////////////////////
+// System includes
+
+#include <stdint.h>
+#include "driver/gptimer.h"
+#include "esp_timer.h"
+#include "esp_task_wdt.h"
+#include "esp_err.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/task.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+
+#include "ApplicationTasks.h"
 #include "TaskData.h"
 #include "AppConfig.h"
 #include "PiProtocol.h"
@@ -15,21 +37,80 @@
 #include "SafetyIO.h"
 #include "ControlTiming.h"
 
-#include <stdint.h>
-#include "driver/gptimer.h"
-#include "esp_timer.h"
-#include "esp_task_wdt.h"
-#include "esp_err.h"
+///////////////////////////////////////////////////////////////////////////////
+// Local definitions
 
 _Static_assert(CONTROL_PERIOD_US == (1000000u / CONTROL_FREQUENCY_HZ),
                "GPTimer and PI sample periods must be equal");
-_Static_assert(CONTROL_FREQUENCY_HZ == 200u,
-               "The approved wind tunnel controller runs at 200 Hz");
+_Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controller runs at 200 Hz");
 
-static bool IRAM_ATTR ControlClockInterrupt(
-    gptimer_handle_t timer,
-    const gptimer_alarm_event_data_t *event,
-    void *argument)
+///////////////////////////////////////////////////////////////////////////////
+// File-local data structures
+
+typedef struct
+{
+    Regelaar controller;
+    SetpointCurve curve;
+    StateMachine machine;
+    Telemetry status;
+    ControlTiming timing_stats;
+    Sample sample;
+    SafetySnapshot safety;
+    PiHeartbeat heartbeat;
+    MotorStatus motor;
+    FaultReason_t latched_timing_fault;
+    uint32_t previous_start_sequence;
+    uint32_t previous_reset_sequence;
+    bool curve_running;
+    bool v20_initialized;
+    uint32_t cycles;
+    int64_t window_start_us;
+
+    /* Per-cycle values shared by the ordered processing stages. */
+    int64_t started_us;
+    uint32_t now_ms;
+    TickType_t now_tick;
+    FaultReason_t clock_fault;
+    MachineInputs inputs;
+    bool start, stop, reset;
+    bool tasks_ready;
+} ControlContext;
+
+///////////////////////////////////////////////////////////////////////////////
+// File-local variables
+
+/* Static storage preserves the existing task stack budget. */
+static ControlContext control;
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static void Control_Init(ControlContext *ctx);
+static void Control_WaitForTasks(ControlContext *ctx);
+static void Control_HoldInitializationFault(ControlContext *ctx);
+static EventBits_t Control_ReadButtonEvents(void);
+static void Control_ReadInputs(ControlContext *ctx);
+static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits);
+static void Control_CheckSafety(ControlContext *ctx);
+static void Control_UpdateStateMachine(ControlContext *ctx);
+static void Control_UpdateController(ControlContext *ctx);
+static void Control_UpdateMotor(ControlContext *ctx);
+static void Control_PublishStatus(ControlContext *ctx);
+static void Control_UpdateDiagnostics(ControlContext *ctx);
+static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications);
+static void StartControlClock(void);
+static bool ControlClockInterrupt(gptimer_handle_t timer,
+                                            const gptimer_alarm_event_data_t *event,
+                                            void *argument);
+
+///////////////////////////////////////////////////////////////////////////////
+// Timer interrupt handling
+
+/*
+ * Notifies ControlTask once per GPTimer alarm; no EventGroup drives the clock.
+ */
+static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
+                                            const gptimer_alarm_event_data_t *event, void *argument)
 {
     (void)timer;
     (void)event;
@@ -39,22 +120,18 @@ static bool IRAM_ATTR ControlClockInterrupt(
     return wake == pdTRUE;
 }
 
+/*
+ * Starts the unchanged 5 ms GPTimer only after startup synchronization.
+ */
 static void StartControlClock(void)
 {
     gptimer_handle_t timer = NULL;
-    const gptimer_config_t config = {
-        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
-        .direction = GPTIMER_COUNT_UP,
-        .resolution_hz = 1000000
-    };
+    const gptimer_config_t config = {.clk_src = GPTIMER_CLK_SRC_DEFAULT,
+                                     .direction = GPTIMER_COUNT_UP,
+                                     .resolution_hz = 1000000};
     const gptimer_alarm_config_t alarm = {
-        .alarm_count = CONTROL_PERIOD_US,
-        .reload_count = 0,
-        .flags.auto_reload_on_alarm = true
-    };
-    const gptimer_event_callbacks_t callbacks = {
-        .on_alarm = ControlClockInterrupt
-    };
+        .alarm_count = CONTROL_PERIOD_US, .reload_count = 0, .flags.auto_reload_on_alarm = true};
+    const gptimer_event_callbacks_t callbacks = {.on_alarm = ControlClockInterrupt};
 
     ESP_ERROR_CHECK(gptimer_new_timer(&config, &timer));
     ESP_ERROR_CHECK(gptimer_set_alarm_action(timer, &alarm));
@@ -63,263 +140,459 @@ static void StartControlClock(void)
     ESP_ERROR_CHECK(gptimer_start(timer));
 }
 
-/* Overwrite one-element queues; there is never a backlog of motor commands. */
-static void PublishControl(Telemetry *telemetry_state,
-                           const StateMachine *machine,
-                           TickType_t now)
-{
-    telemetry_state->state = machine->state;
-    telemetry_state->fault = machine->fault;
-    telemetry_state->last_fault = machine->last_fault;
-    telemetry_state->running = machine->state == STATE_RUNNING;
-    telemetry_state->reset_required =
-        machine->state == STATE_FAULT || machine->state == STATE_WAIT;
-    telemetry_state->reason = machine->fault == FAULT_NONE
-        ? StateMachine_Name(machine->state)
-        : FaultReason_Name(machine->fault);
-    telemetry_state->transitions = machine->transition_count;
-    if (!telemetry_state->running) telemetry_state->output = 0.0f;
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
 
-    const MotorRequest command = {
-        .output = telemetry_state->output,
-        .tick = now,
-        .run = telemetry_state->running,
-        .permissive = machine->permissive,
-        .coast = machine->state == STATE_FAULT,
-        .epoch = machine->epoch
-    };
-    xQueueOverwrite(motor_requests, &command);
-    xQueueOverwrite(telemetry, telemetry_state);
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_Init(ControlContext *ctx)
+
+/*
+ * Initializes control, diagnostics and disabled motor commands before startup synchronization.
+ */
+static void Control_Init(ControlContext *ctx)
+{
+    *ctx = (ControlContext){0};
+    control_task_handle = xTaskGetCurrentTaskHandle();
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    ESP_ERROR_CHECK(Regelaar_INIT(&ctx->controller, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
+    ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    ctx->now_tick = xTaskGetTickCount();
+    StateMachine_Init(&ctx->machine, ctx->now_ms);
+    ctx->v20_initialized = V20Modbus_Init();
+    if (!ctx->v20_initialized)
+        StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+    V20Modbus_Disarm();
+    ctx->window_start_us = esp_timer_get_time();
+    Control_PublishStatus(ctx);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_WaitForTasks(ControlContext *ctx)
+
+/*
+ * Waits within the existing initialization deadline; ready bits remain set.
+ * Readiness means task initialization completed, not that external hardware is healthy.
+ */
+static void Control_WaitForTasks(ControlContext *ctx)
+{
+    while ((uint32_t)(esp_timer_get_time() / 1000) - ctx->machine.boot_ms < INIT_TIMEOUT_MS)
+    {
+        uint32_t elapsed = (uint32_t)(esp_timer_get_time() / 1000) - ctx->machine.boot_ms;
+        uint32_t remaining = elapsed < INIT_TIMEOUT_MS ? INIT_TIMEOUT_MS - elapsed : 0;
+        uint32_t wait_ms =
+            remaining < CONTROL_CLOCK_TIMEOUT_MS ? remaining : CONTROL_CLOCK_TIMEOUT_MS;
+        EventBits_t ready = xEventGroupWaitBits(handle_ThreadEventGroup, EVT_ALL_TASKS_READY,
+                                                pdFALSE, pdTRUE, pdMS_TO_TICKS(wait_ms));
+        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        if ((ready & EVT_ALL_TASKS_READY) == EVT_ALL_TASKS_READY)
+        {
+            ctx->tasks_ready = true;
+            return;
+        }
+    }
+    ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    ctx->now_tick = xTaskGetTickCount();
+    StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+    V20Modbus_Disarm();
+    Control_PublishStatus(ctx);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_HoldInitializationFault(ControlContext *ctx)
+
+/*
+ * Keeps failed startup disabled until reboot, without starting the control timer.
+ * Continues publishing faults and servicing disabled V20 requests for diagnostics.
+ */
+static void Control_HoldInitializationFault(ControlContext *ctx)
+{
+    for (;;)
+    {
+        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        ctx->now_tick = xTaskGetTickCount();
+        (void)Control_ReadButtonEvents();
+        Control_ReadInputs(ctx);
+        StateMachine_Fault(&ctx->machine, SafetyIO_Fault(), ctx->now_ms);
+        V20Modbus_Disarm();
+        Control_PublishStatus(ctx);
+        Control_UpdateMotor(ctx);
+        Control_PublishStatus(ctx);
+        vTaskDelay(pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS));
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Input processing
+
+///////////////////////////////////////////////////////////////////////////////
+// static EventBits_t Control_ReadButtonEvents(void)
+
+/*
+ * Consumes one-shot physical button notifications without waiting or reading GPIOs.
+ */
+static EventBits_t Control_ReadButtonEvents(void)
+{
+    return xEventGroupWaitBits(handle_ButtonEventGroup, EVT_ALL_BUTTONS, pdTRUE, pdFALSE, 0) &
+           EVT_ALL_BUTTONS;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_ReadInputs(ControlContext *ctx)
+
+/*
+ * Reads and validates latest queue values every cycle, even without advisory update bits.
+ */
+static void Control_ReadInputs(ControlContext *ctx)
+{
+    (void)xEventGroupWaitBits(handle_SystemEventGroup, EVT_NEW_COMMAND | EVT_SENSOR_UPDATED, pdTRUE,
+                              pdFALSE, 0);
+    ctx->sample = (Sample){0};
+    ctx->safety = (SafetySnapshot){0};
+    ctx->heartbeat = (PiHeartbeat){0};
+    ctx->motor = (MotorStatus){0};
+    (void)xQueuePeek(sensors, &ctx->sample, 0);
+    (void)xQueuePeek(safety_status, &ctx->safety, 0);
+    (void)xQueuePeek(pi_heartbeat, &ctx->heartbeat, 0);
+    V20Modbus_GetStatus(&ctx->motor);
+
+    ctx->status.measurement = ctx->sample.value;
+    ctx->status.sensor_ok = ctx->sample.valid && (TickType_t)(ctx->now_tick - ctx->sample.tick) <
+                                                     pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
+    ctx->status.motor_ok = ctx->motor.ready && ctx->motor.ok;
+    ctx->status.pi_ok =
+        !PI_HEARTBEAT_REQUIRED ||
+        (ctx->heartbeat.connected &&
+         (TickType_t)(ctx->now_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
+    ctx->status.safety = ctx->safety;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Command processing
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
+
+/*
+ * Processes physical actions and at most sixteen queued commands, retaining all START interlocks.
+ */
+static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
+{
+    const bool fresh_start = ctx->safety.start_sequence != ctx->previous_start_sequence;
+    const bool fresh_reset = ctx->safety.reset_sequence != ctx->previous_reset_sequence;
+    ctx->previous_start_sequence = ctx->safety.start_sequence;
+    ctx->previous_reset_sequence = ctx->safety.reset_sequence;
+
+    /* Sequences remain authoritative across queue/event publication races.
+     * A late or coalesced notification cannot repeat a consumed action. */
+    ctx->start = ((buttonBits & EVT_START_BUTTON) != 0 || fresh_start) && fresh_start;
+    ctx->reset = ((buttonBits & EVT_RESET_BUTTON) != 0 || fresh_reset) && fresh_reset;
+
+    /* An old START edge must never be replayed when READY is entered. */
+    ctx->start = ctx->start && ctx->machine.state == STATE_READY &&
+                 (int32_t)(ctx->safety.start_ms - ctx->machine.entered_ms) > 0;
+
+    ctx->stop = SafetyIO_Stop() || (buttonBits & EVT_STOP_BUTTON) != 0 ||
+                (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) & STOP_REQUEST) != 0;
+
+    PiCommand command;
+    for (unsigned i = 0; i < 16 && xQueueReceive(commands, &command, 0) == pdTRUE; ++i)
+    {
+        switch (command.type)
+        {
+        case CMD_SETPOINT:
+            ctx->status.setpoint = command.values[0];
+            break;
+        case CMD_PID:
+            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
+                (void)Regelaar_Instellen(&ctx->controller, command.values[0], command.values[1],
+                                         command.values[2], CONTROL_CLOCK_PERIOD_S, 0.0f,
+                                         MAX_OUTPUT, 0.05f);
+            break;
+        case CMD_STOP:
+            ctx->stop = true;
+            break;
+#if ALLOW_REMOTE_START
+        case CMD_START:
+            if (ctx->machine.state == STATE_READY)
+                ctx->start = true;
+            break;
+#endif
+        case CMD_FILTER:
+        case CMD_PING:
+        default:
+            break;
+        }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Safety and state machine
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_CheckSafety(ControlContext *ctx)
+
+/*
+ * Builds state-machine inputs and preserves physical reset acknowledgement and fault priorities.
+ */
+static void Control_CheckSafety(ControlContext *ctx)
+{
+    /* Physical reset clears a timing latch only when the input is healthy. */
+    if (ctx->reset && ctx->clock_fault == FAULT_NONE && ctx->safety.valid &&
+        !ctx->safety.estop_pressed &&
+        (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT))
+        ctx->latched_timing_fault = FAULT_NONE;
+
+    if (ctx->machine.reset_pending && !ctx->safety.estop_pressed && ctx->safety.relay_ok)
+        SafetyIO_Acknowledge();
+
+    /* This becomes true only after a fresh, acknowledged OFF1 and status
+     * frame from the V20, not merely because an old speed was zero. */
+    const bool stop_confirmed =
+        ctx->machine.state == STATE_STOP &&
+        V20Modbus_StopConfirmed((int64_t)ctx->machine.entered_ms * 1000LL, STOP_CONFIRM_HZ);
+
+    ctx->inputs = (MachineInputs){.now_ms = ctx->now_ms,
+                                  .safety = ctx->safety,
+                                  .sensor_ok = ctx->status.sensor_ok,
+                                  .drive_ready = ctx->motor.ready,
+                                  .drive_ok = ctx->motor.ok,
+                                  .drive_fault = (ctx->motor.status & 0x0008u) != 0,
+                                  .pi_ok = ctx->status.pi_ok,
+                                  .stop = ctx->stop,
+                                  .start = ctx->start,
+                                  .reset = ctx->reset,
+                                  .urgent_fault = SafetyIO_Fault(),
+                                  .timing_fault = ctx->latched_timing_fault,
+                                  .stop_confirmed = stop_confirmed};
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_UpdateStateMachine(ControlContext *ctx)
+
+/*
+ * Steps the existing state machine and performs its V20 recovery, arm and disarm actions.
+ */
+static void Control_UpdateStateMachine(ControlContext *ctx)
+{
+    const SystemState_t previous_state = ctx->machine.state;
+    StateMachine_Step(&ctx->machine, &ctx->inputs);
+
+    if (ctx->machine.recovery_requested)
+        V20Modbus_RequestRecheck();
+
+    /* A new physical START is the ONLY place that may arm the VFD. */
+    if (previous_state == STATE_READY && ctx->machine.state == STATE_RUNNING)
+    {
+        if (!V20Modbus_Arm())
+            StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+    }
+
+    /* Disarm immediately on STOP or FAULT; the separate operational K2
+     * permissive is kept enabled through a healthy normal OFF1 ramp. */
+    if ((previous_state == STATE_RUNNING && ctx->machine.state != STATE_RUNNING) ||
+        (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT))
+        V20Modbus_Disarm();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Controller
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_UpdateController(ControlContext *ctx)
+
+/*
+ * Runs one fixed-period profile and PI step; faults disarm before motor requests are published.
+ */
+static void Control_UpdateController(ControlContext *ctx)
+{
+    ctx->status.output = 0.0f;
+    if (ctx->machine.state == STATE_RUNNING && ctx->clock_fault == FAULT_NONE)
+    {
+        if (!ctx->curve_running)
+            ctx->curve_running =
+                SetpointCurve_Init(&ctx->curve, ctx->sample.value, SETPOINT_TRANSITION_TIME_S,
+                                   SETPOINT_MAX_ACCELERATION_MPS2, SETPOINT_MAX_JERK_MPS3);
+        if (!ctx->curve_running ||
+            !SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
+                                &ctx->status.control_setpoint) ||
+            !PIDregelaar(&ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
+                         ctx->sample.value, &ctx->status.output))
+        {
+            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+            V20Modbus_Disarm();
+        }
+    }
+    if (ctx->machine.state != STATE_RUNNING)
+    {
+        ctx->curve_running = false;
+        ctx->status.control_setpoint = ctx->sample.value;
+        ctx->status.output = 0.0f;
+        removeRegelaarHistory(&ctx->controller);
+    }
+
+    if (ctx->machine.state == STATE_RUNNING && (ctx->motor.status & 0x0040u) != 0 &&
+        ctx->now_ms - ctx->machine.entered_ms > RESET_FEEDBACK_WINDOW_MS)
+    {
+        StateMachine_Fault(&ctx->machine, FAULT_VFD, ctx->now_ms);
+        V20Modbus_Disarm();
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Motor communication
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_UpdateMotor(ControlContext *ctx)
+
+/*
+ * Services the latest motor request without blocking, then publishes refreshed V20 status.
+ */
+static void Control_UpdateMotor(ControlContext *ctx)
+{
+    MotorRequest request = {0};
+    (void)xQueuePeek(motor_requests, &request, 0);
+    const bool safety_ok = ctx->safety.valid && ctx->safety.commissioned && ctx->safety.relay_ok &&
+                           !ctx->safety.estop_pressed && ctx->safety.outputs_ok &&
+                           SafetyIO_Fault() == FAULT_NONE;
+
+    const int64_t service_started_us = esp_timer_get_time();
+    if (ctx->v20_initialized)
+        V20Modbus_Service(&request, safety_ok);
+    ctx->status.service_us = (uint32_t)(esp_timer_get_time() - service_started_us);
+    if (ctx->status.service_us > ctx->status.service_max_us)
+        ctx->status.service_max_us = ctx->status.service_us;
+
+    V20Modbus_GetStatus(&ctx->motor);
+    xQueueOverwrite(motor_status, &ctx->motor);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Telemetry and diagnostics
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_PublishStatus(ControlContext *ctx)
+
+/*
+ * Publishes current state and motor demand to the existing overwrite queues.
+ * Called before Modbus service and again after same-cycle diagnostic fault handling.
+ */
+static void Control_PublishStatus(ControlContext *ctx)
+{
+    ctx->status.state = ctx->machine.state;
+    ctx->status.fault = ctx->machine.fault;
+    ctx->status.last_fault = ctx->machine.last_fault;
+    ctx->status.running = ctx->machine.state == STATE_RUNNING;
+    ctx->status.reset_required =
+        ctx->machine.state == STATE_FAULT || ctx->machine.state == STATE_WAIT;
+    ctx->status.reason = ctx->machine.fault == FAULT_NONE ? StateMachine_Name(ctx->machine.state)
+                                                          : FaultReason_Name(ctx->machine.fault);
+    ctx->status.transitions = ctx->machine.transition_count;
+    if (!ctx->status.running)
+        ctx->status.output = 0.0f;
+
+    const MotorRequest command = {.output = ctx->status.output,
+                                  .tick = ctx->now_tick,
+                                  .run = ctx->status.running,
+                                  .permissive = ctx->machine.permissive,
+                                  .coast = ctx->machine.state == STATE_FAULT,
+                                  .epoch = ctx->machine.epoch};
+    xQueueOverwrite(motor_requests, &command);
+    xQueueOverwrite(telemetry, &ctx->status);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_UpdateDiagnostics(ControlContext *ctx)
+
+/*
+ * Accounts for execution time and faults immediately on overruns or lost drive communication.
+ */
+static void Control_UpdateDiagnostics(ControlContext *ctx)
+{
+    ctx->status.stack_free = uxTaskGetStackHighWaterMark(NULL);
+    ctx->status.execution_us = (uint32_t)(esp_timer_get_time() - ctx->started_us);
+    if (!ControlTiming_Execution(&ctx->timing_stats, ctx->status.execution_us,
+                                 ctx->status.service_us))
+    {
+        ctx->latched_timing_fault = FAULT_CONTROL_OVERRUN;
+        StateMachine_Fault(&ctx->machine, ctx->latched_timing_fault, ctx->now_ms);
+        V20Modbus_Disarm();
+    }
+    if (!ctx->v20_initialized ||
+        (!ctx->motor.ok && (ctx->machine.state == STATE_RUNNING ||
+                            ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
+    {
+        StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+        V20Modbus_Disarm();
+    }
+    ctx->status.overruns = ctx->timing_stats.overruns;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
+
+/*
+ * Records the timer wakeup, refreshes the watchdog and latches missed deadlines without replaying
+ * steps.
+ */
+static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
+{
+    ctx->started_us = esp_timer_get_time();
+    ctx->now_ms = (uint32_t)(ctx->started_us / 1000);
+    ctx->now_tick = xTaskGetTickCount();
+    ESP_ERROR_CHECK(esp_task_wdt_reset());
+
+    ctx->clock_fault =
+        ControlTiming_Tick(&ctx->timing_stats, (uint64_t)ctx->started_us, notifications);
+    if (ctx->clock_fault != FAULT_NONE)
+        ctx->latched_timing_fault = ctx->clock_fault;
+
+    ctx->status.max_jitter_us = ctx->timing_stats.max_jitter_us;
+    ctx->status.missed_deadlines = ctx->timing_stats.missed_deadlines;
+    ctx->cycles++;
+    if (ctx->started_us - ctx->window_start_us >= 1000000)
+    {
+        ctx->status.control_hz =
+            (float)ctx->cycles * 1000000.0f / (float)(ctx->started_us - ctx->window_start_us);
+        ctx->cycles = 0;
+        ctx->window_start_us = ctx->started_us;
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Main ControlTask
+
+///////////////////////////////////////////////////////////////////////////////
+// void ControlTask(void *argument)
+
+/*
+ * Coordinates initialization and the ordered 200 Hz control cycle on Core 1.
+ */
 void ControlTask(void *argument)
 {
     (void)argument;
-    control_task_handle = xTaskGetCurrentTaskHandle();
-    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
-
-    Regelaar controller;
-    ESP_ERROR_CHECK(Regelaar_INIT(&controller, CONTROL_CLOCK_PERIOD_S)
-        ? ESP_OK : ESP_FAIL);
-
-    SetpointCurve curve = {0};
-    bool curve_running = false;
-    StateMachine machine;
-    StateMachine_Init(&machine, (uint32_t)(esp_timer_get_time() / 1000));
-
-    const bool v20_initialized = V20Modbus_Init();
-    if (!v20_initialized)
-        StateMachine_Fault(&machine, FAULT_MODBUS,
-                           (uint32_t)(esp_timer_get_time() / 1000));
-
-    Telemetry status = {0};
-    ControlTiming timing_stats = {0};
-    FaultReason_t latched_timing_fault = FAULT_NONE;
-    uint32_t previous_start_sequence = 0;
-    uint32_t previous_reset_sequence = 0;
-    uint32_t cycles = 0;
-    int64_t window_start_us = esp_timer_get_time();
-
-    PublishControl(&status, &machine, xTaskGetTickCount());
+    ControlContext *ctx = &control;
+    Control_Init(ctx);
+    Control_WaitForTasks(ctx);
+    if (!ctx->tasks_ready)
+        Control_HoldInitializationFault(ctx);
+    ctx->window_start_us = esp_timer_get_time();
     StartControlClock();
 
     for (;;)
     {
-        const uint32_t notifications = ulTaskNotifyTake(
-            pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS));
-        const int64_t started_us = esp_timer_get_time();
-        const uint32_t now_ms = (uint32_t)(started_us / 1000);
-        const TickType_t now_tick = xTaskGetTickCount();
-        ESP_ERROR_CHECK(esp_task_wdt_reset());
-
-        const FaultReason_t clock_fault = ControlTiming_Tick(
-            &timing_stats, (uint64_t)started_us, notifications);
-        if (clock_fault != FAULT_NONE) latched_timing_fault = clock_fault;
-
-        status.max_jitter_us = timing_stats.max_jitter_us;
-        status.missed_deadlines = timing_stats.missed_deadlines;
-        cycles++;
-        if (started_us - window_start_us >= 1000000) {
-            status.control_hz = (float)cycles * 1000000.0f /
-                                (float)(started_us - window_start_us);
-            cycles = 0;
-            window_start_us = started_us;
-        }
-
-        Sample sample = {0};
-        SafetySnapshot safety = {0};
-        PiHeartbeat heartbeat = {0};
-        MotorStatus motor = {0};
-        (void)xQueuePeek(sensors, &sample, 0);
-        (void)xQueuePeek(safety_status, &safety, 0);
-        (void)xQueuePeek(pi_heartbeat, &heartbeat, 0);
-        V20Modbus_GetStatus(&motor);
-
-        bool start = safety.start_sequence != previous_start_sequence;
-        bool reset = safety.reset_sequence != previous_reset_sequence;
-        previous_start_sequence = safety.start_sequence;
-        previous_reset_sequence = safety.reset_sequence;
-
-        /* An old START edge must never be replayed when READY is entered. */
-        start = start && machine.state == STATE_READY &&
-            (int32_t)(safety.start_ms - machine.entered_ms) > 0;
-
-        bool stop = SafetyIO_Stop() ||
-            (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) &
-             STOP_REQUEST) != 0;
-
-        PiCommand command;
-        for (unsigned i = 0;
-             i < 16 && xQueueReceive(commands, &command, 0) == pdTRUE;
-             ++i) {
-            switch (command.type) {
-            case CMD_SETPOINT:
-                status.setpoint = command.values[0];
-                break;
-            case CMD_PID:
-                if (machine.state != STATE_RUNNING && machine.state != STATE_STOP)
-                    (void)Regelaar_Instellen(&controller,
-                        command.values[0], command.values[1], command.values[2],
-                        CONTROL_CLOCK_PERIOD_S, 0.0f, MAX_OUTPUT, 0.05f);
-                break;
-            case CMD_STOP:
-                stop = true;
-                break;
-#if ALLOW_REMOTE_START
-            case CMD_START:
-                if (machine.state == STATE_READY) start = true;
-                break;
-#endif
-            case CMD_FILTER:
-            case CMD_PING:
-            default:
-                break;
-            }
-        }
-
-        /* Physical reset clears a timing latch only when the input is healthy. */
-        if (reset && clock_fault == FAULT_NONE && safety.valid &&
-            !safety.estop_pressed &&
-            (machine.state == STATE_WAIT || machine.state == STATE_FAULT))
-            latched_timing_fault = FAULT_NONE;
-
-        if (machine.reset_pending && !safety.estop_pressed && safety.relay_ok)
-            SafetyIO_Acknowledge();
-
-        status.measurement = sample.value;
-        status.sensor_ok = sample.valid &&
-            (TickType_t)(now_tick - sample.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
-        status.motor_ok = motor.ready && motor.ok;
-        status.pi_ok = !PI_HEARTBEAT_REQUIRED ||
-            (heartbeat.connected &&
-             (TickType_t)(now_tick - heartbeat.tick) <
-                pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
-        status.safety = safety;
-
-        /* This becomes true only after a fresh, acknowledged OFF1 and status
-         * frame from the V20, not merely because an old speed was zero. */
-        const bool stop_confirmed = machine.state == STATE_STOP &&
-            V20Modbus_StopConfirmed((int64_t)machine.entered_ms * 1000LL,
-                                    STOP_CONFIRM_HZ);
-
-        const MachineInputs inputs = {
-            .now_ms = now_ms,
-            .safety = safety,
-            .sensor_ok = status.sensor_ok,
-            .drive_ready = motor.ready,
-            .drive_ok = motor.ok,
-            .drive_fault = (motor.status & 0x0008u) != 0,
-            .pi_ok = status.pi_ok,
-            .stop = stop,
-            .start = start,
-            .reset = reset,
-            .urgent_fault = SafetyIO_Fault(),
-            .timing_fault = latched_timing_fault,
-            .stop_confirmed = stop_confirmed
-        };
-
-        const SystemState_t previous_state = machine.state;
-        StateMachine_Step(&machine, &inputs);
-
-        if (machine.recovery_requested)
-            V20Modbus_RequestRecheck();
-
-        /* A new physical START is the ONLY place that may arm the VFD. */
-        if (previous_state == STATE_READY && machine.state == STATE_RUNNING) {
-            if (!V20Modbus_Arm())
-                StateMachine_Fault(&machine, FAULT_MODBUS, now_ms);
-        }
-
-        /* Disarm immediately on STOP or FAULT; the separate operational K2
-         * permissive is kept enabled through a healthy normal OFF1 ramp. */
-        if ((previous_state == STATE_RUNNING && machine.state != STATE_RUNNING) ||
-            (previous_state != STATE_FAULT && machine.state == STATE_FAULT))
-            V20Modbus_Disarm();
-
-        status.output = 0.0f;
-        if (machine.state == STATE_RUNNING && clock_fault == FAULT_NONE) {
-            if (!curve_running)
-                curve_running = SetpointCurve_Init(&curve, sample.value,
-                    SETPOINT_TRANSITION_TIME_S, SETPOINT_MAX_ACCELERATION_MPS2,
-                    SETPOINT_MAX_JERK_MPS3);
-            if (!curve_running ||
-                !SetpointCurve_Step(&curve, status.setpoint,
-                                    CONTROL_CLOCK_PERIOD_S,
-                                    &status.control_setpoint) ||
-                !PIDregelaar(&controller,
-                             status.control_setpoint - sample.value,
-                             sample.value, &status.output)) {
-                StateMachine_Fault(&machine, FAULT_INTERNAL, now_ms);
-                V20Modbus_Disarm();
-            }
-        }
-        if (machine.state != STATE_RUNNING) {
-            curve_running = false;
-            status.control_setpoint = sample.value;
-            status.output = 0.0f;
-            removeRegelaarHistory(&controller);
-        }
-
-        if (machine.state == STATE_RUNNING &&
-            (motor.status & 0x0040u) != 0 &&
-            now_ms - machine.entered_ms > RESET_FEEDBACK_WINDOW_MS) {
-            StateMachine_Fault(&machine, FAULT_VFD, now_ms);
-            V20Modbus_Disarm();
-        }
-
-        /* Immediately publish the state so SafetyTask can disable K2. */
-        PublishControl(&status, &machine, now_tick);
-        MotorRequest request = {0};
-        (void)xQueuePeek(motor_requests, &request, 0);
-        const bool safety_ok = safety.valid && safety.commissioned &&
-            safety.relay_ok && !safety.estop_pressed && safety.outputs_ok &&
-            SafetyIO_Fault() == FAULT_NONE;
-
-        const int64_t service_started_us = esp_timer_get_time();
-        if (v20_initialized)
-            V20Modbus_Service(&request, safety_ok);
-        status.service_us = (uint32_t)(esp_timer_get_time() - service_started_us);
-        if (status.service_us > status.service_max_us)
-            status.service_max_us = status.service_us;
-
-        V20Modbus_GetStatus(&motor);
-        xQueueOverwrite(motor_status, &motor);
-        status.stack_free = uxTaskGetStackHighWaterMark(NULL);
-        status.execution_us = (uint32_t)(esp_timer_get_time() - started_us);
-        if (!ControlTiming_Execution(&timing_stats, status.execution_us,
-                                     status.service_us)) {
-            latched_timing_fault = FAULT_CONTROL_OVERRUN;
-            StateMachine_Fault(&machine, latched_timing_fault, now_ms);
-            V20Modbus_Disarm();
-        }
-        if (!v20_initialized ||
-            (!motor.ok && (machine.state == STATE_RUNNING ||
-                           machine.state == STATE_READY ||
-                           machine.state == STATE_STOP))) {
-            StateMachine_Fault(&machine, FAULT_MODBUS, now_ms);
-            V20Modbus_Disarm();
-        }
-        status.overruns = timing_stats.overruns;
-        PublishControl(&status, &machine, now_tick);
+        const uint32_t notifications =
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS));
+        Control_BeginCycle(ctx, notifications);
+        const EventBits_t buttonBits = Control_ReadButtonEvents();
+        Control_ReadInputs(ctx);
+        Control_ProcessCommands(ctx, buttonBits);
+        Control_CheckSafety(ctx);
+        Control_UpdateStateMachine(ctx);
+        Control_UpdateController(ctx);
+        Control_PublishStatus(ctx);
+        Control_UpdateMotor(ctx);
+        Control_UpdateDiagnostics(ctx);
+        Control_PublishStatus(ctx);
     }
 }

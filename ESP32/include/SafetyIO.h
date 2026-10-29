@@ -7,4 +7,10 @@ FaultReason_t SafetyIO_Fault(void);
 bool SafetyIO_Stop(void);
 void SafetyIO_Acknowledge(void);
 bool SafetyIO_Inhibited(void);
-bool SafetyIO_Simulate(const char *name,bool active);
+bool SafetyIO_Simulate(const char *name, bool active);
+
+///////////////////////////////////////////////////////////////////////////////
+// Task-context button notification interface
+
+/* Called only by SafetyTask after debouncing and publishing its snapshot. */
+void SafetyIO_PublishButtonEvents(const SafetySnapshot *current, const SafetySnapshot *previous);
