@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 APP_DIR="$(pwd)"
-if [[ "$APP_DIR" != "$HOME/HMI" ]]; then
+if [[ "$(readlink -f "$APP_DIR")" != "$(readlink -f "$HOME/HMI")" ]]; then
   echo 'Place this project in ~/HMI before installation.' >&2
   exit 1
 fi

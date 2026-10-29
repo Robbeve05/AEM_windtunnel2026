@@ -10,12 +10,13 @@ class Tap(BaseModel):
 
 class Config(BaseModel):
     simulation: bool = True
+    device_mode: Literal['esp32_tcp'] = 'esp32_tcp'
+    esp32_host: str = '192.168.50.10'
+    esp32_port: int = Field(default=5000, ge=1, le=65535)
     sample_rate_hz: float = Field(default=20, ge=1, le=100, allow_inf_nan=False)
     filter_cutoff_hz: float = Field(default=1.0, ge=0.1, le=10, allow_inf_nan=False)
     air_density: float = Field(default=1.225, gt=0, le=10, allow_inf_nan=False)
     max_airspeed_ms: float = Field(default=30, gt=0, le=100, allow_inf_nan=False)
-    serial_port: str = 'auto'
-    baud_rate: int = Field(default=115200, gt=0)
     data_directory: str = 'data/measurements'
     usb_mount_path: str = ''
     simulate_usb: bool = True
@@ -28,6 +29,12 @@ class Config(BaseModel):
             raise ValueError('Pressure tap names must be unique')
         return self
 
+
+class ManualFrequency(BaseModel):
+    hz: float = Field(ge=0, le=20, allow_inf_nan=False)
+
+class ControlMode(BaseModel):
+    mode: Literal['AUTO','MANUAL']
 
 class Setpoint(BaseModel):
     airspeed_ms: float = Field(ge=0, allow_inf_nan=False)
@@ -46,5 +53,5 @@ class FlowMetricsSetting(BaseModel):
     enabled: bool
 
 
-class ArduinoFilterSetting(BaseModel):
+class PressureFilterSetting(BaseModel):
     cutoff_hz: float = Field(ge=0.1, le=10, allow_inf_nan=False)

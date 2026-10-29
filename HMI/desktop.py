@@ -48,7 +48,7 @@ PANEL = "#1e2023"
 
 PAGES = (
     ("overview", "◫", "Overview", "Tunnel overview", "A clear view of your flow. Every parameter, in real time."),
-    ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the Arduino Uno / ASPD-4525 telemetry frame."),
+    ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the ESP32-S3 / ASPD-4525 telemetry frame."),
     ("cp", "⌁", "Cp Analysis", "Cp analysis", "Multi-point pressure distribution is the next measurement subsystem."),
     ("measurements", "▤", "Measurements", "Measurements", "Record and review real pitot-tube measurements."),
     ("storage", "▱", "Storage", "Storage & export", "Keep data local and export complete runs when needed."),
@@ -196,8 +196,17 @@ class HMIWindow(QMainWindow):
         self.last_refresh = 0.0
         self.last_sample_timestamp = None
         self.selected_run_id = None
+        self._indicator_color = "#808080"
+        self._indicator_blink = False
+        self._indicator_label = "UNKNOWN"
+        self._indicator_detail = "Awaiting ESP32 telemetry"
+        self._indicator_epoch = time.monotonic()
+        self._last_status_ok = 0.0
         self._build_ui()
         self._apply_style()
+        self.indicator_timer = QTimer(self)
+        self.indicator_timer.timeout.connect(self._tick_indicator)
+        self.indicator_timer.start(150)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
         self.timer.start(100)
@@ -246,7 +255,7 @@ class HMIWindow(QMainWindow):
         self.exit_button.setObjectName("exitButton")
         self.exit_button.clicked.connect(self.close)
         nav_layout.addWidget(self.exit_button)
-        self.hardware_mode_badge = QLabel("ARDUINO USB")
+        self.hardware_mode_badge = QLabel("ESP32 ETHERNET")
         self.hardware_mode_badge.setObjectName("hardwareModeBadge")
         nav_layout.addWidget(self.hardware_mode_badge)
         facility_label = QLabel("Avans windtunnel test facility\nSUPERVISORY HMI · 2026")
@@ -268,6 +277,17 @@ class HMIWindow(QMainWindow):
         self.clock = QLabel("--:--:--")
         header_layout.addWidget(QLabel("AVANS HOGESCHOOL   /   AEROSPACE ENGINEERING   /   WINDTUNNEL 2026"))
         header_layout.addStretch(1)
+        # Always-visible, non-safety signal tower for the physical tunnel.
+        self.status_lamp = QLabel("●")
+        self.status_lamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_lamp.setFixedWidth(28)
+        self.status_lamp.setAccessibleName("Windtunnel status indicator")
+        self.status_lamp.setToolTip("ESP32 status UNKNOWN")
+        self.status_label = QLabel("UNKNOWN")
+        self.status_label.setMinimumWidth(82)
+        self.status_label.setToolTip("Waiting for fresh ESP32 telemetry")
+        header_layout.addWidget(self.status_lamp)
+        header_layout.addWidget(self.status_label)
         header_layout.addWidget(self.connection)
         header_layout.addWidget(self.clock)
         center_layout.addWidget(header)
@@ -290,7 +310,7 @@ class HMIWindow(QMainWindow):
         heading_left.addWidget(self.page_description)
         heading.addLayout(heading_left)
         heading.addStretch(1)
-        self.mode_tag = QLabel("WAITING FOR ARDUINO")
+        self.mode_tag = QLabel("WAITING FOR ESP32")
         self.mode_tag.setObjectName("tagAmber")
         heading.addWidget(self.mode_tag, 0, Qt.AlignmentFlag.AlignVCenter)
         main_layout.addLayout(heading)
@@ -322,9 +342,9 @@ class HMIWindow(QMainWindow):
         tunnel_heading.setObjectName("sidebarTitle")
         right_layout.addWidget(tunnel_heading)
         tunnel_status = QHBoxLayout()
-        tunnel_badge = QLabel("IN DEVELOPMENT")
-        tunnel_badge.setObjectName("tagAmber")
-        tunnel_status.addWidget(tunnel_badge)
+        self.tunnel_badge = QLabel("UNKNOWN")
+        self.tunnel_badge.setObjectName("tagAmber")
+        tunnel_status.addWidget(self.tunnel_badge)
         tunnel_status.addWidget(QLabel("Fan / VFD control"))
         tunnel_status.addStretch(1)
         right_layout.addLayout(tunnel_status)
@@ -332,21 +352,54 @@ class HMIWindow(QMainWindow):
         control.setObjectName("development")
         control_layout = QVBoxLayout(control)
         control_layout.setContentsMargins(10, 9, 10, 9)
-        control_layout.setSpacing(3)
-        control_label = QLabel("AIRSPEED SETPOINT")
+        control_layout.setSpacing(6)
+        control_label = QLabel("AIRSPEED SETPOINT · m/s")
         control_label.setObjectName("smallLabel")
-        control_state = QLabel("IN DEVELOPMENT")
-        control_state.setObjectName("developmentText")
-        control_note = QLabel("Manual fan operation for now")
-        control_note.setObjectName("hint")
+        self.tunnel_state_detail = QLabel("ESP32 telemetry unavailable. Fan may still rotate.")
+        self.tunnel_state_detail.setObjectName("safetyNote")
+        self.tunnel_state_detail.setWordWrap(True)
+        self.tunnel_state_detail.setMinimumHeight(35)
+        self.setpoint_spin = QDoubleSpinBox()
+        self.setpoint_spin.setRange(0, 30)
+        self.setpoint_spin.setDecimals(2)
+        self.setpoint_spin.setSingleStep(0.5)
+        self.setpoint_spin.setSuffix(" m/s")
+        self.setpoint_spin.setEnabled(False)
+        self.setpoint_initialized = False
+        self.setpoint_apply = QPushButton("Apply setpoint")
+        self.setpoint_apply.setEnabled(False)
+        self.setpoint_apply.clicked.connect(self._apply_setpoint)
+        self.mode_select=QComboBox()
+        self.mode_select.addItems(["AUTO","MANUAL"])
+        self.mode_apply=QPushButton("Apply control mode (READY only)")
+        self.mode_apply.clicked.connect(self._apply_mode)
+        self.manual_hz=QDoubleSpinBox()
+        self.manual_hz.setRange(0,20)
+        self.manual_hz.setSuffix(" Hz")
+        self.manual_apply=QPushButton("Apply frequency")
+        self.manual_apply.clicked.connect(self._apply_hz)
+        self.vfd_status_text = QLabel("VFD: UNKNOWN")
+        self.vfd_status_text.setObjectName("hint")
+        self.vfd_status_text.setWordWrap(True)
+        self.timing_status_text = QLabel("Control cycle: awaiting telemetry")
+        self.timing_status_text.setObjectName("hint")
+        self.timing_status_text.setWordWrap(True)
         control_layout.addWidget(control_label)
-        control_layout.addWidget(control_state)
-        control_layout.addWidget(control_note)
+        control_layout.addWidget(self.tunnel_state_detail)
+        control_layout.addWidget(self.setpoint_spin)
+        control_layout.addWidget(self.setpoint_apply)
+        control_layout.addWidget(self.mode_select)
+        control_layout.addWidget(self.mode_apply)
+        control_layout.addWidget(self.manual_hz)
+        control_layout.addWidget(self.manual_apply)
+        control_layout.addWidget(self.vfd_status_text)
+        control_layout.addWidget(self.timing_status_text)
         right_layout.addWidget(control)
-        safety_note = QLabel("Data acquisition is active.\nFan control remains manual until commissioned.")
-        safety_note.setObjectName("safetyNote")
-        safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_layout.addWidget(safety_note)
+        self.safety_note = QLabel("START, STOP, RESET and E-STOP are physical buttons only.")
+        self.safety_note.setObjectName("safetyNote")
+        self.safety_note.setWordWrap(True)
+        self.safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_layout.addWidget(self.safety_note)
         readings = QHBoxLayout()
         self.side_speed = self._side_reading(readings, "LIVE AIRSPEED")
         self.side_stability = self._side_reading(readings, "FLOW STABILITY")
@@ -366,7 +419,7 @@ class HMIWindow(QMainWindow):
         health_layout.addLayout(health_heading)
         self.health_labels = {}
         for key, label in (
-            ("host", "Host / Raspberry Pi"), ("arduino", "Arduino Uno"), ("serial", "USB serial"),
+            ("host", "Host / Raspberry Pi"), ("connection", "ESP32 Ethernet"),
             ("pitot", "Pitot sensor"), ("pressure_sensors", "Cp pressure taps"),
             ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
         ):
@@ -398,7 +451,7 @@ class HMIWindow(QMainWindow):
         notice_layout = QVBoxLayout(warning_notice)
         notice_layout.setContentsMargins(8, 7, 8, 7)
         notice_layout.setSpacing(0)
-        self.warnings = QLabel("Waiting for Arduino pitot data")
+        self.warnings = QLabel("Waiting for ESP32 pitot data")
         self.warnings.setObjectName("warningText")
         self.warnings.setWordWrap(True)
         notice_layout.addWidget(self.warnings)
@@ -662,7 +715,7 @@ class HMIWindow(QMainWindow):
         buttons.addWidget(self.record_stop)
         buttons.addStretch(1)
         recording.addLayout(buttons)
-        self.file_status = QLabel("Connect Arduino Uno via USB to record.")
+        self.file_status = QLabel("Connect ESP32-S3 via Ethernet to record.")
         self.file_status.setObjectName("hint")
         recording.addWidget(self.file_status)
 
@@ -685,7 +738,7 @@ class HMIWindow(QMainWindow):
             ("VARIATION σ", "— m/s"),
             ("5 S MIN / MAX", "—"),
             ("ANGLE OF ATTACK", "IN DEVELOPMENT"),
-            ("FAN / VFD CONTROL", "IN DEVELOPMENT"),
+            ("FAN / VFD CONTROL", "LIVE ESP32 STATUS"),
             ("REYNOLDS NUMBER", "IN DEVELOPMENT"),
         )
         for index, (title, text) in enumerate(fields):
@@ -727,8 +780,8 @@ class HMIWindow(QMainWindow):
         self.raw_empty = self._empty_state(
             "USB",
             "NO SENSOR DATA",
-            "Arduino Uno not connected",
-            "Connect the Arduino Uno via USB to start live pitot measurements.",
+            "ESP32-S3 not connected",
+            "Connect the ESP32-S3 via Ethernet to start live pitot measurements.",
         )
         self.raw_table = self._table(("Channel", "Raw value", "Calibrated", "Unit", "Host timestamp", "Status"))
         self.raw_json = QPlainTextEdit()
@@ -737,7 +790,7 @@ class HMIWindow(QMainWindow):
         self.raw_table.hide()
         self.raw_json.hide()
         layout.addWidget(self.raw_empty, 1)
-        self.raw_card, raw_box = self._card(layout, "Sensor telemetry", "Live Arduino Uno / ASPD-4525 pitot telemetry")
+        self.raw_card, raw_box = self._card(layout, "Sensor telemetry", "Live ESP32-S3 / ASPD-4525 pitot telemetry")
         raw_box.addWidget(self.raw_table)
         self.raw_json_card, json_box = self._card(layout, "Complete incoming frame")
         json_box.addWidget(self.raw_json)
@@ -851,7 +904,7 @@ class HMIWindow(QMainWindow):
             "REC",
             "NO MEASUREMENTS YET",
             "No recorded datasets are available",
-            "Connect the Arduino Uno and start a measurement from the overview to create your first dataset.",
+            "Connect the ESP32-S3 and start a measurement from the overview to create your first dataset.",
             min_height=250,
         )
         box.addWidget(self.measurements_empty)
@@ -982,7 +1035,7 @@ class HMIWindow(QMainWindow):
         toggle_row.addWidget(self.flow_toggle)
         box.addLayout(toggle_row)
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Arduino pressure low-pass filter\nCutoff frequency · 0.1–10 Hz"))
+        filter_row.addWidget(QLabel("ESP32 pressure low-pass filter\nCutoff frequency · 0.1–10 Hz"))
         self.filter_cutoff = QDoubleSpinBox()
         self.filter_cutoff.setRange(0.1, 10.0)
         self.filter_cutoff.setSingleStep(0.1)
@@ -990,18 +1043,18 @@ class HMIWindow(QMainWindow):
         self.filter_cutoff.setSuffix(" Hz")
         self.filter_cutoff.setValue(1.0)
         filter_row.addWidget(self.filter_cutoff)
-        self.filter_apply = QPushButton("Apply to Arduino")
+        self.filter_apply = QPushButton("Apply to ESP32")
         self.filter_apply.clicked.connect(self._apply_filter_cutoff)
         filter_row.addWidget(self.filter_apply)
         box.addLayout(filter_row)
-        self.filter_status = QLabel("Filter setting will be sent when the Arduino connects.")
+        self.filter_status = QLabel("Filter setting will be sent when the ESP32 connects.")
         self.filter_status.setObjectName("hint")
         box.addWidget(self.filter_status)
         self.settings_grid = QGridLayout()
         box.addLayout(self.settings_grid)
         box.addWidget(self._heading("Pressure-tap system"))
         box.addWidget(QLabel("IN DEVELOPMENT · Multi-point Cp hardware is not connected yet."))
-        box.addWidget(QLabel("Current hardware: Arduino Uno + ASPD-4525 differential pressure sensor over USB serial. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned."))
+        box.addWidget(QLabel("Current hardware: ESP32-S3 + ASPD-4525 differential pressure sensor over Ethernet TCP. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned."))
         layout.addWidget(card)
         layout.addStretch(1)
         self.pages.addWidget(page)
@@ -1059,6 +1112,9 @@ class HMIWindow(QMainWindow):
             #rightSidebar #eyebrow {{ color:#ff776e; }}
             #rightSidebar #sidebarTitle {{ color:white; font-size:18px; }}
             #rightSidebar #tagAmber {{ background:#fff1d8; border-color:#ead0a2; color:#975900; }}
+            #rightSidebar #tagError {{ background:#b12322; border:1px solid #df6661; border-radius:3px; color:white; padding:4px 7px; font-size:9px; font-weight:800; }}
+            #rightSidebar #tagSuccess {{ background:#e6f3ed; border-color:#badbca; color:#16865f; }}
+            #rightSidebar #stopButton {{ border:1px solid #d36c67; color:#a82020; font-weight:800; }}
             #rightSidebar #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
             #rightSidebar #healthLabel {{ color:#bdc0c4; font-size:10px; }}
             #rightSidebar #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
@@ -1167,7 +1223,7 @@ class HMIWindow(QMainWindow):
         names = (
             ("simulation", "Simulation mode"), ("sample_rate_hz", "Expected pitot rate · Hz"),
             ("air_density", "Air density · kg/m³"), ("max_airspeed_ms", "Graph maximum airspeed · m/s"),
-            ("serial_port", "Arduino serial port"), ("baud_rate", "Baud rate"),
+            ("esp32_host", "ESP32 Ethernet host"), ("esp32_port", "ESP32 TCP port"),
             ("data_directory", "Local data directory"), ("usb_mount_path", "USB mount path"),
             ("simulate_usb", "Simulated USB export"),
         )
@@ -1176,24 +1232,120 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
 
+    def _set_signal_indicator(self, label, color, blink=False, detail=""):
+        """Non-safety indication; based solely on fresh status telemetry."""
+        signature = (label, color, blink, detail)
+        if signature != (self._indicator_label, self._indicator_color,
+                         self._indicator_blink, self._indicator_detail):
+            self._indicator_epoch = time.monotonic()
+        self._indicator_label = label
+        self._indicator_color = color
+        self._indicator_blink = blink
+        self._indicator_detail = detail
+        self.status_label.setText(label)
+        self.status_label.setToolTip(detail)
+        self.status_lamp.setToolTip(detail)
+        self._tick_indicator()
+
+    def _tick_indicator(self):
+        """100% local Qt animation; no hardware outputs or motor commands."""
+        if self._last_status_ok and time.monotonic() - self._last_status_ok > 2.0:
+            self._last_status_ok = 0.0
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "HMI status feed stale; fan may still rotate")
+        elapsed = time.monotonic() - self._indicator_epoch
+        lit = (not self._indicator_blink or (elapsed % 1.0) < 0.5)
+        color = self._indicator_color if lit else "#b0b0ad"
+        self.status_lamp.setStyleSheet(
+            f"color: {color}; font-size: 27px; font-weight: 900;")
+        self.status_label.setStyleSheet(
+            "font-size: 10px; font-weight: 800; letter-spacing: 0.4px;")
+
+    def _update_signal_from_status(self, drive, is_sim, stale, state, fault, pressed):
+        if is_sim:
+            self._set_signal_indicator("SIMULATION", "#808080", False,
+                                       "Simulated data; hardware status is not verified")
+        elif stale:
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "ESP32 disconnected/stale; fan may still rotate")
+        elif pressed:
+            self._set_signal_indicator("E-STOP", "#d33226", False,
+                                       "Physical emergency stop pressed; fan may coast")
+        elif fault == "EMERGENCY_STOP":
+            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
+                                       "Emergency stop released; physical reset required")
+        elif state == "FAULT" or fault not in ("NONE", None):
+            self._set_signal_indicator("FAULT", "#d33226", True,
+                                       "Fault present; physical reset required")
+        elif drive.get("reset_required") in (1, True) and state not in ("INIT",):
+            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
+                                       "Physical reset required")
+        elif state == "RUNNING":
+            self._set_signal_indicator("RUNNING", "#20a65a", True,
+                                       "Operational state RUNNING; not safety-certified")
+        elif state == "READY":
+            self._set_signal_indicator("READY", "#20a65a", False,
+                                       "Operational state READY; physical START required")
+        elif state in ("WAIT", "STOP"):
+            self._set_signal_indicator(state, "#d99923", True,
+                                       "Waiting for physical reset/start or completion of stop")
+        elif state == "INIT":
+            self._set_signal_indicator("INIT", "#d99923", False,
+                                       "Initializing hardware and communications")
+        else:
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "Unexpected state; fan may still rotate")
+
+    def _set_machine_badge(self, value, style):
+        if self.tunnel_badge.text() != value or self.tunnel_badge.objectName() != style:
+            self.tunnel_badge.setText(value)
+            self.tunnel_badge.setObjectName(style)
+            self.tunnel_badge.style().unpolish(self.tunnel_badge)
+            self.tunnel_badge.style().polish(self.tunnel_badge)
+
+    def _apply_setpoint(self):
+        if self.state.get("simulation") or (self.state.get("esp32") or {}).get("stale", True):
+            self._show_error("ESP32 telemetry is not available.")
+            return
+        target = self.setpoint_spin.value()
+        self.setpoint_apply.setEnabled(False)
+
+        def done(data, error):
+            if error:
+                self._show_error(f"ESP32 setpoint rejected: {error}")
+            self._on_status(data, None) if not error else None
+
+        self._post("tunnel/setpoint", {"airspeed_ms": target}, done)
+
+    def _apply_mode(self):
+        if (self.state.get('esp32') or {}).get('state')!='READY':
+            self._show_error('Mode changes require READY')
+            return
+        self._post('tunnel/mode',{'mode':self.mode_select.currentText()},
+                   lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
+
+    def _apply_hz(self):
+        self._post('tunnel/frequency',{'hz':self.manual_hz.value()},
+                   lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
+
     def _apply_filter_cutoff(self):
         cutoff_hz = self.filter_cutoff.value()
 
         def done(data, error):
             self.filter_apply.setEnabled(True)
             if error:
-                self._show_error(f"Could not apply Arduino filter setting: {error}")
+                self._show_error(f"Could not apply ESP32 filter setting: {error}")
                 return
             self.config["filter_cutoff_hz"] = data["cutoff_hz"]
             if data["device_confirmed"]:
-                self.filter_status.setText(f"Arduino confirmed a {data['cutoff_hz']:.1f} Hz filter.")
+                self.filter_status.setText(f"ESP32 confirmed a {data['cutoff_hz']:.1f} Hz filter.")
             elif data["command_sent"]:
-                self.filter_status.setText("Command sent; waiting for Arduino telemetry confirmation.")
+                self.filter_status.setText("Command sent; waiting for ESP32 telemetry confirmation.")
             else:
-                self.filter_status.setText("Setting saved; it will be sent when the Arduino connects.")
+                self.filter_status.setText("Setting saved; it will be sent when the ESP32 connects.")
 
         self.filter_apply.setEnabled(False)
-        self._post("settings/arduino-filter", {"cutoff_hz": cutoff_hz}, done)
+        self._post("settings/pressure-filter", {"cutoff_hz": cutoff_hz}, done)
 
     def _poll(self):
         if self.poll_busy:
@@ -1203,6 +1355,9 @@ class HMIWindow(QMainWindow):
         def done(data, error):
             self.poll_busy = False
             if error:
+                self._last_status_ok = 0.0
+                self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                           "HMI backend unreachable; fan may still rotate")
                 self.connection.setText("RECONNECTING")
                 self.connection.setObjectName("tagAmber")
                 self.connection.style().unpolish(self.connection)
@@ -1218,27 +1373,94 @@ class HMIWindow(QMainWindow):
 
     def _on_status(self, data, error):
         if error:
+            self._last_status_ok = 0.0
+            self._set_signal_indicator("UNKNOWN", "#808080", False,
+                                       "HMI status request failed; fan may still rotate")
             return
+        self._last_status_ok = time.monotonic()
         self.state = data
-        filter_status = data.get("arduino_filter", {})
+        filter_status = data.get("pressure_filter", {})
         if self.page_key == "settings":
             configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 1.0))
             reported = filter_status.get("reported_cutoff_hz")
             if filter_status.get("confirmed"):
-                self.filter_status.setText(f"Arduino confirmed a {configured:.1f} Hz filter.")
+                self.filter_status.setText(f"ESP32 confirmed a {configured:.1f} Hz filter.")
             elif data.get("hardware_mode") and reported is not None:
                 self.filter_status.setText(
-                    f"Waiting for Arduino to apply {configured:.1f} Hz; it currently reports {reported:.1f} Hz."
+                    f"Waiting for ESP32 to apply {configured:.1f} Hz; it currently reports {reported:.1f} Hz."
                 )
             elif data.get("hardware_mode"):
                 self.filter_status.setText("Waiting for firmware telemetry to confirm the filter setting.")
             else:
-                self.filter_status.setText("Simulation mode · the filter is sent when Arduino hardware is connected.")
+                self.filter_status.setText("Simulation mode · the filter is sent when ESP32 hardware is connected.")
+        drive = data.get("esp32") or {}
+        is_sim = bool(data.get("simulation"))
+        stale = bool(drive.get("stale", True)) if not is_sim else False
+        machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
+        machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
+        estop_pressed = drive.get("estop_pressed") == 1
+        self._update_signal_from_status(drive, is_sim, stale,
+                                        machine_state, machine_fault, estop_pressed)
+        if stale:
+            self._set_machine_badge("UNKNOWN", "tagError")
+            self.tunnel_state_detail.setText("ESP32 status UNKNOWN. Fan may still rotate.")
+        elif machine_fault == "EMERGENCY_STOP":
+            self._set_machine_badge("E-STOP", "tagError")
+            self.tunnel_state_detail.setText(
+                "E-stop PRESSED; fan may coast." if estop_pressed else
+                "E-stop released; physical RESET required. Fan may still rotate."
+            )
+        elif machine_state == "FAULT" or machine_fault not in ("NONE", None):
+            self._set_machine_badge("FAULT", "tagError")
+            self.tunnel_state_detail.setText(f"Fault: {machine_fault}. Physical RESET required.")
+        else:
+            self._set_machine_badge(machine_state,
+                                    "tagSuccess" if machine_state in ("READY", "RUNNING") else "tagAmber")
+            self.tunnel_state_detail.setText(
+                f"State: {machine_state} · physical START/RESET only"
+            )
+        online = not stale and not is_sim
+        self.setpoint_spin.setEnabled(online)
+        self.setpoint_apply.setEnabled(online)
+        self.mode_apply.setEnabled(online and machine_state=='READY')
+        self.mode_select.setEnabled(online and machine_state=='READY')
+        self.manual_hz.setEnabled(online and drive.get('mode')=='MANUAL')
+        self.manual_apply.setEnabled(online and drive.get('mode')=='MANUAL')
+        if online and not self.mode_select.hasFocus():
+            self.mode_select.setCurrentText(drive.get('mode','AUTO'))
+        self.setpoint_apply.setEnabled(online and drive.get('mode')!='MANUAL')
+        if online and not self.setpoint_initialized:
+            try:
+                self.setpoint_spin.setValue(float(drive.get("sp", 0)))
+                self.setpoint_initialized = True
+            except (ValueError, TypeError):
+                pass
+        if stale:
+            self.setpoint_initialized = False
+        self.vfd_status_text.setText(
+            "VFD: no current status" if stale else
+            f"VFD: {self._fixed(drive.get('actual_hz'), 2)} Hz"
+            f" · motor_ok={int(bool(drive.get('motor_ok')))}"
+            f" · sensor_ok={int(bool(drive.get('sensor_ok')))}"
+        )
+        self.timing_status_text.setText(
+            "Control cycle: awaiting telemetry" if stale else
+            f"Control: {self._fixed(drive.get('control_hz'), 1)} Hz"
+            f" · execution {drive.get('execution_us', '—')} µs"
+            f" · overruns {drive.get('overruns', '—')}"
+            f" · missed {drive.get('missed_deadlines', '—')}"
+        )
+        self.safety_note.setText(
+            "Physical START and RESET required. OFF1 is not an E-stop.\n"
+            + ("Commissioning incomplete; motor RUN inhibited."
+               if not is_sim and not drive.get("commissioned") else
+               "Verify hardware safety independently before enabling the drive.")
+        )
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
-        self.hardware_mode_badge.setText("ARDUINO CONNECTED" if live else "ARDUINO USB")
-        self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ARDUINO")
+        self.hardware_mode_badge.setText("ESP32 CONNECTED" if live else "ESP32 ETHERNET")
+        self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ESP32")
         enabled = self.config.get("flow_metrics_enabled", True)
         self.stability_unit.setVisible(enabled)
         stability = sample.get("flow_stability_pct") if enabled else None
@@ -1286,7 +1508,7 @@ class HMIWindow(QMainWindow):
         self.file_status.setText(
             measurement.get("error") or
             (f"{measurement.get('file_status')} · {measurement.get('name')}" if measurement.get("name") else
-             ("Ready · enter a measurement name" if live else "Connect Arduino Uno via USB to record."))
+             ("Ready · enter a measurement name" if live else "Connect ESP32-S3 via Ethernet to record."))
         )
         for key, label in self.health_labels.items():
             label.setText(str((data.get("system") or {}).get(key, "—")))
@@ -1342,7 +1564,7 @@ class HMIWindow(QMainWindow):
             ("Flow stability", sample.get("flow_stability_pct"), "%", "5 S WINDOW"),
             ("Static pressure", None, "Pa", "IN DEVELOPMENT"),
             ("Angle of attack", None, "°", "IN DEVELOPMENT"),
-            ("Fan / VFD output", None, "%", "IN DEVELOPMENT"),
+            ("Fan / VFD output", sample.get("fan_output_pct"), "%", "ESP32"),
         )
         self.raw_table.setRowCount(len(rows))
         for row_index, (name, value, unit, state) in enumerate(rows):

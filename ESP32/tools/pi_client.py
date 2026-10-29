@@ -1,47 +1,63 @@
-"""Voorbeeldclient: python pi_client.py /dev/serial0 --setpoint 10 --seconds 20.
+"""TCP bench client: python pi_client.py ESP_IP [--run --setpoint 2].
 
-Vereist pyserial. Test eerst met SIMULATION_MODE=1.
+Read-only monitoring plus STOP is the default. --run explicitly requests motor operation.
+Use the simulation firmware first; close the HMI before using this single-client port.
 """
 import argparse
+import socket
 import time
-import serial
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("port")
-    parser.add_argument("--setpoint", type=float, default=10)
+    parser.add_argument("host")
+    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--setpoint", type=float, default=2)
     parser.add_argument("--seconds", type=float, default=20)
     args = parser.parse_args()
     if not 0 <= args.setpoint <= 30 or not 0 < args.seconds <= 3600:
         parser.error("setpoint: 0..30 m/s; seconds: >0..3600")
-    with serial.Serial(args.port, 115200, timeout=0.1, write_timeout=1) as link:
+    with socket.create_connection((args.host, args.port), timeout=1) as link:
+        link.settimeout(0.1)
         def send(command):
-            link.write((command + "\n").encode("ascii"))
-            link.flush()
-
-        # Laat firmware starten. STOP wordt eerst in een aparte regelcyclus verwerkt.
-        time.sleep(2)
+            link.sendall((command + "\n").encode("ascii"))
+        buffer = bytearray()
+        last_status = time.monotonic()
         try:
             send("STOP")
             time.sleep(0.1)
-            send(f"SETPOINT {args.setpoint}")
-            send("START")
-            deadline = time.monotonic() + args.seconds
-            ping_at = 0
+            if args.run:
+                send(f"SETPOINT {args.setpoint}")
+                send("START")
+            deadline, ping_at = time.monotonic() + args.seconds, 0
             while time.monotonic() < deadline:
+                if time.monotonic() - last_status > 1:
+                    raise OSError("Controller telemetry lost")
                 if time.monotonic() >= ping_at:
                     send("PING")
                     ping_at = time.monotonic() + 0.5
-                line = link.readline().decode("ascii", errors="replace").strip()
-                if line:
-                    print(line)
+                try:
+                    chunk = link.recv(4096)
+                except socket.timeout:
+                    continue
+                if not chunk:
+                    raise OSError("Controller disconnected")
+                buffer.extend(chunk)
+                if len(buffer) > 8192:
+                    raise ValueError("Oversized telemetry")
+                while b"\n" in buffer:
+                    line, _, rest = buffer.partition(b"\n")
+                    buffer = bytearray(rest)
+                    text = line.decode("ascii")
+                    print(text)
+                    if text.startswith("STATUS "):
+                        last_status = time.monotonic()
         finally:
-            send("STOP")
-            # Toon status na STOP; OK QUEUED alleen is geen bevestiging van uitvoering.
-            until = time.monotonic() + 0.5
-            while time.monotonic() < until:
-                print(link.readline().decode("ascii", errors="replace").strip())
+            try:
+                send("STOP")
+            except OSError:
+                pass  # Firmware/drive watchdogs handle a broken physical link.
 
 
 if __name__ == "__main__":
