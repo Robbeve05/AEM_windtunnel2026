@@ -50,7 +50,7 @@ if [[ "${#SOURCE_DIRS[@]}" -gt 0 ]]; then
   done
 fi
 
-git clone --branch RaspberryPi --single-branch "$REPOSITORY_URL" "$CLONE_DIR"
+git clone --branch feature/raspberry-pi-ethernet-hmi --single-branch "$REPOSITORY_URL" "$CLONE_DIR"
 
 if systemctl --user is-active --quiet windtunnel-hmi.service; then
   systemctl --user stop windtunnel-hmi.service
@@ -77,10 +77,29 @@ if [[ -d "$USER_DATA/data" ]]; then
   cp -a -- "$USER_DATA/data/." "$APP_LINK/data/"
 fi
 
+# Preserve existing user data, but migrate legacy Arduino settings to ESP32.
+python3 - "$APP_LINK/config/config.json" <<'PY'
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+config = json.loads(path.read_text(encoding="utf-8"))
+config["device_mode"] = "esp32_tcp"
+config["simulation"] = False
+config["esp32_host"] = config.get("esp32_host") or "192.168.50.10"
+config["esp32_port"] = 5000
+config["max_airspeed_ms"] = min(float(config.get("max_airspeed_ms", 30)), 30)
+config["filter_cutoff_hz"] = max(0.1, min(float(config.get("filter_cutoff_hz", 1)), 10))
+config["simulate_usb"] = False
+config.pop("serial_port", None)
+config.pop("baud_rate", None)
+path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+PY
+
 cd "$APP_LINK"
 bash deploy/install-pi.sh
 
 echo
-echo "Windtunnel HMI is installed from the public RaspberryPi branch."
+echo "Windtunnel HMI is installed from the ESP32 Ethernet feature branch."
 echo "No GitHub login was used. Existing files are backed up under your home directory."
 echo "Start it from the desktop menu as 'Windtunnel HMI'."
