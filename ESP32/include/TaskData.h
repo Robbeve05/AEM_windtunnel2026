@@ -25,7 +25,7 @@ extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safe
 extern EventGroupHandle_t events;
 extern TaskHandle_t control_task_handle;
 #define STOP_REQUEST BIT0
-void SafetyTask(void *argument);
+void InputHandlerTask(void *argument);
 void ControlTask(void *argument);
 void SensorTask(void *argument);
 void PiCommunicationTask(void *argument);

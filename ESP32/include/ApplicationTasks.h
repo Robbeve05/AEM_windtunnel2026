@@ -16,17 +16,17 @@ extern "C"
 ///////////////////////////////////////////////////////////////////////////////
 // Public event definitions
 
-/* SafetyTask produces physical actions; ControlTask alone consumes them. */
+/* InputHandlerTask produces physical actions; ControlTask alone consumes them. */
 #define EVT_START_BUTTON (1U << 0)
 #define EVT_STOP_BUTTON (1U << 1)
 #define EVT_RESET_BUTTON (1U << 2)
 #define EVT_ALL_BUTTONS (EVT_START_BUTTON | EVT_STOP_BUTTON | EVT_RESET_BUTTON)
 
 /* Sticky initialization completion bits, independent of runtime health. */
-#define EVT_SAFETY_TASK_READY (1U << 0)
+#define EVT_INPUT_TASK_READY (1U << 0)
 #define EVT_SENSOR_TASK_READY (1U << 1)
 #define EVT_PI_TASK_READY (1U << 2)
-#define EVT_ALL_TASKS_READY (EVT_SAFETY_TASK_READY | EVT_SENSOR_TASK_READY | EVT_PI_TASK_READY)
+#define EVT_ALL_TASKS_READY (EVT_INPUT_TASK_READY | EVT_SENSOR_TASK_READY | EVT_PI_TASK_READY)
 
 /* Advisory only: queues and freshness checks remain authoritative. */
 #define EVT_NEW_COMMAND (1U << 0)

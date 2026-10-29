@@ -14,6 +14,7 @@
 #include "PiProtocol.h"
 #include "freertos/task.h"
 #include "esp_err.h"
+#include "esp_log.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Shared handles
@@ -28,15 +29,24 @@ EventGroupHandle_t handle_SystemEventGroup;
 TaskHandle_t control_task_handle;
 
 ///////////////////////////////////////////////////////////////////////////////
-// void StartApplicationTasks(void)
+// static void InitHardware(void)
 /*
- * Allocates the existing queues and all EventGroups before task creation.
- * Task stacks, priorities and CPU assignments retain their existing values.
+ * Configures physical inputs and loads inactive output latches before tasks start.
  */
-void StartApplicationTasks(void)
+static void InitHardware(void)
 {
     SafetyIO_Init();
-    (void)I2CBus_Init(); /* Failed I/O remains inhibited through output diagnostics. */
+    if (!I2CBus_Init())
+        ESP_LOGE("ApplicationTasks", "I2C/output initialization failed; outputs remain inhibited");
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void CreateQueues(void)
+/*
+ * Creates the existing command and one-element latest-value queues.
+ */
+static void CreateQueues(void)
+{
     safety_status = xQueueCreate(1, sizeof(SafetySnapshot));
     pi_heartbeat = xQueueCreate(1, sizeof(PiHeartbeat));
     commands = xQueueCreate(16, sizeof(PiCommand));
@@ -44,19 +54,40 @@ void StartApplicationTasks(void)
     motor_requests = xQueueCreate(1, sizeof(MotorRequest));
     motor_status = xQueueCreate(1, sizeof(MotorStatus));
     telemetry = xQueueCreate(1, sizeof(Telemetry));
+    ESP_ERROR_CHECK(commands && sensors && motor_requests && motor_status && telemetry &&
+                            safety_status && pi_heartbeat
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void CreateEventGroups(void)
+/*
+ * Creates all event interfaces before any producer or consumer can run.
+ */
+static void CreateEventGroups(void)
+{
     events = xEventGroupCreate();
     handle_ButtonEventGroup = xEventGroupCreate();
     handle_ThreadEventGroup = xEventGroupCreate();
     handle_SystemEventGroup = xEventGroupCreate();
-    ESP_ERROR_CHECK(commands && sensors && motor_requests && motor_status && telemetry && events &&
-                            safety_status && pi_heartbeat && handle_ButtonEventGroup &&
-                            handle_ThreadEventGroup && handle_SystemEventGroup
+    ESP_ERROR_CHECK(events && handle_ButtonEventGroup && handle_ThreadEventGroup &&
+                            handle_SystemEventGroup
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SafetyTask, "SafetyTask", 3072, NULL, 5, NULL, 0) ==
-                            pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// static void CreateTasks(void)
+/*
+ * Preserves task stacks, priorities, CPU assignments and the startup barrier.
+ */
+static void CreateTasks(void)
+{
+    ESP_ERROR_CHECK(
+        xTaskCreatePinnedToCore(InputHandlerTask, "InputHandler", 3072, NULL, 5, NULL, 0) == pdPASS
+            ? ESP_OK
+            : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3, NULL, 0) ==
                             pdPASS
                         ? ESP_OK
@@ -69,4 +100,17 @@ void StartApplicationTasks(void)
                                             NULL, 0) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// void StartApplicationTasks(void)
+/*
+ * Initializes hardware and shared communication before creating application tasks.
+ */
+void StartApplicationTasks(void)
+{
+    InitHardware();
+    CreateQueues();
+    CreateEventGroups();
+    CreateTasks();
 }

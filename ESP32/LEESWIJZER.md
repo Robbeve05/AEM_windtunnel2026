@@ -2,7 +2,7 @@
 
 # Leeswijzer: van deltarobot naar windtunnel
 
-Begin bij `lib/Regelaar/Regelaar.c`. De indeling volgt je oude bestand: includes, constanten, rekenfuncties, initialisatie, regelstap en historie wissen.
+Begin bij `src/Regelaar.c`. De indeling volgt je oude bestand: includes, constanten, rekenfuncties, initialisatie, regelstap en historie wissen.
 
 ## Dezelfde gedachte als vroeger
 
@@ -62,6 +62,6 @@ De code bewaart P en I apart zodat de extra integratie bij verzadiging kan worde
 
 ## Bewegingscurve en Modbus
 
-`lib/SetpointCurve/SetpointCurve.c` heeft nu losse functies voor de overgangstijd, de vijfdegraads factor, het starten van een overgang en de volgende waarde. De drie instelwaarden staan onderaan AppConfig.h.
+`src/SetpointCurve.c` heeft nu losse functies voor de overgangstijd, de vijfdegraads factor, het starten van een overgang en de volgende waarde. De drie instelwaarden staan onderaan AppConfig.h.
 
 `ActuatorTask` geeft de procentopdracht aan `MotorLib_Write`. `V20Modbus.c` maakt daar drive-opdrachten van, controleert antwoorden en verwerkt storingen. `V20Transport.c` verstuurt de bytes over RS485. Deze communicatie hoeft niet in de wiskunde van Regelaar.c te staan.

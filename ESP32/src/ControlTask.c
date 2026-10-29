@@ -35,7 +35,6 @@
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
 #include "SafetyIO.h"
-#include "ControlTiming.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Local definitions
@@ -46,6 +45,12 @@ _Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controlle
 
 ///////////////////////////////////////////////////////////////////////////////
 // File-local data structures
+
+typedef struct
+{
+    uint64_t previous_us;
+    uint32_t max_jitter_us, missed_deadlines, overruns;
+} ControlTiming;
 
 typedef struct
 {
@@ -99,9 +104,8 @@ static void Control_PublishStatus(ControlContext *ctx);
 static void Control_UpdateDiagnostics(ControlContext *ctx);
 static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications);
 static void StartControlClock(void);
-static bool ControlClockInterrupt(gptimer_handle_t timer,
-                                            const gptimer_alarm_event_data_t *event,
-                                            void *argument);
+static bool ControlClockInterrupt(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event,
+                                  void *argument);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Timer interrupt handling
@@ -469,6 +473,44 @@ static void Control_UpdateMotor(ControlContext *ctx)
 
 ///////////////////////////////////////////////////////////////////////////////
 // Telemetry and diagnostics
+
+///////////////////////////////////////////////////////////////////////////////
+// File-local timing accounting
+/*
+ * Accounts for jitter and missed notifications without replaying PI steps.
+ * Execution and Modbus service budgets retain their original strict limits.
+ */
+static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned notifications)
+{
+    uint64_t elapsed = t->previous_us ? now - t->previous_us : CONTROL_PERIOD_US;
+    uint64_t jitter =
+        elapsed > CONTROL_PERIOD_US ? elapsed - CONTROL_PERIOD_US : CONTROL_PERIOD_US - elapsed;
+    if (jitter > t->max_jitter_us)
+        t->max_jitter_us = (uint32_t)jitter;
+    t->previous_us = now;
+    if (!notifications)
+    {
+        t->missed_deadlines += CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000);
+        return FAULT_CLOCK_TIMEOUT;
+    }
+    if (notifications > 1 || elapsed >= 2 * CONTROL_PERIOD_US)
+    {
+        unsigned missed = notifications > 1 ? notifications - 1 : 0;
+        unsigned elapsed_missed = (unsigned)(elapsed / CONTROL_PERIOD_US);
+        if (elapsed_missed)
+            elapsed_missed--;
+        t->missed_deadlines += missed > elapsed_missed ? missed : elapsed_missed;
+        return FAULT_CONTROL_OVERRUN;
+    }
+    return FAULT_NONE;
+}
+static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uint32_t service_us)
+{
+    if (execution_us < CONTROL_PERIOD_US && service_us < V20_SERVICE_BUDGET_US)
+        return true;
+    t->overruns++;
+    return false;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // static void Control_PublishStatus(ControlContext *ctx)

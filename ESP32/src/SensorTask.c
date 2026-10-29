@@ -13,6 +13,7 @@
 #include "PressureSensors.h"
 #include "freertos/task.h"
 #include <math.h>
+#include "esp_log.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // void SensorTask(void *argument)
@@ -26,7 +27,10 @@ void SensorTask(void *argument)
     bool ready = SensorLib_Init();
     TickType_t last = xTaskGetTickCount();
     uint32_t sequence = 0;
-    xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
+    if (ready)
+        xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
+    else
+        ESP_LOGE("SensorTask", "Sensor initialization failed; startup remains inhibited");
     for (;;)
     {
         Sample s = {.tick = xTaskGetTickCount()};

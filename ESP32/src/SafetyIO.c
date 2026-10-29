@@ -175,7 +175,7 @@ bool SafetyIO_Simulate(const char *name, bool active)
 ///////////////////////////////////////////////////////////////////////////////
 // void SafetyIO_PublishButtonEvents(...)
 /*
- * Publishes new validated START/RESET sequences from SafetyTask.
+ * Publishes new validated START/RESET sequences from InputHandlerTask.
  * STOP has no existing debounced sequence: debounce only its advisory event.
  * The ISR latch, SafetyIO_Stop() and raw stop_ok path remain immediate.
  */

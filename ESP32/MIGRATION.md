@@ -6,7 +6,7 @@ The starting `esp32` branch used Arduino-ESP32 2.0.17/IDF 4.4, an external GPIO4
 
 The migration retains Regelaar.c/h (including Tustin gains, anti-windup and 1 ms sample time), SetpointCurve.c/h, V20 register/scaling logic, command syntax, queue-based sharing, measurement files, export workflow, Arduino fallback and Cp helper. No control gains were retuned. The default 30 m/s setpoint limit remains. The plant parameters are still assumptions requiring commissioning.
 
-Changed: build/entry point, AppConfig and centralized BoardConfig, timer trigger and diagnostics, task placement, sensor HAL, Ethernet transport, V20 UART transport, and corresponding Pi adapter/API/desktop/web views. New PressureSensors.c supplies the real pitot driver and gated future tap acquisition. SafetyTask monitors the configured operational DI and stale control requests.
+Changed: build/entry point, AppConfig and centralized BoardConfig, timer trigger and diagnostics, task placement, sensor HAL, Ethernet transport, V20 UART transport, and corresponding Pi adapter/API/desktop/web views. New PressureSensors.c supplies the real pitot driver and gated future tap acquisition. InputHandlerTask monitors the configured operational DI and stale control requests.
 
 ## Build and tasks
 
@@ -18,7 +18,7 @@ Changed: build/entry point, AppConfig and centralized BoardConfig, timer trigger
 | SensorTask | 0 / 3 | Nominal 25 Hz, bounded I2C, ten pitot readings and pressure filtering |
 | ActuatorTask (Modbus) | 0 / 3 | Nominal 10 Hz; never catch up with bursts after timeout |
 | PiCommunicationTask (Ethernet) | 0 / 2 | Single TCP client, bounded reads/writes, telemetry every 20 ms |
-| SafetyTask | 0 / 5 | 10 ms operational interlock and control freshness check |
+| InputHandlerTask | 0 / 5 | 10 ms operational interlock and control freshness check |
 
 The ISR only calls vTaskNotifyGiveFromISR; returning its wake flag asks the IDF GPTimer driver to perform the ISR yield. ControlTask waits on ulTaskNotifyTake. No external timer pin, I2C or network operations occur there. Queues copy complete sensor/motor snapshots. SensorTask exclusively owns I2C, ActuatorTask owns RS485, EthernetTask owns its TCP socket; filter settings use a short critical section.
 
