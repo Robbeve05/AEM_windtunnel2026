@@ -28,32 +28,15 @@ bool I2CBus_TryWrite(uint8_t a,const uint8_t *p,size_t n) {
     bool ok=i2c_master_write_to_device(0,a,p,n,pdMS_TO_TICKS(I2C_TIMEOUT_MS))==ESP_OK;
     xSemaphoreGive(mutex); return ok;
 }
-bool DigitalOutputs_Set(bool enabled) {
-#if SIMULATION_MODE
-    (void)enabled; return true;
-#else
-    uint8_t outputs=0;
-#if VFD_ENABLE_DO_BIT >= 0 && VFD_ENABLE_DO_BIT <= 7 && VFD_ENABLE_ACTIVE_LEVEL >= 0
-    enabled=enabled&&SAFETY_IO_COMMISSIONED&&!SafetyIO_Inhibited();
-    if(enabled==(VFD_ENABLE_ACTIVE_LEVEL!=0)) outputs|=1u<<VFD_ENABLE_DO_BIT;
-#else
-    (void)enabled;
-#endif
-    const uint8_t data[]={1,outputs};
-    return I2CBus_Write(BOARD_DO_I2C_ADDRESS,data,sizeof(data));
-#endif
-}
 bool I2CBus_Init(void) {
 #if SIMULATION_MODE
-    return true;
+    return DigitalOutputs_Init();
 #else
     mutex=xSemaphoreCreateMutex(); if(!mutex) return false;
     const i2c_config_t c={.mode=I2C_MODE_MASTER,.sda_io_num=SENSOR_I2C_SDA_PIN,
         .scl_io_num=SENSOR_I2C_SCL_PIN,.sda_pullup_en=true,.scl_pullup_en=true,.master.clk_speed=SENSOR_I2C_HZ};
     ready=i2c_param_config(0,&c)==ESP_OK&&i2c_driver_install(0,I2C_MODE_MASTER,0,0,0)==ESP_OK;
-    /* Load the inactive latch before enabling outputs. Unassigned pins stay low. */
-    uint8_t direction[]={3,0};
-    bool ok=ready&&DigitalOutputs_Set(false)&&I2CBus_Write(BOARD_DO_I2C_ADDRESS,direction,2);
+    bool ok=ready&&DigitalOutputs_Init();
     if(!ok) ready=false;
     return ok;
 #endif

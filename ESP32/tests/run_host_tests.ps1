@@ -10,6 +10,11 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'indicators'; Sources = @('tests\test_indicators.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
+    @{ Name = 'outputs_default'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS' },
+    @{ Name = 'outputs_disabled'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1' },
+    @{ Name = 'outputs_enabled'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1 /DEXTERNAL_STATUS_LEDS_ENABLED=1' },
+    @{ Name = 'outputs_active_low'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1 /DEXTERNAL_STATUS_LEDS_ENABLED=1 /DSTATUS_LED_ACTIVE_LEVEL=0 /DVFD_ENABLE_ACTIVE_LEVEL=0' },
     @{ Name = 'ota_safety'; Sources = @('tests\test_ota_safety.c'); Flags = '' },
     @{ Name = 'sensors'; Sources = @('tests\test_sensors.c', 'src\PressureSensors.c'); Flags = '/DPRESSURE_TAPS_ENABLED=1 /DABP2_ADDRESS=0x29 /DABP2_MIN_PA=0 /DABP2_MAX_PA=1000 /DABP2_OUTPUT_MIN=1677722 /DABP2_OUTPUT_MAX=15099494' },
     @{ Name = 'core'; Sources = @('tests\test_core.c', 'src\Regelaar.c', 'src\PiProtocol.c'); Flags = '' },

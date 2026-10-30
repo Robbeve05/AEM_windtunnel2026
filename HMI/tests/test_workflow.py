@@ -160,11 +160,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(calculate_cp(sample,tap,1)[0]['cp'],-1)
         sample['airspeed_ms'] = 0
         self.assertIsNone(calculate_cp(sample,tap,1)[0]['cp'])
-        run = self.controller.measurements.start('Interrupted')
-        self.controller.measurements._close()
-        recovered = Measurements(self.controller.measurements.root,self.controller.config)
+        # Test interrupted-file recovery in isolation. Closing the live controller's
+        # files races its background acquisition thread and contaminates later tests.
+        interrupted = Measurements(self.base / 'interrupted', self.controller.config)
+        interrupted.start('Interrupted')
+        interrupted._close()
+        recovered = Measurements(interrupted.root, self.controller.config)
         self.assertEqual(recovered.list()[0]['state'],'ERROR')
-        self.controller.measurements.state = 'ERROR'
         with self.assertRaises(ValueError):
             recovered.folder_for('../outside')
 

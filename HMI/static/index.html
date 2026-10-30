@@ -78,7 +78,7 @@
 </div>
 <aside class="right-sidebar">
  <div class="control-heading"><span class="eyebrow">SYSTEM & DEVELOPMENT</span><span class="dot"></span></div>
- <h2>Wind tunnel</h2><div class="tunnel-state"><span id="tunnel-state" class="tag amber">UNKNOWN</span><span class="hint">Fan / VFD control</span></div>
+ <h2>Wind tunnel</h2><div class="tunnel-state"><span id="tunnel-state" class="tag amber">UNKNOWN</span><span id="status-lamps" title="ESP32 status UNKNOWN"><span id="led-green">●</span> <span id="led-yellow">●</span> <span id="led-red">●</span></span><span class="hint">Fan / VFD control</span></div>
  <p id="esp32-machine-detail" class="safety-note" role="status" aria-live="polite">ESP32 status UNKNOWN — fan may still rotate.</p>
  <form id="setpoint-form"><input id="setpoint" type="number" min="0" max="30" step="0.1" value="0"><button id="apply-setpoint" type="submit">Apply</button></form>
  <div class="control-readings"><div><span>LIVE AIRSPEED</span><b id="control-speed">— <small>m/s</small></b></div><div><span>FLOW STABILITY</span><b id="control-stability">— <small>%</small></b></div></div>

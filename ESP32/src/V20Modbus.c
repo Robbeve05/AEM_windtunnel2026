@@ -19,35 +19,8 @@
 #include "esp_timer.h"
 #include "driver/uart.h"
 
-/*
- * Deliberate commissioning inhibit. Keep at zero until the real relay,
- * digital-input polarity, OFF2 hardware path and Modbus V20 settings have
- * been validated with the motor unable to start unexpectedly.
- */
-#ifndef V20_RUN_COMMISSIONED
-#define V20_RUN_COMMISSIONED 0
-#endif
-
-#ifndef V20_STATUS_PERIOD_MS
-#define V20_STATUS_PERIOD_MS 100
-#endif
-#ifndef V20_COMMAND_PERIOD_MS
-#define V20_COMMAND_PERIOD_MS 5
-#endif
-#ifndef V20_STOP_HEARTBEAT_MS
-#define V20_STOP_HEARTBEAT_MS 150
-#endif
-#ifndef V20_EXPECTED_WATCHDOG_MS
-#define V20_EXPECTED_WATCHDOG_MS 500
-#endif
-#ifndef V20_EXPECTED_REFERENCE_CENTIHZ
-#define V20_EXPECTED_REFERENCE_CENTIHZ 5000
-#endif
 _Static_assert(V20_EXPECTED_REFERENCE_CENTIHZ == 5000, "V20 reference must remain 50 Hz");
 _Static_assert(V20_REFERENCE_HZ == 50.0f && MANUAL_MAX_HZ <= 50.0f, "50 Hz command ceiling required");
-#ifndef V20_RESPONSE_TIMEOUT_MS
-#define V20_RESPONSE_TIMEOUT_MS MODBUS_RESPONSE_TIMEOUT_MS
-#endif
 
 #define V20_PDU_STW_HSW        99u   /* Holding registers 40100 and 40101. */
 #define V20_PDU_ZSW_HIW       109u   /* Holding registers 40110 and 40111. */

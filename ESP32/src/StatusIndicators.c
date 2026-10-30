@@ -1,8 +1,9 @@
 /* Author: R.E. van Eekelen. Indication never establishes mechanical standstill. */
 #include "StatusIndicators.h"
+#include "AppConfig.h"
 StatusIndicator StatusIndicators_Get(SystemState_t s,FaultReason_t f,bool pressed,bool commissioned,uint32_t ms) {
-    bool blink=(ms%1000)<500;
-    if (s==STATE_FAULT && f==FAULT_EMERGENCY_STOP)
+    bool blink=(ms%STATUS_LED_BLINK_PERIOD_MS)<STATUS_LED_BLINK_PERIOD_MS/2;
+    if (pressed || (s==STATE_FAULT && f==FAULT_EMERGENCY_STOP))
         return (StatusIndicator){.red=pressed || blink,.text=pressed ?
             (commissioned ? "EMERGENCY STOP ACTIVE - MOTOR TORQUE REMOVED; FAN MAY STILL BE ROTATING; KEEP CLEAR" :
             "SAFETY CIRCUIT NOT COMMISSIONED - FAN MAY STILL BE ROTATING; KEEP CLEAR") :

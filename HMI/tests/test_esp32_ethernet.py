@@ -1,7 +1,7 @@
 """ESP32 TCP integration tests. Author: R.E. van Eekelen."""
 import asyncio
 import unittest
-from backend.esp32 import ESP32Client, parse_status
+from backend.esp32 import ESP32Client, parse_status, status_indication
 from backend.models import ManualFrequency
 from pydantic import ValidationError
 
@@ -13,6 +13,23 @@ FRAME = ("STATUS state=FAULT fault=EMERGENCY_STOP estop_pressed=1 "
 
 
 class ParserTests(unittest.TestCase):
+    def test_authoritative_status_lamps(self):
+        data = parse_status(FRAME + ' led_green=0 led_yellow=1 led_red=1 status_text=INITIALIZING external_leds_enabled=0 output_write_errors=3 output_ack_valid=0')
+        indication = status_indication(data)
+        self.assertTrue(indication['available'])  # HMI is independent of the disabled physical lamp feature.
+        self.assertEqual(data['external_leds_enabled'],0)
+        self.assertEqual(data['output_write_errors'],3)
+        self.assertEqual(data['output_ack_valid'],0)
+        self.assertEqual((indication['green'],indication['yellow'],indication['red']), (False,True,True))
+        data['status_text'] = 'EMERGENCY%20STOP%20RELEASED%20-%20RESET%20REQUIRED'
+        self.assertEqual(status_indication(data)['text'], 'EMERGENCY STOP RELEASED - RESET REQUIRED')
+        # Missing/stale status must not infer a green lamp from RUNNING.
+        self.assertFalse(status_indication({'state':'RUNNING'})['available'])
+        self.assertIsNone(status_indication(dict(data, stale=True))['green'])
+        for suffix in ('led_green=1', 'led_green=1 led_yellow=0 led_red=2',
+                       'led_green=-1 led_yellow=0 led_red=0'):
+            self.assertIsNone(parse_status(FRAME + ' ' + suffix))
+
     def test_manual_frequency_model(self):
         self.assertEqual(ManualFrequency(hz=0).hz, 0)
         self.assertEqual(ManualFrequency(hz=50).hz, 50)
@@ -79,7 +96,7 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.client.command(command), "OK QUEUED")
         self.assertEqual(await self.client.command("FREQ 5.000"), "OK QUEUED")
         self.assertEqual(await self.client.command("SETPOINT 12.000"), "OK QUEUED")
-        for denied in ("START", "RESET", "OFF2", "SETPOINT nan", "FREQ 50.1", "FREQ 55", "FREQ -1", "FREQ inf", "FREQ nan", "FREQ 50.001", "SETPOINT 30.1", "PID nan 0 0", "PID 1 0 0\n", "FILTER 1\nSTOP"):
+        for denied in ("START", "RESET", "OFF2", "LED RED 0", "LAMP GREEN 1", "SETPOINT nan", "FREQ 50.1", "FREQ 55", "FREQ -1", "FREQ inf", "FREQ nan", "FREQ 50.001", "SETPOINT 30.1", "PID nan 0 0", "PID 1 0 0\n", "FILTER 1\nSTOP"):
             with self.assertRaises(ValueError):
                 await self.client.command(denied)
         self.assertEqual(self.client.snapshot()["fault"], "EMERGENCY_STOP")

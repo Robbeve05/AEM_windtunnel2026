@@ -102,9 +102,6 @@
 #ifndef CONTACTOR_OK_ACTIVE_LEVEL
 #define CONTACTOR_OK_ACTIVE_LEVEL (-1)
 #endif
-#ifndef VFD_ENABLE_DO_BIT
-#define VFD_ENABLE_DO_BIT 0 /* DO1 / EXIO1: K2 operational permissive relay */
-#endif
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
 #define VFD_ENABLE_ACTIVE_LEVEL 1 /* Waveshare TCA9554 EXIO1 high = DO1 active; K2 remains inhibited until commissioning */
 #endif
@@ -183,3 +180,53 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #endif
 
 #endif
+
+// I2C device configuration (not physical pin assignments).
+#define BOARD_DO_I2C_ADDRESS 0x20
+#define BOARD_RTC_I2C_ADDRESS 0x51
+// EXTERNAL STATUS LAMPS - proposed wiring, disabled until verified.
+#ifndef EXTERNAL_STATUS_LEDS_ENABLED
+#define EXTERNAL_STATUS_LEDS_ENABLED 0
+#endif
+#ifndef STATUS_LED_ACTIVE_LEVEL
+#define STATUS_LED_ACTIVE_LEVEL 1
+#endif
+#define STATUS_LED_BLINK_PERIOD_MS 1000u
+#define STATUS_LED_UPDATE_PERIOD_MS 100u
+#define STATUS_RGB_TX_TIMEOUT_MS 25u
+
+/*
+ * Deliberate commissioning inhibit. Keep at zero until the real relay,
+ * digital-input polarity, OFF2 hardware path and Modbus V20 settings have
+ * been validated with the motor unable to start unexpectedly.
+ */
+#ifndef V20_RUN_COMMISSIONED
+#define V20_RUN_COMMISSIONED 0
+#endif
+
+#ifndef V20_STATUS_PERIOD_MS
+#define V20_STATUS_PERIOD_MS 100
+#endif
+#ifndef V20_COMMAND_PERIOD_MS
+#define V20_COMMAND_PERIOD_MS 5
+#endif
+#ifndef V20_STOP_HEARTBEAT_MS
+#define V20_STOP_HEARTBEAT_MS 150
+#endif
+#ifndef V20_EXPECTED_WATCHDOG_MS
+#define V20_EXPECTED_WATCHDOG_MS 500
+#endif
+#ifndef V20_EXPECTED_REFERENCE_CENTIHZ
+#define V20_EXPECTED_REFERENCE_CENTIHZ 5000
+#endif
+#ifndef V20_RESPONSE_TIMEOUT_MS
+#define V20_RESPONSE_TIMEOUT_MS MODBUS_RESPONSE_TIMEOUT_MS
+#endif
+
+
+/* Existing controller design assumptions, moved unchanged (not measurements). */
+#define LUCHTSNELHEID_NOM    (40.0f)  // m/s at reference frequency
+#define FREQUENTIE_NOM      (50.0f)  // Hz, corresponding to 100% output
+#define Tau_motor           (0.6f)   // s, assumed VFD/fan time constant
+#define FbM                 (0.20f)  // Hz, target bandwidth
+#define PI_ZERO_DIVISOR     (10.0f)  // PI zero one decade below bandwidth

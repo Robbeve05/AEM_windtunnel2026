@@ -111,6 +111,15 @@ function onFrame(frame){
   }
   if(frame.device_mode==='esp32_tcp'){
     const drive=frame.esp32||{};
+    const lampKeys=['green','yellow','red'];
+    const lampColors=['#20a65a','#d99923','#d33226'];
+    const lampKnown=connected && !drive.stale && lampKeys.every(key=>[0,1].includes(drive['led_'+key]));
+    lampKeys.forEach((key,i)=>{
+      $('led-'+key).style.color=lampKnown && drive['led_'+key]===1?lampColors[i]:'#808080';
+    });
+    let lampText='STATUS UNKNOWN';try{lampText=decodeURIComponent(drive.status_text||lampText);}catch{}
+    $('status-lamps').title=lampKnown?lampText:
+      'ESP32 status UNKNOWN - fan may still rotate';
     const current=drive.stale?'UNKNOWN':drive.state;
     badge('tunnel-state',current);
     const detail=$('esp32-machine-detail');
@@ -132,6 +141,8 @@ function onFrame(frame){
     $('manual-apply').disabled=drive.stale||drive.mode!=='MANUAL';
     if(!drive.stale&&document.activeElement!==$('mode-select'))$('mode-select').value=drive.mode||'AUTO';
   }else{
+    ['green','yellow','red'].forEach(key=>{$('led-'+key).style.color='#808080';});
+    $('status-lamps').title='SIMULATION - physical lamp status unknown';
     badge('tunnel-state',frame.simulation?frame.tunnel_state:'IN DEVELOPMENT');
   }
   badge('measurement-badge',m.state);
@@ -195,7 +206,7 @@ async function init(){
     finally{button.disabled=false;}
   });
   const initial=await api('status');onFrame(initial);
-  new LiveConnection(onFrame,online=>{connected=online;badge('connection',online?'● HMI ONLINE':'RECONNECTING');$('connection').classList.toggle('amber',!online);document.body.classList.toggle('offline',!online);if(!online)$('stream-note').textContent='HMI websocket disconnected · values may be stale';updateControls();});
+  new LiveConnection(onFrame,online=>{connected=online;badge('connection',online?'● HMI ONLINE':'RECONNECTING');$('connection').classList.toggle('amber',!online);document.body.classList.toggle('offline',!online);if(!online){$('stream-note').textContent='HMI websocket disconnected · values may be stale';['green','yellow','red'].forEach(key=>{$('led-'+key).style.color='#808080';});$('status-lamps').title='HMI disconnected - physical status unknown';}updateControls();});
   await refresh();
 }
 setInterval(()=>{$('clock').textContent=new Date().toLocaleTimeString([],{hour12:false});if(Date.now()-lastRefresh>3000){lastRefresh=Date.now();api('storage').then(renderStorage).catch(()=>{});}},1000);

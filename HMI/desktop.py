@@ -3,6 +3,7 @@ import math
 import re
 import sys
 import time
+from backend.esp32 import status_indication
 from datetime import datetime
 from pathlib import Path
 
@@ -280,7 +281,7 @@ class HMIWindow(QMainWindow):
         # Always-visible, non-safety signal tower for the physical tunnel.
         self.status_lamp = QLabel("●")
         self.status_lamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_lamp.setFixedWidth(28)
+        self.status_lamp.setFixedWidth(74)
         self.status_lamp.setAccessibleName("Windtunnel status indicator")
         self.status_lamp.setToolTip("ESP32 status UNKNOWN")
         self.status_label = QLabel("UNKNOWN")
@@ -1234,6 +1235,7 @@ class HMIWindow(QMainWindow):
 
     def _set_signal_indicator(self, label, color, blink=False, detail=""):
         """Non-safety indication; based solely on fresh status telemetry."""
+        self._indicator_colors = None
         signature = (label, color, blink, detail)
         if signature != (self._indicator_label, self._indicator_color,
                          self._indicator_blink, self._indicator_detail):
@@ -1256,8 +1258,13 @@ class HMIWindow(QMainWindow):
         elapsed = time.monotonic() - self._indicator_epoch
         lit = (not self._indicator_blink or (elapsed % 1.0) < 0.5)
         color = self._indicator_color if lit else "#b0b0ad"
-        self.status_lamp.setStyleSheet(
-            f"color: {color}; font-size: 27px; font-weight: 900;")
+        colors = getattr(self, '_indicator_colors', None)
+        if colors is None:
+            self.status_lamp.setText("●")
+            self.status_lamp.setStyleSheet(f"color: {color}; font-size: 27px; font-weight: 900;")
+        else:
+            self.status_lamp.setText(' '.join(f'<span style="color:{c}">●</span>' for c in colors))
+            self.status_lamp.setStyleSheet("font-size: 18px; font-weight: 900;")
         self.status_label.setStyleSheet(
             "font-size: 10px; font-weight: 800; letter-spacing: 0.4px;")
 
@@ -1268,33 +1275,19 @@ class HMIWindow(QMainWindow):
         elif stale:
             self._set_signal_indicator("UNKNOWN", "#808080", False,
                                        "ESP32 disconnected/stale; fan may still rotate")
-        elif pressed:
-            self._set_signal_indicator("E-STOP", "#d33226", False,
-                                       "Physical emergency stop pressed; fan may coast")
-        elif fault == "EMERGENCY_STOP":
-            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
-                                       "Emergency stop released; physical reset required")
-        elif state == "FAULT" or fault not in ("NONE", None):
-            self._set_signal_indicator("FAULT", "#d33226", True,
-                                       "Fault present; physical reset required")
-        elif drive.get("reset_required") in (1, True) and state not in ("INIT",):
-            self._set_signal_indicator("RESET REQUIRED", "#d33226", True,
-                                       "Physical reset required")
-        elif state == "RUNNING":
-            self._set_signal_indicator("RUNNING", "#20a65a", True,
-                                       "Operational state RUNNING; not safety-certified")
-        elif state == "READY":
-            self._set_signal_indicator("READY", "#20a65a", False,
-                                       "Operational state READY; physical START required")
-        elif state in ("WAIT", "STOP"):
-            self._set_signal_indicator(state, "#d99923", True,
-                                       "Waiting for physical reset/start or completion of stop")
-        elif state == "INIT":
-            self._set_signal_indicator("INIT", "#d99923", False,
-                                       "Initializing hardware and communications")
         else:
-            self._set_signal_indicator("UNKNOWN", "#808080", False,
-                                       "Unexpected state; fan may still rotate")
+            indication = status_indication(drive)
+            if not indication['available']:
+                self._set_signal_indicator("UNKNOWN", "#808080", False, indication['text'])
+                return
+            # Retain existing operator labels; all three colors come from ESP32.
+            label = ("E-STOP" if pressed else "RESET REQUIRED" if fault == "EMERGENCY_STOP" else
+                     "FAULT" if state == "FAULT" or fault not in ("NONE", None) else
+                     "RESET REQUIRED" if drive.get("reset_required") in (1, True) and state != "INIT" else state)
+            self._set_signal_indicator(label, "#808080", False, indication['text'])
+            self._indicator_colors = tuple(color if indication[key] else "#b0b0ad"
+                for key, color in [('green','#20a65a'),('yellow','#d99923'),('red','#d33226')])
+            self._tick_indicator()
 
     def _set_machine_badge(self, value, style):
         if self.tunnel_badge.text() != value or self.tunnel_badge.objectName() != style:

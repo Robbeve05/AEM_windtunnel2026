@@ -6,6 +6,7 @@
  * Calculation from windtunnel_pi_design.py, 'vfd_proxy' mode.
  */
 #include "Regelaar.h"
+#include "AppConfig.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // system includes
@@ -15,11 +16,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 // Controller constants use the same assumptions as the Python VFD model
 #define PI                  (3.14159265358979323846f)
-#define LUCHTSNELHEID_NOM    (40.0f)  // m/s at reference frequency
-#define FREQUENTIE_NOM      (50.0f)  // Hz, corresponding to 100% output
-#define Tau_motor           (0.6f)   // s, assumed VFD/fan time constant
-#define FbM                 (0.20f)  // Hz, target bandwidth
-#define PI_ZERO_DIVISOR     (10.0f)  // PI zero one decade below bandwidth
 
 ///////////////////////////////////////////////////////////////////////////////
 // Calculation helpers, private to this file

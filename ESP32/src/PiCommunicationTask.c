@@ -13,6 +13,8 @@
 #include "PiProtocol.h"
 #include "PressureSensors.h"
 #include "SafetyIO.h"
+#include "StatusOutput.h"
+#include "DigitalOutputs.h"
 #include "lwip/sockets.h"
 #include <errno.h>
 #include <unistd.h>
@@ -263,6 +265,28 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.transitions, ALLOW_REMOTE_START, (unsigned long)t.crc_errors,
                     (unsigned long)t.exceptions, (unsigned long)t.exception_code,
                     (unsigned long)t.late_replies);
+                const StatusIndicator indication=StatusOutput_Get(&t,true,
+                    (uint32_t)(now*portTICK_PERIOD_MS));
+                if(length>0 && length<(int)sizeof(buffer)-256) {
+                    length+=snprintf(buffer+length,sizeof(buffer)-length,
+                        " led_green=%d led_yellow=%d led_red=%d status_text=",
+                        indication.green,indication.amber,indication.red);
+                    // Encode spaces so the existing key=value token protocol is unchanged.
+                    for(const char *p=indication.text; *p && length<(int)sizeof(buffer)-4; ++p) {
+                        if(*p==' ') { memcpy(buffer+length,"%20",3); length+=3; }
+                        else buffer[length++]=*p;
+                    }
+                    buffer[length]=0;
+                }
+                DigitalOutputStatus outputs;
+                DigitalOutputs_GetStatus(&outputs);
+                if(length>0 && length<(int)sizeof(buffer)-192)
+                    length+=snprintf(buffer+length,sizeof(buffer)-length,
+                        " outputs_ok=%d output_write_errors=%lu output_image=%u output_ack_image=%u"
+                        " output_ack_valid=%d external_leds_enabled=%d",
+                        outputs.initialized && outputs.confirmed_valid,
+                        (unsigned long)outputs.write_errors,outputs.requested_image,
+                        outputs.confirmed_image,outputs.confirmed_valid,EXTERNAL_STATUS_LEDS_ENABLED);
                 for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 32;
                      tap++)
                     length += snprintf(buffer + length, sizeof(buffer) - length, " p%d=%.3f", tap,

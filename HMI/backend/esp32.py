@@ -5,11 +5,12 @@ import logging
 import math
 import re
 import time
+from urllib.parse import unquote
 
 STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"}
 FLOATS = {"manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
           "control_hz", "modbus_hz", "filter_hz"}
-INTS = {"running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
+INTS = {"outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
         "estop", "relay", "reset_required", "stop", "inputs_valid", "pi", "commissioned",
         "estop_pressed", "safety_relay_ok", "stop_button_ok", "pi_connected", "taps_valid",
         "sample_seq", "sensor_errors", "modbus_errors", "modbus_timeouts", "control_period_us",
@@ -41,7 +42,22 @@ def parse_status(line):
         return None
     if not {"pv", "sp", "manual_hz", "applied_hz", "actual_hz", "sensor_ok", "motor_ok", "estop_pressed", "reset_required"} <= out.keys():
         return None
+    flags = {"led_green", "led_yellow", "led_red"}
+    if flags & out.keys() and (not flags <= out.keys() or any(out[k] not in (0, 1) for k in flags)):
+        return None
     return out
+
+
+def status_indication(drive):
+    """Use ESP32 StatusIndicators colors; never guess from local machine state."""
+    keys = ("led_green", "led_yellow", "led_red")
+    available = not drive.get('stale', False) and all(drive.get(k) in (0, 1) for k in keys)
+    return dict(available=available,
+                green=bool(drive['led_green']) if available else None,
+                yellow=bool(drive['led_yellow']) if available else None,
+                red=bool(drive['led_red']) if available else None,
+                text=unquote(drive.get('status_text', 'STATUS UNKNOWN')) if available else
+                     'ESP32 disconnected/stale; fan may still rotate')
 
 class ESP32Client:
     def __init__(self, host, port=5000, *, status_timeout=1.0):

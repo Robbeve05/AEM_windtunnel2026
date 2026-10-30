@@ -14,13 +14,18 @@ Changed: build/entry point, AppConfig and centralized BoardConfig, timer trigger
 
 | Task | Core / priority | Timing / work |
 |---|---|---|
-| ControlTask | 1 / 4 | 1 MHz GPTimer, alarm 1000, reload 0: nominal 1 kHz; fixed 1 ms algorithm |
-| SensorTask | 0 / 3 | Nominal 25 Hz, bounded I2C, ten pitot readings and pressure filtering |
-| ActuatorTask (Modbus) | 0 / 3 | Nominal 10 Hz; never catch up with bursts after timeout |
-| PiCommunicationTask (Ethernet) | 0 / 2 | Single TCP client, bounded reads/writes, telemetry every 20 ms |
-| InputHandlerTask | 0 / 5 | 10 ms operational interlock and control freshness check |
+| ControlTask | 1 / 4 | GPTimer notification every 5 ms, fixed 200 Hz PI and V20 service |
+| SensorTask | 0 / 3 | 5 ms acquisition slots, 2.5 ms phase offset; 20 Hz averaged pitot publications |
+| PiCommunicationTask | 0 / 2 | Single TCP client, bounded reads/writes, telemetry every 20 ms |
+| InputHandlerTask | 0 / 5 | 10 ms physical input and K2 update; sole normal expander output flush path |
+| HeartbeatTask | 0 / 1 | 100 ms shared state indication, onboard RMT and staged external lamp requests |
+| OTA tasks | 0 / 1 | Maintenance receiver disabled by default; rollback validation |
 
-The ISR only calls vTaskNotifyGiveFromISR; returning its wake flag asks the IDF GPTimer driver to perform the ISR yield. ControlTask waits on ulTaskNotifyTake. No external timer pin, I2C or network operations occur there. Queues copy complete sensor/motor snapshots. SensorTask exclusively owns I2C, ActuatorTask owns RS485, EthernetTask owns its TCP socket; filter settings use a short critical section.
+The ISR only notifies tasks; no I2C or network transactions occur in the ISR or ControlTask.
+InputHandlerTask owns K2 authorization; DigitalOutputs serializes its complete output image and
+shares the existing I2CBus mutex with sensors. HeartbeatTask only stages lamp requests and cannot
+write DO1 or delay K2 by performing cosmetic I2C transactions. See MACHINE-IO.md for the current
+physical assignment and commissioning contract.
 
 Diagnostics in STATUS include measured task frequency, execution time, maximum task wake-interval jitter (not oscilloscope-measured ISR latency), missed notifications, overruns, sensor/Modbus error and timeout counts, drive status/fault, actual and desired Hz, connection status, and control/network stack high-water marks. Hardware period is nominal: actual jitter, stack margin and stability need bench measurement.
 
@@ -33,8 +38,8 @@ Diagnostics in STATUS include measured task frequency, execution time, maximum t
 | Onboard RS485 | GPIO17 TX, GPIO18 RX, GPIO21 RTS | Internal isolated transceiver; no external transceiver |
 | Pitot ASPD-4525 | Expansion SDA GPIO42, SCL GPIO41, GND | I2C address 0x28. Module supply 4–5.5 V, nominal 5 V; check actual module pull-ups/level shifting so ESP32 bus never rises to 5 V |
 | Sensor PCB | Same SDA/SCL and common logic ground | Two TCA9548A, planned 0x70 and 0x71; eight ABP2 channels each; 100 kHz configurable |
-| DO1–DO8 | TCA9554 address 0x20, bits 0–7 / EXIO1–8 | Isolated sinking outputs, not GPIO pins or voltage sources. Initialized inactive, not assigned to the VFD |
-| DI1–DI8 | GPIO4,5,6,7,8,9,10,11 | Industrial terminals. Optional `INTERLOCK_DI_INDEX` 0–7 and verified OK polarity; -1 leaves unassigned |
+| DO1–DO8 | TCA9554 address 0x20, bits 0–7 / EXIO1–8 | DO1 K2; proposed DO2 green, DO3 yellow, DO4 red; DO5–8 reserved. External lamps disabled by default. See MACHINE-IO.md |
+| DI1–DI8 | GPIO4,5,6,7,8,9,10,11 | Industrial terminals. DI1 safety relay, DI2 emergency indication, DI3 STOP, DI4 START, DI5 RESET, DI6 optional VFD fault, DI7 optional K2 feedback, DI8 reserved |
 | Emergency stop | Independent safety circuit | Must stop the machine independently of MCU, Ethernet and Modbus; operational DI/STOP is not a safety function |
 
 Reserved: W5500 MOSI13/MISO14/SCLK15/CS16/INT12/RESET39; RTC 0x51 with INT40; RGB38; buzzer46; CAN2/3; TF45/47/48; BOOT0; USB19/20; UART debug43/44. Do not reuse these or flash/PSRAM pins. Verify expansion header orientation and voltage on the actual revision; a numbered connector pin layout is intentionally not guessed.
