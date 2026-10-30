@@ -202,6 +202,13 @@
 #define PI_ZERO_DIVISOR     (10.0f)
 // 07A. THEORETICAL ONE-MASS CONTROLLER DESIGN (NOT V20 GAINS)
 // Enter actual shaft inertias independently; zero means unknown/not configured.
+// WEG W21 catalogue (IE3, 50 Hz, four-pole, 4 kW, frame 112M):
+// motor inertia 0.0182 kg m^2. Only valid if motor nameplate
+// confirms this EXACT variant. This is NOT the fan inertia.
+#define WEG_W21_4KW_4P_112M_CATALOG_J_KGM2 (0.0182f)
+// Unverified motor variant: do NOT automatically use catalogue inertia.
+#define MOTOR_VARIANT_CONFIRMED (0)
+
 #define J_MOTOR_KGM2 (0.0f)
 #define J_FAN_KGM2 (0.0f)
 // Additive airspeed output disturbance specification.
