@@ -12,6 +12,7 @@
 // System includes
 
 #include <stdint.h>
+#include <math.h>
 #include "driver/gptimer.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
@@ -41,6 +42,7 @@
 
 _Static_assert(CONTROL_PERIOD_US == (1000000u / CONTROL_FREQUENCY_HZ),
                "GPTimer and PI sample periods must be equal");
+_Static_assert(SENSOR_PHASE_US * 2 == CONTROL_PERIOD_US, "Two equal clock phases required");
 _Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controller runs at 200 Hz");
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -56,6 +58,8 @@ typedef struct
 {
     Regelaar controller;
     SetpointCurve curve;
+    SetpointCurve frequency_curve;
+    bool frequency_running;
     StateMachine machine;
     Telemetry status;
     ControlTiming timing_stats;
@@ -120,7 +124,9 @@ static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
     (void)event;
     (void)argument;
     BaseType_t wake = pdFALSE;
-    vTaskNotifyGiveFromISR(control_task_handle, &wake);
+    static bool sensor_phase = true;
+    vTaskNotifyGiveFromISR(sensor_phase ? sensor_task_handle : control_task_handle, &wake);
+    sensor_phase = !sensor_phase;
     return wake == pdTRUE;
 }
 
@@ -134,7 +140,7 @@ static void StartControlClock(void)
                                      .direction = GPTIMER_COUNT_UP,
                                      .resolution_hz = 1000000};
     const gptimer_alarm_config_t alarm = {
-        .alarm_count = CONTROL_PERIOD_US, .reload_count = 0, .flags.auto_reload_on_alarm = true};
+        .alarm_count = SENSOR_PHASE_US, .reload_count = 0, .flags.auto_reload_on_alarm = true};
     const gptimer_event_callbacks_t callbacks = {.on_alarm = ControlClockInterrupt};
 
     ESP_ERROR_CHECK(gptimer_new_timer(&config, &timer));
@@ -304,6 +310,20 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
     {
         switch (command.type)
         {
+        case CMD_MODE:
+            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP) {
+                ctx->status.mode = (OperatingMode)(int)command.values[0];
+                ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
+                ctx->frequency_running = ctx->curve_running = false;
+                removeRegelaarHistory(&ctx->controller);
+                ctx->start = false;
+            }
+            break;
+        case CMD_FREQ:
+            if (ctx->status.mode == MODE_MANUAL && isfinite(command.values[0]) &&
+                command.values[0] >= 0 && command.values[0] <= MANUAL_MAX_HZ)
+                ctx->status.manual_hz = command.values[0];
+            break;
         case CMD_SETPOINT:
             ctx->status.setpoint = command.values[0];
             break;
@@ -316,12 +336,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
         case CMD_STOP:
             ctx->stop = true;
             break;
-#if ALLOW_REMOTE_START
-        case CMD_START:
-            if (ctx->machine.state == STATE_READY)
-                ctx->start = true;
-            break;
-#endif
+
         case CMD_FILTER:
         case CMD_PING:
         default:
@@ -388,7 +403,13 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
     /* A new physical START is the ONLY place that may arm the VFD. */
     if (previous_state == STATE_READY && ctx->machine.state == STATE_RUNNING)
     {
-        if (!V20Modbus_Arm())
+        const bool feedback_ok = ctx->motor.ok && ctx->motor.ready &&
+            isfinite(ctx->motor.actual_hz) && ctx->motor.actual_hz >= 0 &&
+            ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
+            (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
+        if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
+            StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+        else if (!V20Modbus_Arm())
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
     }
 
@@ -413,22 +434,40 @@ static void Control_UpdateController(ControlContext *ctx)
     ctx->status.output = 0.0f;
     if (ctx->machine.state == STATE_RUNNING && ctx->clock_fault == FAULT_NONE)
     {
-        if (!ctx->curve_running)
-            ctx->curve_running =
-                SetpointCurve_Init(&ctx->curve, ctx->sample.value, SETPOINT_TRANSITION_TIME_S,
-                                   SETPOINT_MAX_ACCELERATION_MPS2, SETPOINT_MAX_JERK_MPS3);
-        if (!ctx->curve_running ||
-            !SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
-                                &ctx->status.control_setpoint) ||
-            !PIDregelaar(&ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
-                         ctx->sample.value, &ctx->status.output))
-        {
-            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
-            V20Modbus_Disarm();
+        if (ctx->status.mode == MODE_MANUAL) {
+            if (!ctx->frequency_running) {
+                ctx->frequency_running = ctx->motor.ok && isfinite(ctx->motor.actual_hz) &&
+                    ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
+                    (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS) &&
+                    SetpointCurve_Init(&ctx->frequency_curve, ctx->motor.actual_hz, 0.005f,
+                        MANUAL_MAX_SLEW_HZ_PER_S, MANUAL_MAX_ACCEL_HZ_PER_S2);
+                ctx->frequency_curve.max_third_derivative = MANUAL_MAX_JERK_HZ_PER_S3;
+            }
+            if (!ctx->frequency_running || !SetpointCurve_Step(&ctx->frequency_curve,
+                ctx->status.manual_hz, CONTROL_CLOCK_PERIOD_S, &ctx->status.applied_hz)) {
+                StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+                V20Modbus_Disarm();
+            } else ctx->status.output = 100.0f * ctx->status.applied_hz / V20_REFERENCE_HZ;
+        } else {
+            if (!ctx->curve_running)
+                ctx->curve_running =
+                    SetpointCurve_Init(&ctx->curve, ctx->sample.value, SETPOINT_TRANSITION_TIME_S,
+                                       SETPOINT_MAX_ACCELERATION_MPS2, SETPOINT_MAX_JERK_MPS3);
+            if (!ctx->curve_running ||
+                !SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
+                                    &ctx->status.control_setpoint) ||
+                !PIDregelaar(&ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
+                             ctx->sample.value, &ctx->status.output))
+            {
+                StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+                V20Modbus_Disarm();
+            }
         }
     }
     if (ctx->machine.state != STATE_RUNNING)
     {
+        ctx->frequency_running = false;
+        ctx->status.applied_hz = 0;
         ctx->curve_running = false;
         ctx->status.control_setpoint = ctx->sample.value;
         ctx->status.output = 0.0f;
@@ -533,6 +572,10 @@ static void Control_PublishStatus(ControlContext *ctx)
     if (!ctx->status.running)
         ctx->status.output = 0.0f;
 
+    ctx->status.output = fminf(100.0f * MANUAL_MAX_HZ / V20_REFERENCE_HZ,
+                              fmaxf(0.0f, ctx->status.output));
+    if (ctx->status.mode == MODE_AUTO)
+        ctx->status.applied_hz = ctx->status.output * V20_REFERENCE_HZ / 100.0f;
     const MotorRequest command = {.output = ctx->status.output,
                                   .tick = ctx->now_tick,
                                   .run = ctx->status.running,

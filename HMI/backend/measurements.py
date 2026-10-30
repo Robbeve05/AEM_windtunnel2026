@@ -68,7 +68,7 @@ class Measurements:
         self.meta = dict(id=identifier, name=name, timestamp=now.isoformat(), state='RECORDING',
                          samples=0, duration_s=0, average_airspeed_ms=0, exported=False,
                          recording_rate_hz=recording_rate_hz,
-                         pressure_reference='pitot differential Pa', sensor='ASPD-4525 via Arduino Uno', config=self.config.model_dump())
+                         pressure_reference='pitot differential Pa', sensor='SIMULATED' if self.config.simulation else 'ASPD-4525 via ESP32 Ethernet', config=self.config.model_dump())
         self.started = time.monotonic()
         self.first_recorded_monotonic = None
         self.last_recorded_monotonic = None
@@ -170,7 +170,9 @@ class Measurements:
                              average_airspeed_ms=self.total_speed / max(1, self.meta['samples']),
                              actual_sample_rate_hz=self._actual_sample_rate_hz())
             save_json(self.folder / 'experiment.json', self.meta)
-            # Cp processing is intentionally deferred until the pressure-tap hardware is commissioned.
+            # Simulation exports are separate from uncommissioned real pressure taps.
+            if self.meta['config'].get('simulation'):
+                self.recalculate(self.meta['id'], self.config.air_density)
             self.state = 'COMPLETED'
         except Exception as exc:
             self.fail(str(exc))
@@ -204,4 +206,31 @@ class Measurements:
         return result
 
     def recalculate(self, identifier: str, density: float):
-        raise ValueError('Cp calculation is in development until the pressure-tap system is connected')
+        folder = self.folder_for(identifier)
+        metadata = json.loads((folder / 'experiment.json').read_text(encoding='utf-8'))
+        if not metadata.get('config', {}).get('simulation'):
+            raise ValueError('Cp calculation is in development until the pressure-tap system is connected')
+        taps = metadata['config'].get('pressure_taps', [])
+        totals = [0.0 for _ in taps]
+        pressures = [0.0 for _ in taps]
+        counts = [0 for _ in taps]
+        with (folder / 'raw_data.csv').open(encoding='utf-8', newline='') as stream:
+            for row in csv.DictReader(stream):
+                sample = dict(airspeed_ms=float(row['airspeed_ms']),
+                    static_pressure_pa=float(row['static_pressure_pa']) if row['static_pressure_pa'] else None,
+                    pressure_pa=json.loads(row['pressure_pa']))
+                if sample['static_pressure_pa'] is None:
+                    continue
+                for i, point in enumerate(calculate_cp(sample, taps, density)):
+                    if point['cp'] is not None:
+                        totals[i] += point['cp']
+                        pressures[i] += point['pressure_pa']
+                        counts[i] += 1
+        curve = [dict(**tap, pressure_pa=pressures[i]/counts[i],
+                      cp=totals[i]/counts[i])
+                 for i, tap in enumerate(taps) if counts[i]]
+        with (folder / 'cp_curve.csv').open('w', encoding='utf-8', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=['name','x_c','surface','pressure_pa','cp'])
+            writer.writeheader()
+            writer.writerows(curve)
+        return curve

@@ -374,7 +374,7 @@ class HMIWindow(QMainWindow):
         self.mode_apply=QPushButton("Apply control mode (READY only)")
         self.mode_apply.clicked.connect(self._apply_mode)
         self.manual_hz=QDoubleSpinBox()
-        self.manual_hz.setRange(0,20)
+        self.manual_hz.setRange(0,50)
         self.manual_hz.setSuffix(" Hz")
         self.manual_apply=QPushButton("Apply frequency")
         self.manual_apply.clicked.connect(self._apply_hz)
@@ -1439,7 +1439,13 @@ class HMIWindow(QMainWindow):
             self.setpoint_initialized = False
         self.vfd_status_text.setText(
             "VFD: no current status" if stale else
-            f"VFD: {self._fixed(drive.get('actual_hz'), 2)} Hz"
+            f"Mode {drive.get('mode','UNKNOWN')} · Requested {self._fixed(drive.get('manual_hz'),2)} Hz"
+            f" · Ramped {self._fixed(drive.get('applied_hz'),2)} Hz"
+            f" · Actual VFD {self._fixed(drive.get('actual_hz') if drive.get('motor_ok') else None, 2)} Hz"
+            f" · Pitot {self._fixed(drive.get('pv') if drive.get('sensor_ok') else None,2)} m/s"
+            f" · AUTO target {self._fixed(drive.get('sp'),2)} m/s"
+            f" · Relay {drive.get('safety_relay_ok','UNKNOWN')} · Reset required {drive.get('reset_required','UNKNOWN')}"
+            f" · Pi/ESP32 {drive.get('pi_connected','UNKNOWN')}"
             f" · motor_ok={int(bool(drive.get('motor_ok')))}"
             f" · sensor_ok={int(bool(drive.get('sensor_ok')))}"
         )

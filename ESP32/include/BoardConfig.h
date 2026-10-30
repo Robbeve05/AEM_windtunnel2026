@@ -1,5 +1,6 @@
 #pragma once
 /* Verified Waveshare pinout; see MIGRATION.md. */
+#define BOARD_HEARTBEAT_LED_GPIO 38
 #define MODBUS_UART_PORT 1
 #define MODBUS_TX_PIN 17
 #define MODBUS_RX_PIN 18

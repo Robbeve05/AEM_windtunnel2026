@@ -92,6 +92,14 @@ static void process(const char *line)
         reply("ERR RANGE\n");
         return;
     }
+    if (c.type == CMD_MODE || c.type == CMD_FREQ) {
+        Telemetry current = {0};
+        if (xQueuePeek(telemetry, &current, 0) != pdTRUE ||
+            (c.type == CMD_MODE && (current.state == STATE_RUNNING || current.state == STATE_STOP)) ||
+            (c.type == CMD_FREQ && current.mode != MODE_MANUAL)) {
+            reply("ERR MODE_OR_STATE\n"); return;
+        }
+    }
     if (c.type == CMD_FILTER)
     {
         if (c.values[0] < 0.1f || c.values[0] > 10.0f)
@@ -209,6 +217,7 @@ void PiCommunicationTask(void *argument)
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s "
                     "sim=%d sp_ramp=%.3f"
+                    " mode=%s manual_hz=%.3f applied_hz=%.3f"
                     " pressure_pa=%.3f temperature_c=%.3f actual_hz=%.3f desired_hz=%.3f "
                     "drive_status=%u drive_fault=%d"
                     " control_hz=%.2f execution_us=%lu max_jitter_us=%lu missed_deadlines=%lu "
@@ -230,8 +239,9 @@ void PiCommunicationTask(void *argument)
                     (sample.valid &&
                      xTaskGetTickCount() - sample.tick < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS)),
                     t.motor_ok, t.setpoint, sample.value, t.output, t.reason, SIMULATION_MODE,
-                    t.control_setpoint, sample.pressure_pa, sample.temperature_c, motor.actual_hz,
-                    t.output * 0.5f, motor.status, !!(motor.status & 8), t.control_hz,
+                    t.control_setpoint, t.mode == MODE_MANUAL ? "MANUAL" : "AUTO",
+                    t.manual_hz, t.applied_hz, sample.pressure_pa, sample.temperature_c, motor.actual_hz,
+                    t.applied_hz, motor.status, !!(motor.status & 8), t.control_hz,
                     (unsigned long)t.execution_us, (unsigned long)t.max_jitter_us,
                     (unsigned long)t.missed_deadlines, (unsigned long)t.overruns,
                     (unsigned long)sample.errors, (unsigned long)motor.errors,

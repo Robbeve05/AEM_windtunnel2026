@@ -3,3 +3,6 @@
 build/
 sdkconfig.*
 !sdkconfig.defaults
+
+# Per-device OTA key and physical input configuration must stay local.
+include/OtaLocalConfig.h

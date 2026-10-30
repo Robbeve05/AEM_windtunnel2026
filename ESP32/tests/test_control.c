@@ -18,10 +18,12 @@ QueueHandle_t commands = &q[0], sensors = &q[1], motor_requests = &q[2], motor_s
 static EventBits_t button_bits, thread_bits, system_bits, stop_bits;
 EventGroupHandle_t handle_ButtonEventGroup = &button_bits, handle_ThreadEventGroup = &thread_bits,
                    handle_SystemEventGroup = &system_bits, events = &stop_bits;
-TaskHandle_t control_task_handle;
+TaskHandle_t control_task_handle, sensor_task_handle;
 static int64_t fake_us;
 static unsigned watchdog_resets, arms, disarms, timer_starts;
 static bool stop_confirmed;
+static TaskHandle_t notified[4];
+static unsigned notification_count;
 static MotorStatus drive = {.ready = true, .ok = true, .status = 0x0201};
 int64_t esp_timer_get_time(void)
 {
@@ -47,7 +49,7 @@ TickType_t xTaskGetTickCount(void)
 }
 void vTaskNotifyGiveFromISR(TaskHandle_t t, BaseType_t *w)
 {
-    (void)t;
+    notified[notification_count++]=t;
     (void)w;
 }
 uint32_t ulTaskNotifyTake(int clear, TickType_t wait)
@@ -123,7 +125,7 @@ int gptimer_new_timer(const gptimer_config_t *c, gptimer_handle_t *t)
 int gptimer_set_alarm_action(gptimer_handle_t t, const gptimer_alarm_config_t *a)
 {
     (void)t;
-    assert(a->alarm_count == 5000);
+    assert(a->alarm_count == 2500); /* Two 2.5ms phases produce 200Hz control. */
     return 0;
 }
 int gptimer_register_event_callbacks(gptimer_handle_t t, const gptimer_event_callbacks_t *c,
@@ -411,6 +413,52 @@ int main(void)
     xQueuePeek(motor_requests, &request, 0);
     assert(request.epoch == 42);
     puts("PASS timing boundaries, missed deadlines and state epoch publication");
+    healthy_context(&c);
+    PiCommand mode = {.type=CMD_MODE,.values={MODE_MANUAL}};
+    xQueueOverwrite(commands,&mode);
+    Control_ProcessCommands(&c,0);
+    assert(c.status.mode==MODE_MANUAL && !c.start && arms==1 && c.status.output==0);
+    c.machine.state=STATE_RUNNING;
+    mode.values[0]=MODE_AUTO;
+    xQueueOverwrite(commands,&mode);
+    Control_ProcessCommands(&c,0);
+    assert(c.status.mode==MODE_MANUAL);
+    c.machine.state=STATE_STOP;
+    xQueueOverwrite(commands,&mode);Control_ProcessCommands(&c,0);
+    assert(c.status.mode==MODE_MANUAL && arms==1);
+    c.machine.state=STATE_RUNNING;
+    c.motor.actual_hz=10; c.motor.tick=c.now_tick;
+    c.status.manual_hz=50;
+    c.sample.value=999; /* Would produce a PI error; MANUAL must ignore it. */
+    const Regelaar before=c.controller;
+    Control_UpdateController(&c);
+    assert(c.frequency_running && c.status.applied_hz>=10 && c.status.applied_hz<10.001f);
+    assert(memcmp(&before,&c.controller,sizeof(before))==0);
+    float previous_hz=c.status.applied_hz;
+    for(int n=0;n<3000;n++) {
+        if(n==100) c.status.manual_hz=0;
+        Control_UpdateController(&c);
+        assert(fabsf(c.status.applied_hz-previous_hz)<=2.0f*CONTROL_CLOCK_PERIOD_S+0.00001f);
+        previous_hz=c.status.applied_hz;
+        assert(c.frequency_curve.target==50); /* Latest request deferred. */
+    }
+    StateMachine_Fault(&c.machine,FAULT_EMERGENCY_STOP,c.now_ms);
+    Control_UpdateController(&c); Control_PublishStatus(&c);
+    assert(!c.frequency_running && c.status.output==0 && !((MotorRequest*)q[2].data)->run);
+    healthy_context(&c); c.status.mode=MODE_MANUAL;
+    c.safety.start_sequence=1;c.safety.start_ms=950;
+    c.motor.tick=c.now_tick-MOTOR_STATUS_TIMEOUT_MS;
+    Control_ProcessCommands(&c,0);Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_FAULT && arms==1);
+    healthy_context(&c);c.machine.state=STATE_RUNNING;c.sample.value=0;c.status.setpoint=10;
+    Control_UpdateController(&c);
+    assert(c.curve_running && !c.frequency_running && c.controller.motorHist.gevuld);
+    puts("PASS manual quintic, no PI in MANUAL, AUTO PI retained, deferred target, stale feedback inhibits arm, immediate fault bypass");
+    control_task_handle=(void*)1; sensor_task_handle=(void*)2;
+    for(unsigned n=0;n<4;n++) (void)ControlClockInterrupt(NULL,NULL,NULL);
+    assert(notified[0]==sensor_task_handle && notified[1]==control_task_handle &&
+           notified[2]==sensor_task_handle && notified[3]==control_task_handle);
+    puts("PASS alternating 2.5ms sensor/control phases preserve 5ms control period");
     puts("All focused control regression checks passed (mocked hardware/RTOS).");
     return 0;
 }

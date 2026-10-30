@@ -1,10 +1,17 @@
 /* Author: R.E. van Eekelen */
 #pragma once
 #include "BoardConfig.h"
+#ifdef __has_include
+#if __has_include("OtaLocalConfig.h")
+#include "OtaLocalConfig.h"
+#endif
+#endif
 #define CONTROL_FREQUENCY_HZ 200
-#define SENSOR_FREQUENCY_HZ 25
+#define SENSOR_FREQUENCY_HZ 20
+#define PITOT_AVERAGE_SAMPLES 10
 #define SENSOR_PERIOD_MS (1000 / SENSOR_FREQUENCY_HZ)
 #define SENSOR_TIMEOUT_MS 150
+#define TAP_TIMEOUT_MS 2000
 #define CONTROL_CLOCK_TIMEOUT_MS 50
 #define COMMAND_TIMEOUT_MS 2000
 #define TELEMETRY_PERIOD_MS 20
@@ -104,6 +111,9 @@
 #ifndef PI_HEARTBEAT_REQUIRED
 #define PI_HEARTBEAT_REQUIRED 1
 #endif
+#if defined(ALLOW_REMOTE_START) && ALLOW_REMOTE_START
+#error Remote START is prohibited; use the physical button
+#endif
 #ifndef ALLOW_REMOTE_START
 #define ALLOW_REMOTE_START 0
 #endif
@@ -131,4 +141,45 @@
 #endif
 #if CONTACTOR_FEEDBACK_FITTED && (CONTACTOR_OK_ACTIVE_LEVEL < 0 || CONTACTOR_OK_ACTIVE_LEVEL > 1)
 #error Commission the optional contactor feedback polarity before fitting it
+#endif
+
+#define V20_REFERENCE_HZ 50.0f
+#define MANUAL_MAX_HZ 50.0f
+#define MANUAL_MAX_SLEW_HZ_PER_S 2.0f
+#define MANUAL_MAX_ACCEL_HZ_PER_S2 0.5f
+#define MANUAL_MAX_JERK_HZ_PER_S3 0.5f
+#define SENSOR_PHASE_US 2500u
+#ifndef OTA_MAINTENANCE_ENABLED
+#define OTA_MAINTENANCE_ENABLED 0
+#endif
+#ifndef OTA_MAINTENANCE_GPIO
+#define OTA_MAINTENANCE_GPIO (-1)
+#endif
+#ifndef OTA_MAINTENANCE_ACTIVE_LEVEL
+#define OTA_MAINTENANCE_ACTIVE_LEVEL (-1)
+#endif
+#ifndef OTA_MOTOR_ISOLATED_GPIO
+#define OTA_MOTOR_ISOLATED_GPIO (-1)
+#endif
+#ifndef OTA_MOTOR_ISOLATED_ACTIVE_LEVEL
+#define OTA_MOTOR_ISOLATED_ACTIVE_LEVEL (-1)
+#endif
+#ifndef OTA_SHARED_SECRET
+#define OTA_SHARED_SECRET ""
+#endif
+#if OTA_MAINTENANCE_ENABLED && (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 || OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0)
+#error OTA requires two wired physical inputs
+#endif
+#if OTA_MAINTENANCE_ENABLED
+_Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at least 32 bytes");
+#endif
+
+#if OTA_MAINTENANCE_ENABLED
+#if !CONTACTOR_FEEDBACK_FITTED || !SAFETY_IO_COMMISSIONED
+#error OTA requires commissioned independent contactor and safety feedback
+#endif
+#if OTA_MAINTENANCE_GPIO == OTA_MOTOR_ISOLATED_GPIO || OTA_MAINTENANCE_ACTIVE_LEVEL > 1 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL > 1
+#error OTA requires distinct physical inputs and binary polarities
+#endif
+
 #endif

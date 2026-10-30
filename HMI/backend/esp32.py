@@ -35,9 +35,11 @@ def parse_status(line):
         except ValueError:
             return None
         out[key] = val
+    if out.get("mode") not in {"AUTO", "MANUAL"}:
+        return None
     if out.get("state") not in STATES or "fault" not in out:
         return None
-    if not {"pv", "sp", "sensor_ok", "motor_ok", "estop_pressed", "reset_required"} <= out.keys():
+    if not {"pv", "sp", "manual_hz", "applied_hz", "actual_hz", "sensor_ok", "motor_ok", "estop_pressed", "reset_required"} <= out.keys():
         return None
     return out
 
@@ -64,12 +66,19 @@ class ESP32Client:
                     pv=None, sp=None, out=None, warning="Fan may still be rotating.")
 
     async def command(self, command):
-        if command == "PING" or command in ("MODE AUTO","MODE MANUAL"):
+        if "\n" in command or "\r" in command:
+            raise ValueError("Commands must be one line")
+        if command in ("PING", "STOP") or command in ("MODE AUTO","MODE MANUAL"):
             pass
         elif re.fullmatch(r"FREQ [0-9]+(?:\.[0-9]{1,3})?",command):
-            if float(command.split()[1])>20: raise ValueError("Manual frequency too high")
+            if float(command.split()[1])>50: raise ValueError("Manual frequency too high")
         elif re.fullmatch(r"SETPOINT [0-9]+(?:\.[0-9]{1,3})?", command):
             pass
+            if float(command.split()[1]) > 30: raise ValueError("Setpoint too high")
+        elif command.startswith("PID "):
+            parts = command.split(" ")
+            if len(parts) != 4 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 1000 for v in parts[1:]):
+                raise ValueError("Invalid PID")
         elif command.startswith("FILTER "):
             try:
                 f = float(command.split(" ", 1)[1])

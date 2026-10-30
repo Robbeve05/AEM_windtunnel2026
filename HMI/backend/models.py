@@ -31,7 +31,7 @@ class Config(BaseModel):
 
 
 class ManualFrequency(BaseModel):
-    hz: float = Field(ge=0, le=20, allow_inf_nan=False)
+    hz: float = Field(ge=0, le=50, allow_inf_nan=False)
 
 class ControlMode(BaseModel):
     mode: Literal['AUTO','MANUAL']

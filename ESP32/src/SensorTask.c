@@ -1,46 +1,33 @@
-/*
- * SensorTask.c
- * Samples pressure data and publishes the latest measurements.
- *
- * Author: R.E. van Eekelen
+/* Author: R.E. van Eekelen. All I2C stays on Core 0, 2.5ms after control.
+ * Missed slots are never replayed. Last successful pitot time is authoritative.
  */
-///////////////////////////////////////////////////////////////////////////////
-// Includes
-
 #include "ApplicationTasks.h"
 #include "TaskData.h"
 #include "AppConfig.h"
 #include "PressureSensors.h"
-#include "freertos/task.h"
-#include <math.h>
 #include "esp_log.h"
-
-///////////////////////////////////////////////////////////////////////////////
-// void SensorTask(void *argument)
-/*
- * Announces initialization independently of sensor health or calibration.
- * Measurements and validity remain available through the one-element queue.
- */
-void SensorTask(void *argument)
-{
+#include <string.h>
+void SensorTask(void *argument) {
     (void)argument;
     bool ready = SensorLib_Init();
-    TickType_t last = xTaskGetTickCount();
-    uint32_t sequence = 0;
-    if (ready)
-        xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
-    else
-        ESP_LOGE("SensorTask", "Sensor initialization failed; startup remains inhibited");
-    for (;;)
-    {
-        Sample s = {.tick = xTaskGetTickCount()};
-        s.valid = ready && SensorLib_Read(&s.value) && isfinite(s.value) && s.value >= 0;
-        SensorLib_Details(&s);
-        s.sequence = ++sequence;
-        xQueueOverwrite(sensors, &s);
-        xEventGroupSetBits(handle_SystemEventGroup, EVT_SENSOR_UPDATED);
-        if (xTaskGetTickCount() - last >= pdMS_TO_TICKS(SENSOR_PERIOD_MS))
-            last = xTaskGetTickCount();
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(SENSOR_PERIOD_MS));
+    Sample taps = {0};
+    if (ready) xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
+    else ESP_LOGE("SensorTask", "Sensor initialization failed; startup inhibited");
+    for (;;) {
+        if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS)) || !ready) continue;
+        Sample sample = {0};
+        if (SensorLib_PitotStep(&sample)) {
+            memcpy(sample.taps, taps.taps, sizeof(sample.taps));
+            sample.taps_valid = taps.taps_valid;
+            memcpy(sample.tap_ticks, taps.tap_ticks, sizeof(sample.tap_ticks));
+            for (unsigned i=0;i<16;i++)
+                if ((TickType_t)(xTaskGetTickCount()-taps.tap_ticks[i]) >= pdMS_TO_TICKS(TAP_TIMEOUT_MS))
+                    sample.taps_valid &= (uint16_t)~(1u<<i);
+            sample.errors += taps.errors;
+            xQueueOverwrite(sensors, &sample);
+            xEventGroupSetBits(handle_SystemEventGroup, EVT_SENSOR_UPDATED);
+        }
+        /* One incremental mux/conversion operation, with no conversion delay. */
+        (void)SensorLib_TapsStep(&taps);
     }
 }

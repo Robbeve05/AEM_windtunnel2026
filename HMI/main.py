@@ -88,7 +88,8 @@ class Controller:
         )
 
     def sensor_fresh(self) -> bool:
-        return (self.esp32.fresh and bool(self.esp32_frame.get('sensor_ok'))) if self.esp32_mode else True
+        return bool(self.simulation or (self.esp32_mode and self.esp32 is not None and
+                    self.esp32.fresh and self.esp32_frame.get('sensor_ok') == 1))
 
     @property
     def setpoint(self):
@@ -302,7 +303,7 @@ async def select_frequency(body: ManualFrequency):
 @app.post('/api/tunnel/setpoint')
 async def setpoint(body: Setpoint):
     c = control()
-    if body.airspeed_ms > c.config.max_airspeed_ms:
+    if body.airspeed_ms > min(30.0, c.config.max_airspeed_ms):
         raise ValueError('Setpoint exceeds configured maximum wind speed')
     if c.esp32_mode:
         await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
@@ -310,7 +311,7 @@ async def setpoint(body: Setpoint):
         return c.status()
     if not c.simulation:
         raise ValueError('Airspeed setpoint control is unavailable in this mode')
-    if body.airspeed_ms > c.config.max_airspeed_ms:
+    if body.airspeed_ms > min(30.0, c.config.max_airspeed_ms):
         raise ValueError('Setpoint exceeds configured maximum wind speed')
     c.tunnel.setpoint = body.airspeed_ms
     c.event(f'Setpoint changed to {body.airspeed_ms:g} m/s')
@@ -363,7 +364,7 @@ async def measurement_file(identifier: str, filename: str):
 
 @app.post('/api/measurements/{identifier}/cp')
 async def recalculate(identifier: str, body: Recalculate):
-    raise ValueError('Cp calculation is in development until the pressure-tap system is connected')
+    return await asyncio.to_thread(control().measurements.recalculate, identifier, body.air_density)
 
 
 @app.get('/api/storage')

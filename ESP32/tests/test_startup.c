@@ -36,18 +36,27 @@ EventGroupHandle_t xEventGroupCreate(void)
 BaseType_t xTaskCreatePinnedToCore(void (*task)(void*),const char *name,unsigned stack,
                                  void *argument,unsigned priority,TaskHandle_t *handle,int core)
 {
-    assert(queue_count == 7 && group_count == 4 && task_count < 4 && argument == NULL);
+    assert(queue_count == 7 && group_count == 4 && task_count < 7 && argument == NULL);
     assert(commands && sensors && motor_requests && motor_status && telemetry && safety_status && pi_heartbeat);
     assert(events && handle_ButtonEventGroup && handle_ThreadEventGroup && handle_SystemEventGroup);
-    const unsigned stacks[] = {3072,4096,6144,6144}, priorities[] = {5,3,4,2};
-    const int cores[] = {0,0,1,0};
-    void (*tasks[])(void*) = {InputHandlerTask,SensorTask,ControlTask,PiCommunicationTask};
-    const char *names[] = {"InputHandler","SensorTask","ControlTask","PiCommunication"};
+    const unsigned stacks[] = {3072,4096,6144,6144,3072,8192,3072}, priorities[] = {5,3,4,2,1,1,1};
+    const int cores[] = {0,0,1,0,0,0,0};
+    void (*tasks[])(void*) = {InputHandlerTask,SensorTask,ControlTask,PiCommunicationTask,HeartbeatTask,OtaUpdateTask,OtaMarkValidTask};
+    const char *names[] = {"InputHandler","SensorTask","ControlTask","PiCommunication","Heartbeat","OTA","OTAValid"};
     assert(stack == stacks[task_count] && priority == priorities[task_count] && core == cores[task_count]);
     assert(task == tasks[task_count] && strcmp(name,names[task_count]) == 0);
     if (handle) *handle = (void*)1;
     task_count++;
     return pdPASS;
+}
+void HeartbeatTask(void *p) { (void)p; }
+void OtaUpdateTask(void *p) { (void)p; }
+void OtaMarkValidTask(void *p) { (void)p; }
+uint32_t ulTaskNotifyTake(int clear, TickType_t wait) {
+    (void)clear; (void)wait;
+    static unsigned calls;
+    if (++calls % 2 == 0) longjmp(task_finished,1);
+    return 1;
 }
 void ControlTask(void *argument) { (void)argument; }
 void PiCommunicationTask(void *argument) { (void)argument; }
@@ -83,13 +92,13 @@ void SafetyIO_PublishButtonEvents(const SafetySnapshot *current,const SafetySnap
     assert(published.tick_ms == current->tick_ms);
 }
 bool SensorLib_Init(void) { return sensor_init_ok; }
-bool SensorLib_Read(float *value) { *value=0;return false; } /* Calibration not complete. */
-void SensorLib_Details(Sample *sample) { (void)sample; }
+bool SensorLib_PitotStep(Sample *s) { *s=(Sample){.valid=false}; return true; }
+bool SensorLib_TapsStep(Sample *s) { (void)s; return false; }
 
 int main(void)
 {
     StartApplicationTasks();
-    assert(task_count == 4 && *handle_ThreadEventGroup == 0);
+    assert(task_count == 7 && *handle_ThreadEventGroup == 0);
     const unsigned sizes[] = {sizeof(SafetySnapshot),sizeof(PiHeartbeat),sizeof(PiCommand),
         sizeof(Sample),sizeof(MotorRequest),sizeof(MotorStatus),sizeof(Telemetry)};
     for (unsigned i=0;i<7;i++) assert(queues[i].size == sizes[i]);

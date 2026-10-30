@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 import main
 from backend.cp import calculate_cp
+from backend.models import Tap
 from backend.measurements import Measurements
 
 
@@ -74,6 +75,24 @@ class WorkflowTests(unittest.TestCase):
         self.post('storage/reconnect')
         self.post('storage/export-all')
         self.assertEqual(self.client.get('/api/measurements/' + started['id']).status_code,200)
+
+    def test_simulated_cp_and_real_cp_gate(self):
+        self.controller.config.pressure_taps = [Tap(
+            name='p1', x_c=0.5, surface='upper')]
+        m = self.controller.measurements
+        m.start('Simulated_Cp', 25)
+        m.append(dict(airspeed_ms=10.0, static_pressure_pa=100000,
+                      pressure_pa=[99950], errors=[]), 10.0)
+        result = m.stop()
+        curve = m.recalculate(result['id'], 1.0)
+        self.assertEqual(len(curve), 1)
+        self.assertAlmostEqual(curve[0]['cp'], -1.0)
+        meta_path = m.folder / 'experiment.json'
+        metadata = json.loads(meta_path.read_text())
+        metadata['config']['simulation'] = False
+        meta_path.write_text(json.dumps(metadata))
+        with self.assertRaises(ValueError):
+            m.recalculate(result['id'], 1.0)
 
     def test_no_remote_stop(self):
         self.assertEqual(self.client.post('/api/tunnel/stop').status_code, 400)

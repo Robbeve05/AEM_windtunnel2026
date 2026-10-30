@@ -17,6 +17,17 @@ bool I2CBus_Read(uint8_t a,uint8_t *p,size_t n) {
     bool ok=i2c_master_read_from_device(0,a,p,n,pdMS_TO_TICKS(I2C_TIMEOUT_MS))==ESP_OK;
     xSemaphoreGive(mutex); return ok;
 }
+/* Sensor slots never wait for the output task to release the mutex. */
+bool I2CBus_TryRead(uint8_t a,uint8_t *p,size_t n) {
+    if(!ready || xSemaphoreTake(mutex,0)!=pdTRUE) return false;
+    bool ok=i2c_master_read_from_device(0,a,p,n,pdMS_TO_TICKS(I2C_TIMEOUT_MS))==ESP_OK;
+    xSemaphoreGive(mutex); return ok;
+}
+bool I2CBus_TryWrite(uint8_t a,const uint8_t *p,size_t n) {
+    if(!ready || xSemaphoreTake(mutex,0)!=pdTRUE) return false;
+    bool ok=i2c_master_write_to_device(0,a,p,n,pdMS_TO_TICKS(I2C_TIMEOUT_MS))==ESP_OK;
+    xSemaphoreGive(mutex); return ok;
+}
 bool DigitalOutputs_Set(bool enabled) {
 #if SIMULATION_MODE
     (void)enabled; return true;

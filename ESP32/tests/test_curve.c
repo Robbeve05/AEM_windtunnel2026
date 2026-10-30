@@ -51,6 +51,26 @@ int main(void)
     assert(SetpointCurve_Init(&c,0,5,2,2));
     assert(!SetpointCurve_Step(&c,NAN,.001f,&out));
     assert(!SetpointCurve_Step(&c,10,0,&out));
+    c.max_third_derivative=NAN;
+    assert(!SetpointCurve_Step(&c,10,.005f,&out));
+    c.max_third_derivative=-1;
+    assert(!SetpointCurve_Step(&c,10,.005f,&out));
+    /* Frequency units: Hz, Hz/s, Hz/s2 and Hz/s3. Independent analytic derivatives. */
+    assert(SetpointCurve_Init(&c,0,.005f,2,.5f));
+    c.max_third_derivative=.5;
+    double last_hz=0;
+    do {
+        assert(SetpointCurve_Step(&c,50,.005f,&out));
+        double q=c.elapsed/c.duration, frequency_duration=c.duration;
+        double slew=50*30*q*q*(1-q)*(1-q)/frequency_duration;
+        double accel=50*(60*q-180*q*q+120*q*q*q)/(frequency_duration*frequency_duration);
+        double jerk=50*(60-360*q+360*q*q)/(frequency_duration*frequency_duration*frequency_duration);
+        assert(c.duration>=46.875 && fabs(slew)<=2.000001 && fabs(accel)<=.500001 && fabs(jerk)<=.500001);
+        assert(fabs(c.value-last_hz)<=.010001);
+        last_hz=c.value;
+    } while(c.elapsed<c.duration);
+    assert(out==50);
+    puts("PASS frequency quintic 0..50Hz endpoints, 2Hz/s peak, acceleration, jerk and continuity");
     puts("PASS: quintic profile endpoints, monotonicity, duration, acceleration/jerk limits, queued retarget, reset, invalid input");
     return 0;
 }

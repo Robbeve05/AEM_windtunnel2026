@@ -13,7 +13,9 @@ static double BerekenOvergangstijd(const SetpointCurve *curve, double verschil)
     const double afstand = fabs(verschil);
     const double tijd_versnelling = 1.875 * afstand / curve->max_acceleration;
     const double tijd_jerk = sqrt((10.0 / sqrt(3.0)) * afstand / curve->max_jerk);
-    return fmax(curve->requested_time, fmax(tijd_versnelling, tijd_jerk));
+    const double third = curve->max_third_derivative > 0 ?
+        cbrt(60.0 * afstand / curve->max_third_derivative) : 0;
+    return fmax(third, fmax(curve->requested_time, fmax(tijd_versnelling, tijd_jerk)));
 }
 
 /* q loopt van 0 naar 1. Waarde, versnelling en jerk sluiten aan op de eindpunten. */
@@ -59,7 +61,8 @@ bool SetpointCurve_Init(SetpointCurve *curve, float initial, float time,
 bool SetpointCurve_Step(SetpointCurve *curve, float target, float dt, float *output)
 {
     if (curve == NULL || output == NULL || !isfinite(target) || !isfinite(dt) ||
-        dt <= 0 || curve->requested_time <= 0 || curve->max_acceleration <= 0 ||
+        dt <= 0 || !isfinite(curve->max_third_derivative) || curve->max_third_derivative < 0 ||
+        curve->requested_time <= 0 || curve->max_acceleration <= 0 ||
         curve->max_jerk <= 0)
         return false;
 

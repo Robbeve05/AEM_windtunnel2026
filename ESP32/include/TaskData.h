@@ -7,12 +7,15 @@
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "StateMachine.h"
-typedef struct { float value,pressure_pa,temperature_c,taps[16]; uint16_t taps_valid; uint32_t errors,sequence; TickType_t tick; bool valid; } Sample;
+#include "PiProtocol.h"
+typedef struct { float value,pressure_pa,temperature_c,taps[16]; uint16_t taps_valid; TickType_t tap_ticks[16]; uint32_t errors,sequence; TickType_t tick; bool valid; } Sample;
 typedef struct { float output; TickType_t tick; bool run,permissive,coast; uint32_t epoch; } MotorRequest;
 typedef struct { bool ready,ok; float actual_hz; uint16_t status; uint32_t errors,timeouts; TickType_t tick; } MotorStatus;
 typedef struct { bool connected; TickType_t tick; } PiHeartbeat;
 typedef struct {
     float setpoint,measurement,output,control_setpoint;
+    OperatingMode mode;
+    float manual_hz,applied_hz;
     bool running,sensor_ok,motor_ok,pi_ok,reset_required;
     SystemState_t state; FaultReason_t fault,last_fault; SafetySnapshot safety;
     const char *reason;
@@ -24,6 +27,7 @@ typedef struct {
 extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat;
 extern EventGroupHandle_t events;
 extern TaskHandle_t control_task_handle;
+extern TaskHandle_t sensor_task_handle;
 #define STOP_REQUEST BIT0
 void InputHandlerTask(void *argument);
 void ControlTask(void *argument);

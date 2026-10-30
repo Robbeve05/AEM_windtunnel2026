@@ -10,6 +10,8 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'ota_safety'; Sources = @('tests\test_ota_safety.c'); Flags = '' },
+    @{ Name = 'sensors'; Sources = @('tests\test_sensors.c', 'src\PressureSensors.c'); Flags = '/DPRESSURE_TAPS_ENABLED=1 /DABP2_ADDRESS=0x29 /DABP2_MIN_PA=0 /DABP2_MAX_PA=1000 /DABP2_OUTPUT_MIN=1677722 /DABP2_OUTPUT_MAX=15099494' },
     @{ Name = 'core'; Sources = @('tests\test_core.c', 'src\Regelaar.c', 'src\PiProtocol.c'); Flags = '' },
     @{ Name = 'curve'; Sources = @('tests\test_curve.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'v20'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },
@@ -33,6 +35,6 @@ $batch = Join-Path $output 'run-tests.cmd'
 $lines | Set-Content -LiteralPath $batch -Encoding ascii
 Push-Location $output
 try {
-    & cmd.exe /d /c run-tests.cmd
+    & cmd.exe /d /s /c ('call "' + $batch + '"')
     if ($LASTEXITCODE -ne 0) { throw 'Host regression tests failed.' }
 } finally { Pop-Location }

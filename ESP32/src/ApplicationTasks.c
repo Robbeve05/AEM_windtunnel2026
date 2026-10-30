@@ -8,6 +8,8 @@
 // Includes
 
 #include "ApplicationTasks.h"
+#include "OtaUpdate.h"
+void HeartbeatTask(void *argument);
 #include "SafetyIO.h"
 #include "I2CBus.h"
 #include "TaskData.h"
@@ -27,6 +29,7 @@ EventGroupHandle_t handle_ButtonEventGroup;
 EventGroupHandle_t handle_ThreadEventGroup;
 EventGroupHandle_t handle_SystemEventGroup;
 TaskHandle_t control_task_handle;
+TaskHandle_t sensor_task_handle;
 
 ///////////////////////////////////////////////////////////////////////////////
 // static void InitHardware(void)
@@ -88,8 +91,8 @@ static void CreateTasks(void)
         xTaskCreatePinnedToCore(InputHandlerTask, "InputHandler", 3072, NULL, 5, NULL, 0) == pdPASS
             ? ESP_OK
             : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3, NULL, 0) ==
-                            pdPASS
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3,
+                                            &sensor_task_handle, 0) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(ControlTask, "ControlTask", 6144, NULL, 4,
@@ -97,6 +100,18 @@ static void CreateTasks(void)
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 6144, NULL, 2,
+                                            NULL, 0) == pdPASS
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(HeartbeatTask, "Heartbeat", 3072, NULL, 1,
+                                            NULL, 0) == pdPASS
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaUpdateTask, "OTA", 8192, NULL, 1,
+                                            NULL, 0) == pdPASS
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaMarkValidTask, "OTAValid", 3072, NULL, 1,
                                             NULL, 0) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);

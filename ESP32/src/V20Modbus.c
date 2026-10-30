@@ -43,6 +43,8 @@
 #ifndef V20_EXPECTED_REFERENCE_CENTIHZ
 #define V20_EXPECTED_REFERENCE_CENTIHZ 5000
 #endif
+_Static_assert(V20_EXPECTED_REFERENCE_CENTIHZ == 5000, "V20 reference must remain 50 Hz");
+_Static_assert(V20_REFERENCE_HZ == 50.0f && MANUAL_MAX_HZ <= 50.0f, "50 Hz command ceiling required");
 #ifndef V20_RESPONSE_TIMEOUT_MS
 #define V20_RESPONSE_TIMEOUT_MS MODBUS_RESPONSE_TIMEOUT_MS
 #endif
@@ -288,7 +290,7 @@ static void accept_reply(int64_t now_us)
         d.status_word = get_word(&d.rx[3]);
         const uint16_t raw = get_word(&d.rx[5]);
         const int32_t signed_raw = raw < 32768u ? (int32_t)raw : (int32_t)raw - 65536;
-        d.actual_hz = (float)signed_raw * 50.0f / 16384.0f;
+        d.actual_hz = (float)signed_raw * V20_REFERENCE_HZ / 16384.0f;
         d.drive_ready = status_word_healthy(d.status_word);
         d.status_valid = true;
         d.last_status_us = now_us;
@@ -336,7 +338,7 @@ static void simulate_response(int64_t now_us)
         d.rx[2] = (uint8_t)(2 * d.active_count);
         if (d.active_operation == OP_READ_STATUS) {
             put_word(&d.rx[3], 0x0201u);
-            put_word(&d.rx[5], (uint16_t)lroundf(d.actual_hz * 16384.0f / 50.0f));
+            put_word(&d.rx[5], (uint16_t)lroundf(d.actual_hz * 16384.0f / V20_REFERENCE_HZ));
         } else put_word(&d.rx[3], value);
         d.rx_used = d.rx_expected;
     }
@@ -459,7 +461,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         (TickType_t)(xTaskGetTickCount() - request->tick) <
             pdMS_TO_TICKS(V20_MAX_REQUEST_AGE_MS);
     const bool valid_percent = request != NULL && isfinite(request->output) &&
-        request->output >= 0.0f && request->output <= 100.0f;
+        request->output >= 0.0f && request->output <= (100.0f * MANUAL_MAX_HZ / V20_REFERENCE_HZ);
     const bool requested_run = fresh && valid_percent && request->run;
     if (!safety_ok || !fresh || !valid_percent || !requested_run) {
         /* A normal non-running request disarms motor output, never re-arms it. */

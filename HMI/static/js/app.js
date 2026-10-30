@@ -118,7 +118,7 @@ function onFrame(frame){
       detail.textContent=drive.stale?'ESP32 telemetry unavailable. Fan may still rotate.':
         drive.fault==='EMERGENCY_STOP'?
           (drive.estop_pressed?'EMERGENCY STOP PRESSED - fan coasting':'EMERGENCY STOP RELEASED - physical RESET required; fan may still rotate'):
-          'VFD '+fixed(drive.actual_hz,2)+' Hz · Setpoint '+fixed(drive.sp,2)+' m/s · Fault '+drive.fault;
+          `Mode ${drive.mode} · Requested ${fixed(drive.manual_hz,2)} Hz · Ramped ${fixed(drive.applied_hz,2)} Hz · Actual VFD ${(drive.motor_ok?fixed(drive.actual_hz,2):'UNKNOWN')} Hz · Pitot ${drive.sensor_ok?fixed(drive.pv,2):'UNKNOWN'} m/s · AUTO ${fixed(drive.sp,2)} m/s · V20 ${drive.motor_ok?'OK':'FAULT'} · Sensors ${drive.sensor_ok?'OK':'INVALID'} · E-stop ${drive.estop_pressed?'PRESSED':'RELEASED'} · Relay ${drive.safety_relay_ok?'OK':'OFF'} · Reset ${drive.reset_required?'REQUIRED':'NO'} · Pi/ESP32 ${drive.pi_connected?'CONNECTED':'DISCONNECTED'} · Fault ${drive.fault}`;
       detail.dataset.state=drive.stale?'UNKNOWN':drive.fault==='EMERGENCY_STOP'?
         (drive.estop_pressed?'ESTOP_PRESSED':'ESTOP_RELEASED'):drive.state;
     }
