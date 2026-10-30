@@ -480,35 +480,34 @@ static void Control_UpdateController(ControlContext *ctx)
                                        SETPOINT_MAX_ACCELERATION_MPS2, SETPOINT_MAX_JERK_MPS3);
             if (ctx->curve_running && ctx->curve.elapsed == 0.0)
                 ctx->previous_ff_setpoint = ctx->sample.value;
-            if (!ctx->curve_running ||
-                !SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
-                                    &ctx->status.control_setpoint) ||
-                !PIDregelaar(&ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
-                             ctx->sample.value, &ctx->status.output))
-            {
-                StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
-                V20Modbus_Disarm();
-            }
+            bool valid = ctx->curve_running &&
+                SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
+                                   &ctx->status.control_setpoint);
+            if (valid) {
+                float feedforward_pct = 0.0f;
 #if V20_FEEDFORWARD_ENABLED
-            else {
-                /* Reference feedforward is frequency-based, not torque-based.
-                 * Keep the PID as the feedback correction. This is disabled by
-                 * default until the nominal map and V20 dynamics are tested. */
+                /* Feedforward in Hz from the reference trajectory, converted to
+                 * percent of the V20 reference. No rotor-speed estimate needed.
+                 * Calibration required before commissioning this option. */
                 const float dv_dt = (ctx->status.control_setpoint - ctx->previous_ff_setpoint)
                                     / CONTROL_CLOCK_PERIOD_S;
-                const float demand_hz = V20_FF_STATIC_HZ_PER_MS * ctx->status.control_setpoint +
-                                        V20_FF_ACCEL_HZ_PER_MS2 * dv_dt;
-                const float ff_pct = 100.0f * demand_hz / V20_REFERENCE_HZ;
-                if (!isfinite(ff_pct) || ff_pct < 0.0f) {
-                    StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
-                    V20Modbus_Disarm();
-                    ctx->status.output = 0.0f;
-                } else {
-                    const float combined = ff_pct + ctx->status.output;
-                    ctx->status.output = fminf(MAX_OUTPUT, fmaxf(0.0f, combined));
-                }
-            }
+                const float demand_hz =
+                    V20_FF_STATIC_HZ_PER_MS * ctx->status.control_setpoint +
+                    V20_FF_ACCEL_HZ_PER_MS2 * dv_dt;
+                feedforward_pct = 100.0f * demand_hz / V20_REFERENCE_HZ;
+                valid = isfinite(feedforward_pct) && feedforward_pct >= 0.0f &&
+                        feedforward_pct <= MAX_OUTPUT;
 #endif
+                if (valid)
+                    valid = PIDregelaarMetFeedforward(
+                        &ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
+                        ctx->sample.value, feedforward_pct, &ctx->status.output);
+            }
+            if (!valid) {
+                StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+                V20Modbus_Disarm();
+                ctx->status.output = 0.0f;
+            }
             ctx->previous_ff_setpoint = ctx->status.control_setpoint;
         }
     }
