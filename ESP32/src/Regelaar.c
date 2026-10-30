@@ -141,14 +141,15 @@ bool Regelaar_Instellen(Regelaar *regelaar, float Kp, float Ki, float Kd,
  * u[n] = u[n-1] + (Kp+Ki*Tsample/2)*e[n] + (-Kp+Ki*Tsample/2)*e[n-1].
  * Separate P and I permit anti-windup. PI does not need e_2/u_2.
  */
-bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
+bool PIDregelaarMetFeedforward(Regelaar *regelaar, float error, float meting,
+                               float feedforward_pct, float *uitgang)
 {
     if (uitgang == NULL)
         return false;
     *uitgang = 0.0f;
     if (regelaar == NULL)
         return false;
-    if (!isfinite(error) || !isfinite(meting))
+    if (!isfinite(error) || !isfinite(meting) || !isfinite(feedforward_pct))
     {
         removeRegelaarHistory(regelaar);
         return false;
@@ -159,7 +160,7 @@ bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
     const float delta_i = BerekenIntegratieStap(regelaar, error);
     float i_0 = regelaar->motorHist.i_1 + delta_i;
     const float d_0 = BerekenDTerm(regelaar, meting);
-    float u_0 = p_0 + i_0 + d_0;
+    float u_0 = feedforward_pct + p_0 + i_0 + d_0;
     if (!isfinite(i_0) || !isfinite(d_0) || !isfinite(u_0))
     {
         removeRegelaarHistory(regelaar);
@@ -170,7 +171,7 @@ bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
     if (!IntegratieToegestaan(regelaar, u_0, delta_i))
     {
         i_0 = regelaar->motorHist.i_1;
-        u_0 = p_0 + i_0 + d_0;
+        u_0 = feedforward_pct + p_0 + i_0 + d_0;
     }
     if (!isfinite(u_0))
     {
@@ -192,4 +193,10 @@ void removeRegelaarHistory(Regelaar *regelaar)
     if (regelaar == NULL)
         return;
     regelaar->motorHist = (MotorIOhistory_t){0};
+}
+
+/* Legacy API: no feedforward, same combined-limit anti-windup. */
+bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang)
+{
+    return PIDregelaarMetFeedforward(regelaar, error, meting, 0.0f, uitgang);
 }
