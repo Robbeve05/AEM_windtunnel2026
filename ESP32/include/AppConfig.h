@@ -200,6 +200,23 @@
 // [dimensionless, preliminary design choice] Bandwidth-to-PI-zero ratio; increasing places the
 // PI zero at a lower frequency.
 #define PI_ZERO_DIVISOR     (10.0f)
+// 07A. THEORETICAL ONE-MASS CONTROLLER DESIGN (NOT V20 GAINS)
+// Enter actual shaft inertias independently; zero means unknown/not configured.
+#define J_MOTOR_KGM2 (0.0f)
+#define J_FAN_KGM2 (0.0f)
+// Additive airspeed output disturbance specification.
+#define DISTURBANCE_FREQUENCY_HZ (0.02f)
+#define DISTURBANCE_AMPLITUDE_MS (5.0f)
+#define ALLOWABLE_ERROR_MS (0.5f)
+// Nominal speed for local angular-to-airspeed conversion.
+#define DESIGN_NOMINAL_RPM (1450.0f)
+#define DESIGN_MIN_PHASE_MARGIN_DEG (45.0f)
+// Theoretical torque-model gains must not command the frequency-controlled V20.
+#define THEORETICAL_PID_DEPLOYMENT (0)
+#if THEORETICAL_PID_DEPLOYMENT != 0
+#error Theoretical torque PID must not be deployed to V20
+#endif
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // 08. PITOT SENSOR
