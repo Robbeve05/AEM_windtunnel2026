@@ -30,3 +30,8 @@ void removeRegelaarHistory(Regelaar *regelaar);
  * meting supplies the optional derivative without setpoint kick.
  * false indicates invalid calculation; output is then zero. */
 bool PIDregelaar(Regelaar *regelaar, float error, float meting, float *uitgang);
+
+/* PID and reference feedforward share the same output saturation and anti-windup.
+ * Units: both output and feedforward_pct in percent of V20 reference frequency. */
+bool PIDregelaarMetFeedforward(Regelaar *regelaar, float error, float meting,
+                               float feedforward_pct, float *uitgang);
