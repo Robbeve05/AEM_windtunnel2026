@@ -33,6 +33,8 @@
 #include "AppConfig.h"
 #include "PiProtocol.h"
 #include "Regelaar.h"
+#include "RegelaarDesign.h"
+#include "esp_log.h"
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
 #include "SafetyIO.h"
@@ -164,6 +166,28 @@ static void Control_Init(ControlContext *ctx)
     *ctx = (ControlContext){0};
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    /* Theory-only design is calculated once, before entering the control loop.
+     * Its torque-input gains are never passed to the V20 frequency controller. */
+    const RegelaarDesignInput design_input = {
+        .jm=J_MOTOR_KGM2, .jfan=J_FAN_KGM2,
+        .frequency_hz=DISTURBANCE_FREQUENCY_HZ,
+        .disturbance_ms=DISTURBANCE_AMPLITUDE_MS,
+        .error_ms=ALLOWABLE_ERROR_MS,
+        .nominal_rpm=DESIGN_NOMINAL_RPM,
+        .nominal_airspeed_ms=LUCHTSNELHEID_NOM,
+        .sample_s=CONTROL_CLOCK_PERIOD_S,
+        .minimum_pm_deg=DESIGN_MIN_PHASE_MARGIN_DEG
+    };
+    RegelaarDesignOutput design = {0};
+    if (RegelaarDesign_Calculate(&design_input, &design)) {
+        ESP_LOGI("PID_DESIGN", "THEORY ONLY: J=%g Kp=%g Ki=%g Kd=%g Ti=%g Td=%g Tf=%g wb=%g wc=%g PM=%g error=%g",
+            (double)design.j, (double)design.kp, (double)design.ki,
+            (double)design.kd, (double)design.ti, (double)design.td,
+            (double)design.tf, (double)design.wb, (double)design.wc,
+            (double)design.pm_deg, (double)design.error_ms);
+    } else {
+        ESP_LOGW("PID_DESIGN", "Theory-only one-mass design unavailable or invalid; physical V20 PI unchanged");
+    }
     ESP_ERROR_CHECK(Regelaar_INIT(&ctx->controller, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
