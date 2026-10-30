@@ -213,6 +213,22 @@
 #define DESIGN_MIN_PHASE_MARGIN_DEG (45.0f)
 // Theoretical torque-model gains must not command the frequency-controlled V20.
 #define THEORETICAL_PID_DEPLOYMENT (0)
+// 07B. FREQUENCY FEEDFORWARD (AIRSPEED -> V20 OUTPUT PERCENT)
+// Disabled until the static 50-Hz / 40-m/s mapping and closed-loop behavior
+// have been measured. Enabling changes control action; bench-test first.
+// [0/1] Feedforward sums a reference-based command with the PID correction.
+#define V20_FEEDFORWARD_ENABLED (0)
+// [Hz per (m/s)] Static feedforward from reference airspeed to V20 frequency.
+// This preliminary approximation uses the nominal point, not a fitted fan curve.
+#define V20_FF_STATIC_HZ_PER_MS (FREQUENTIE_NOM / LUCHTSNELHEID_NOM)
+// [Hz per (m/s2)] Dynamic feedforward for airspeed reference acceleration.
+// Default 0: inertia-derived torque cannot be converted to Hz without a
+// validated VFD/motor torque-slip model.
+#define V20_FF_ACCEL_HZ_PER_MS2 (0.0f)
+#if V20_FEEDFORWARD_ENABLED != 0 && V20_FEEDFORWARD_ENABLED != 1
+#error V20_FEEDFORWARD_ENABLED must be 0 or 1
+#endif
+
 #if THEORETICAL_PID_DEPLOYMENT != 0
 #error Theoretical torque PID must not be deployed to V20
 #endif
