@@ -210,6 +210,31 @@
 #define ALLOWABLE_ERROR_MS (0.5f)
 // Nominal speed for local angular-to-airspeed conversion.
 #define DESIGN_NOMINAL_RPM (1450.0f)
+// Local induction-motor torque/slip approximation, SIMULATION ONLY.
+// Nameplate: four poles, 50 Hz, 1450 rpm, 4000 W shaft output.
+// Slip slope is a SECANT estimate, not the identified local motor slope.
+// Do not treat nameplate-derived values as validated V20 characteristics.
+#define MOTOR_MODEL_POLE_PAIRS (2.0f)
+#define MOTOR_MODEL_RATED_FREQUENCY_HZ (50.0f)
+#define MOTOR_MODEL_RATED_POWER_W (4000.0f)
+#define MOTOR_MODEL_RATED_RPM (1450.0f)
+// [Nm/(rad/s)] Calculated from the rated slip and rated shaft torque.
+#define MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S \
+ ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) / \
+ ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_FREQUENCY_HZ / MOTOR_MODEL_POLE_PAIRS) - \
+  (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
+// [Nm] Simplified fan load T_load = Kload*omega*abs(omega).
+// Derived only from rated motor torque and speed; operating-point assumption.
+#define MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2 \
+ ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) / \
+ ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f) * \
+  (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
+// Real V20 torque-to-frequency conversion remains forbidden in firmware.
+#define MOTOR_MODEL_TORQUE_TO_V20_ENABLED (0)
+#if MOTOR_MODEL_TORQUE_TO_V20_ENABLED != 0
+#error Unidentified slip model must never command the real V20
+#endif
+
 #define DESIGN_MIN_PHASE_MARGIN_DEG (45.0f)
 // Theoretical torque-model gains must not command the frequency-controlled V20.
 #define THEORETICAL_PID_DEPLOYMENT (0)
