@@ -33,6 +33,8 @@
 #include "AppConfig.h"
 #include "PiProtocol.h"
 #include "Regelaar.h"
+#include "RegelaarDesign.h"
+#include "esp_log.h"
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
 #include "SafetyIO.h"
@@ -71,6 +73,7 @@ typedef struct
     uint32_t previous_start_sequence;
     uint32_t previous_reset_sequence;
     bool curve_running;
+    float previous_ff_setpoint;
     bool v20_initialized;
     uint32_t cycles;
     int64_t window_start_us;
@@ -164,6 +167,28 @@ static void Control_Init(ControlContext *ctx)
     *ctx = (ControlContext){0};
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    /* Theory-only design is calculated once, before entering the control loop.
+     * Its torque-input gains are never passed to the V20 frequency controller. */
+    const RegelaarDesignInput design_input = {
+        .jm=J_MOTOR_KGM2, .jfan=J_FAN_KGM2,
+        .frequency_hz=DISTURBANCE_FREQUENCY_HZ,
+        .disturbance_ms=DISTURBANCE_AMPLITUDE_MS,
+        .error_ms=ALLOWABLE_ERROR_MS,
+        .nominal_rpm=DESIGN_NOMINAL_RPM,
+        .nominal_airspeed_ms=LUCHTSNELHEID_NOM,
+        .sample_s=CONTROL_CLOCK_PERIOD_S,
+        .minimum_pm_deg=DESIGN_MIN_PHASE_MARGIN_DEG
+    };
+    RegelaarDesignOutput design = {0};
+    if (RegelaarDesign_Calculate(&design_input, &design)) {
+        ESP_LOGI("PID_DESIGN", "THEORY ONLY: J=%g Kp=%g Ki=%g Kd=%g Ti=%g Td=%g Tf=%g wb=%g wc=%g PM=%g error=%g",
+            (double)design.j, (double)design.kp, (double)design.ki,
+            (double)design.kd, (double)design.ti, (double)design.td,
+            (double)design.tf, (double)design.wb, (double)design.wc,
+            (double)design.pm_deg, (double)design.error_ms);
+    } else {
+        ESP_LOGW("PID_DESIGN", "Theory-only one-mass design unavailable or invalid; physical V20 PI unchanged");
+    }
     ESP_ERROR_CHECK(Regelaar_INIT(&ctx->controller, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
@@ -453,6 +478,8 @@ static void Control_UpdateController(ControlContext *ctx)
                 ctx->curve_running =
                     SetpointCurve_Init(&ctx->curve, ctx->sample.value, SETPOINT_TRANSITION_TIME_S,
                                        SETPOINT_MAX_ACCELERATION_MPS2, SETPOINT_MAX_JERK_MPS3);
+            if (ctx->curve_running && ctx->curve.elapsed == 0.0)
+                ctx->previous_ff_setpoint = ctx->sample.value;
             if (!ctx->curve_running ||
                 !SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
                                     &ctx->status.control_setpoint) ||
@@ -462,6 +489,27 @@ static void Control_UpdateController(ControlContext *ctx)
                 StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
                 V20Modbus_Disarm();
             }
+#if V20_FEEDFORWARD_ENABLED
+            else {
+                /* Reference feedforward is frequency-based, not torque-based.
+                 * Keep the PID as the feedback correction. This is disabled by
+                 * default until the nominal map and V20 dynamics are tested. */
+                const float dv_dt = (ctx->status.control_setpoint - ctx->previous_ff_setpoint)
+                                    / CONTROL_CLOCK_PERIOD_S;
+                const float demand_hz = V20_FF_STATIC_HZ_PER_MS * ctx->status.control_setpoint +
+                                        V20_FF_ACCEL_HZ_PER_MS2 * dv_dt;
+                const float ff_pct = 100.0f * demand_hz / V20_REFERENCE_HZ;
+                if (!isfinite(ff_pct) || ff_pct < 0.0f) {
+                    StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+                    V20Modbus_Disarm();
+                    ctx->status.output = 0.0f;
+                } else {
+                    const float combined = ff_pct + ctx->status.output;
+                    ctx->status.output = fminf(MAX_OUTPUT, fmaxf(0.0f, combined));
+                }
+            }
+#endif
+            ctx->previous_ff_setpoint = ctx->status.control_setpoint;
         }
     }
     if (ctx->machine.state != STATE_RUNNING)
@@ -469,6 +517,7 @@ static void Control_UpdateController(ControlContext *ctx)
         ctx->frequency_running = false;
         ctx->status.applied_hz = 0;
         ctx->curve_running = false;
+        ctx->previous_ff_setpoint = ctx->sample.value;
         ctx->status.control_setpoint = ctx->sample.value;
         ctx->status.output = 0.0f;
         removeRegelaarHistory(&ctx->controller);
