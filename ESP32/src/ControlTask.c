@@ -34,6 +34,7 @@
 #include "PiProtocol.h"
 #include "Regelaar.h"
 #include "RegelaarDesign.h"
+#include "TorqueLoadControl.h"
 #include "esp_log.h"
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
@@ -59,6 +60,9 @@ typedef struct
 typedef struct
 {
     Regelaar controller;
+    TorqueLoadControl torque_controller;
+    TorqueLoadOutput torque_diagnostics;
+    bool torque_model_ready;
     SetpointCurve curve;
     SetpointCurve frequency_curve;
     bool frequency_running;
@@ -181,6 +185,8 @@ static void Control_Init(ControlContext *ctx)
     };
     RegelaarDesignOutput design = {0};
     if (RegelaarDesign_Calculate(&design_input, &design)) {
+        ctx->torque_model_ready =
+            TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S);
         ESP_LOGI("PID_DESIGN", "THEORY ONLY: J=%g Kp=%g Ki=%g Kd=%g Ti=%g Td=%g Tf=%g wb=%g wc=%g PM=%g error=%g",
             (double)design.j, (double)design.kp, (double)design.ki,
             (double)design.kd, (double)design.ti, (double)design.td,
@@ -341,6 +347,8 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
                 ctx->frequency_running = ctx->curve_running = false;
                 removeRegelaarHistory(&ctx->controller);
+        if (ctx->torque_model_ready) TorqueLoadControl_Reset(&ctx->torque_controller);
+        ctx->torque_diagnostics = (TorqueLoadOutput){0};
                 ctx->start = false;
             }
             break;
@@ -483,6 +491,24 @@ static void Control_UpdateController(ControlContext *ctx)
             bool valid = ctx->curve_running &&
                 SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
                                    &ctx->status.control_setpoint);
+            /* Parallel model-based torque calculation from load-side pitot
+             * speed and reference acceleration. The result is diagnostic only,
+             * NEVER forwarded to V20 while torque->Hz dynamics are unverified.
+             * The actual V20 command is still the frequency-domain PI below. */
+            if (valid && ctx->torque_model_ready) {
+                const float ref_accel_ms2 =
+                    (ctx->status.control_setpoint - ctx->previous_ff_setpoint) /
+                    CONTROL_CLOCK_PERIOD_S;
+                if (!TorqueLoadControl_Step(
+                        &ctx->torque_controller, ctx->status.control_setpoint,
+                        ctx->sample.value, ref_accel_ms2,
+                        MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
+                        &ctx->torque_diagnostics)) {
+                    ctx->torque_model_ready = false;
+                    ctx->torque_diagnostics = (TorqueLoadOutput){0};
+                    ESP_LOGE("TORQUE_MODEL", "Torque diagnostic invalid; disabled");
+                }
+            }
             if (valid) {
                 float feedforward_pct = 0.0f;
 #if V20_FEEDFORWARD_ENABLED
