@@ -1,6 +1,6 @@
 # Siemens SINAMICS V20 via Modbus RTU
 
-Voor 6SL3210-5BE25-5UV1. De implementatie gebruikt UART1 en de ingebouwde geïsoleerde RS485-transceiver; er wordt geen Modbus TCP gebruikt. De drive wordt niet door deze software gecommissioned of automatisch van storingen gereset.
+Voor 6SL3210-5BE25-5UV1. De implementatie gebruikt **115200 baud, 8E1, slave 1** via UART1 en de ingebouwde geïsoleerde RS485-transceiver; er wordt geen Modbus TCP gebruikt. De drive wordt niet door deze software gecommissioned of automatisch van storingen gereset.
 
 ## Aansluiten en configureren
 
@@ -15,7 +15,7 @@ Stel de actieve command/data set van de V20 passend in:
 | P2023 | 2, Modbus; daarna voorgeschreven power-cycle |
 | P2021 | 1, slave-adres |
 | P2022 | 20 ms maximale antwoordvorming; ESP32 wacht 80 ms inclusief ontvangst |
-| P2010[0] | 6, 9600 baud |
+| P2010[0] | **Instellen volgens 115200 baud** uit `AppConfig.h`; verifieer de exacte Siemens parametercodering op de drive |
 | P2034 / P2035 | 2 / 1, even parity / 1 stopbit (8E1) |
 | P2000 | 50 Hz referentiefrequentie |
 | P2014[0] | 500 ms telegramwatchdog; init schrijft en verifieert dit |
@@ -34,7 +34,7 @@ Controleer motorgegevens, toegestane maximumfrequentie, draairichting en P1120/P
 
 FC16 schrijft STW en HSW samen. FC03 leest status/waarden; FC06 stelt de watchdog in. Bytevolgorde: registers big-endian, CRC little-endian. Init stuurt eerst STOP en weigert een andere P2000. De statuscontrole vereist ready-to-switch-on en remote-control, zonder fault of switch-on-inhibit. Operation-enabled is niet verplicht bij stilstand. Een start met 0% blijft een RUN-opdracht; STOP gebruikt altijd OFF1 en nul HSW.
 
-Iedere opdracht krijgt een begrensde response-wachttijd van 80 ms, plus zend- en framepauze. De drive moet binnen die termijn antwoorden; meet dit bij ingebruikname. P2022=20 ms voorkomt dat een veel later gevormd antwoord bij een volgende aanvraag terechtkomt. Een aanvraag kan bij overschrijding al uitgevoerd zijn, daarom volgt bij ontbrekende bevestiging STOP. Late antwoorden na timeout worden uitgefilterd met een extra wachttijd. Slave, functie, lengte, bytecount, schrijfbevestiging en CRC worden gecontroleerd. Exceptions zijn fouten. Er zijn geen automatische RUN-retries. Bij fouten volgt een best-effort STOP; een geslaagde gestopte cyclus is vereist voordat RUN weer mag. ControlTask valt bij een motorfout terug naar gestopt en vereist opnieuw START. Een mislukte initialisatie vereist een firmwareherstart na herstel. Als STOP niet aankomt, is de drivewatchdog de terugvalvoorziening; test kabelverlies daadwerkelijk.
+Iedere opdracht krijgt een begrensde response-wachttijd van 80 ms, plus zend- en framepauze. De drive moet binnen die termijn antwoorden; meet dit bij ingebruikname. Controleer specifiek of P2010 daadwerkelijk de bitrate 115200 selecteert; laat de firmware en drive niet met verschillende baudrates werken. P2022=20 ms voorkomt dat een veel later gevormd antwoord bij een volgende aanvraag terechtkomt. Een aanvraag kan bij overschrijding al uitgevoerd zijn, daarom volgt bij ontbrekende bevestiging STOP. Late antwoorden na timeout worden uitgefilterd met een extra wachttijd. Slave, functie, lengte, bytecount, schrijfbevestiging en CRC worden gecontroleerd. Exceptions zijn fouten. Er zijn geen automatische RUN-retries. Bij fouten volgt een best-effort STOP; een geslaagde gestopte cyclus is vereist voordat RUN weer mag. ControlTask valt bij een motorfout terug naar gestopt en vereist opnieuw START. Een mislukte initialisatie vereist een firmwareherstart na herstel. Als STOP niet aankomt, is de drivewatchdog de terugvalvoorziening; test kabelverlies daadwerkelijk.
 
 ## Bouwen en testen
 

@@ -6,7 +6,7 @@ Author: R.E. van Eekelen
 
 ## 1. Build and load
 
-Use GitHub branch `feature/raspberry-pi-ethernet-hmi` for **both** ESP32 and Pi.
+Use GitHub branch `main` for **both** ESP32 and Pi.
 
 On the development PC (PlatformIO):
 ```sh
@@ -20,7 +20,7 @@ On the Pi (for an existing checkout at ~/AEM_windtunnel2026):
 ```sh
 cd ~/AEM_windtunnel2026
 git fetch origin
-git switch feature/raspberry-pi-ethernet-hmi
+git switch main
 bash HMI/deploy/update-pi.sh
 ```
 The update preserves measurements and migrates legacy configuration to ESP32 Ethernet.
@@ -52,6 +52,6 @@ Open the existing desktop launcher; it starts **PySide6/Qt**, not Chromium. All 
 
 ## Not yet validated
 
-No successful real ESP-IDF firmware build, native Qt startup on the actual Pi, physical ESP32–Pi TCP test, Modbus transaction with the actual V20, or measured 200 Hz timing has been reported by this review. Existing ESP32 host test scripts still reference obsolete V20 source/API and need updating before they can serve as release evidence.
+GitHub Actions compiles the ESP32 firmware and runs native Windows HMI/backend and C host regression tests. These are software-only checks. Native Qt on the actual Pi, ESP32-Pi TCP, I2C voltage, E-stop wiring, V20 Modbus, watchdog trip, physical STOP and measured 200 Hz timing still require onsite verification.
 
 Do not interpret passing offline tests as permission to enable the 5.5 kW fan.

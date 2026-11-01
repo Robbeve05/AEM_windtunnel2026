@@ -58,7 +58,7 @@ The first-order pressure filter uses actual elapsed time and starts at 1 Hz. The
 
 ## V20 configuration and fault response
 
-See V20_MODBUS.md for register mapping and parameter contract. UART is now 9600 8E1/slave 1, configurable in AppConfig; set V20 P2010[0]=6, P2034=2, P2035=1, P2021=1 to match. Keep P0700/P1000=5, P2023=2, P2000=50 Hz and the verified 500 ms drive telegram watchdog. Motor limits, ramps and independent emergency-stop wiring must be commissioned separately. Firmware never acknowledges drive faults or starts automatically.
+See V20_MODBUS.md for register mapping and parameter contract. UART is configured for 115200 baud, 8E1, slave 1 in AppConfig.h. Verify the actual P2010 baud encoding and P2034/P2035/P2021 on the drive before connecting; do not change the configured baud rate from documentation alone. Keep P0700/P1000=5, P2023=2, P2000=50 Hz and the verified 500 ms drive telegram watchdog. Motor limits, ramps and independent emergency-stop wiring must be commissioned separately. Firmware never acknowledges drive faults or starts automatically.
 
 No automatic RUN retries: a timeout might mean RUN was executed. V20 driver attempts STOP, reports failure and requires a successful stopped cycle plus a new operator START. On initialization failure correct the drive and restart the controller. The 80 ms receive deadline includes response/frame time at 9600 baud; late frames are quarantined. If the link cannot deliver STOP, the commissioned drive watchdog must produce the documented F72 response. Test it physically.
 
