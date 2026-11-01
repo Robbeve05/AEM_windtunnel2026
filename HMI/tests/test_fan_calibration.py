@@ -35,7 +35,7 @@ class SequenceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.esp=FakeESP();self.now=100.
         self.clock=patch.object(fc,'time',types.SimpleNamespace(monotonic=lambda:self.now));self.clock.start()
-        self.cal=fc.FanCharacteristicCalibrator(self.esp,Path(self.tmp.name),Config())
+        self.cal=fc.FanCharacteristicCalibrator(self.esp,Path(self.tmp.name),Config.model_validate_json((Path(__file__).resolve().parents[1] / 'config' / 'config.json').read_text(encoding='utf-8')))
     async def asyncTearDown(self):
         await self.cal.cancel();self.clock.stop();self.tmp.cleanup()
     async def tick(self,unique=True):

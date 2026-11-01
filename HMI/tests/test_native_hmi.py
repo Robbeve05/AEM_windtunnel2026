@@ -113,6 +113,8 @@ class NativeHMITests(unittest.TestCase):
             window._on_status({"simulation": False, "esp32": dict(
                 connected=True, stale=False, state="READY", mode="MANUAL",
                 fault="NONE", sp=0)}, None)
+            self.assertFalse(window.manual_apply.isEnabled())  # 0 Hz is below manual 10 Hz minimum.
+            window.manual_hz.setText("10")
             self.assertTrue(window.manual_apply.isEnabled())
             self.assertFalse(window.setpoint_apply.isEnabled())
             window.close()

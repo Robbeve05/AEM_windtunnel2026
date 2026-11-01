@@ -182,5 +182,33 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('calibration',ws.receive_json())
 
 
+    def test_config_is_single_source_of_operating_limits(self):
+        from backend.models import Config
+        source = json.loads((main.BASE / 'config/config.json').read_text(encoding='utf-8'))
+        model = Config.model_validate(source)
+        self.assertEqual(model.max_airspeed_ms, 40)
+        self.assertEqual(model.min_manual_frequency_hz, 10)
+        self.assertEqual(model.max_manual_frequency_hz, 50)
+        self.assertEqual(model.calibration_defaults.frequencies(), list(range(10, 51, 5)))
+        self.assertEqual(self.client.get('/api/config').json()['min_manual_frequency_hz'], 10)
+        for changes in (
+            {'max_airspeed_ms': 41},
+            {'max_manual_frequency_hz': 51},
+            {'min_manual_frequency_hz': 55},
+            {'calibration_defaults': {**source['calibration_defaults'], 'start_hz': 5}},
+        ):
+            with self.assertRaises(ValueError):
+                Config.model_validate({**source, **changes})
+
+    def test_manual_command_requires_ready_and_configured_10_to_50_hz(self):
+        # Simulation does not fake hardware readiness for manual motor commands.
+        for requested in (0, 5, 9.99, 10, 50, 50.01, 60):
+            result = self.client.post('/api/tunnel/frequency', json={'hz': requested})
+            self.assertNotEqual(result.status_code, 200)
+        self.assertEqual(self.client.post('/api/tunnel/mode', json={'mode': 'MANUAL'}).status_code, 400)
+        self.assertEqual(self.client.post('/api/tunnel/start').status_code, 200)  # Simulator only.
+        self.assertEqual(self.client.post('/api/tunnel/stop').status_code, 400)
+
+
 if __name__ == '__main__':
     unittest.main()
