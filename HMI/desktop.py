@@ -9,7 +9,7 @@ from pathlib import Path
 
 from native_calibration import CalibrationPanel
 from PySide6.QtCore import QIODevice, QSize, Qt, QTimer, QUrl, QSaveFile
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
@@ -398,6 +398,7 @@ class HMIWindow(QMainWindow):
         self.setpoint_spin.setSingleStep(0.5)
         self.setpoint_spin.setSuffix(" m/s")
         self.setpoint_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._style_numeric_editor(self.setpoint_spin)
         self.setpoint_spin.setToolTip("Enter a desired airflow velocity in m/s. Applying requires a connected ESP32 in AUTO mode.")
         self.setpoint_initialized = False
         # A locally selected mode is only a draft until the ESP32 confirms it.
@@ -417,6 +418,7 @@ class HMIWindow(QMainWindow):
         self.manual_hz.setSuffix(" Hz")
         self.manual_hz.setDecimals(2)
         self.manual_hz.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._style_numeric_editor(self.manual_hz)
         self.manual_hz.setToolTip("Enter a V20 frequency from 0 to 50 Hz. Applying requires MANUAL mode.")
         self.manual_apply=QPushButton("Apply frequency")
         self.manual_apply.setEnabled(False)
@@ -553,6 +555,33 @@ class HMIWindow(QMainWindow):
         right_layout.addWidget(event_card, 1)
         layout.addWidget(self.right)
         self._show_page("overview")
+
+    @staticmethod
+    def _style_numeric_editor(spin):
+        """Make QDoubleSpinBox values legible inside the dark sidebar.
+
+        QDoubleSpinBox owns a child QLineEdit. The global QLineEdit QSS rule
+        otherwise gives that child a second white background and padding,
+        while the sidebar palette can give its text a white foreground.
+        Explicit local styling fixes both invisible and vertically clipped
+        numeric input without altering the ESP32 interlocks.
+        """
+        editor = spin.findChild(QLineEdit)
+        if editor is None:
+            raise RuntimeError("QDoubleSpinBox internal editor was not created")
+        editor.setObjectName("numericValueEditor")
+        editor.setFrame(False)
+        editor.setStyleSheet(
+            "QLineEdit#numericValueEditor {"
+            " color: #17212b; background: transparent;"
+            " border: 0px; margin: 0px; padding: 0px;"
+            " selection-background-color: #c8291e; selection-color: #ffffff;"
+            "}"
+        )
+        palette = editor.palette()
+        palette.setColor(QPalette.ColorRole.Text, QColor("#17212b"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        editor.setPalette(palette)
 
     def _heading(self, text):
         label = QLabel(text)
@@ -1213,7 +1242,8 @@ class HMIWindow(QMainWindow):
             #rightSidebar #hint {{ color:#abb0b6; font-size:10px; }}
             #rightSidebar #controlHelp {{ color:#bbc3cb; font-size:10px; line-height:1.2; }}
             #rightSidebar #controlLockReason {{ color:#e6bc77; background:#393124; border:1px solid #665337; border-radius:5px; padding:8px; font-size:10px; }}
-            #rightSidebar #development QDoubleSpinBox, #rightSidebar #development QComboBox {{ background:white; color:#1b2229; border:1px solid #cbd1d7; border-radius:5px; padding:9px 10px; min-height:24px; font-size:13px; }}
+            #rightSidebar #development QDoubleSpinBox, #rightSidebar #development QComboBox {{ background:white; color:#17212b; border:1px solid #cbd1d7; border-radius:5px; padding:3px 9px; min-height:30px; font-size:13px; }}
+            #rightSidebar #development QDoubleSpinBox QLineEdit {{ color:#17212b; background:transparent; border:0; padding:0; margin:0; selection-background-color:{RED}; selection-color:white; }}
             #rightSidebar #development QDoubleSpinBox:focus, #rightSidebar #development QComboBox:focus {{ border:2px solid {RED}; }}
             #rightSidebar #development QPushButton {{ padding:9px 10px; min-height:22px; border-radius:5px; font-weight:600; }}
             #rightSidebar #development QPushButton:disabled {{ background:#3b4147; border:1px solid #535961; color:#949da6; }}

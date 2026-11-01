@@ -11,6 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLineEdit
     from desktop import HMIWindow
     from native_calibration import CalibrationPanel
     QT_AVAILABLE = True
@@ -179,6 +182,44 @@ class NativeHMITests(unittest.TestCase):
                 child.graphicsEffect() is None
                 for child in window.findChildren(Card)
             ))
+            window.close()
+
+
+    def test_air_speed_and_manual_hz_text_is_visible_and_typable_without_esp32(self):
+        # Reproduces white-on-white / nested-line-edit padding regression.
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.resize(1500, 900)
+            window.show()
+            self.app.processEvents()
+            window._on_status({"simulation": False, "esp32": {"stale": True}}, None)
+            for mode, widget, new_value in (
+                ("AUTO", window.setpoint_spin, 17.5),
+                ("MANUAL", window.manual_hz, 32.5),
+            ):
+                window.mode_select.setCurrentText(mode)
+                self.app.processEvents()
+                editor = widget.findChild(QLineEdit)
+                self.assertIsNotNone(editor)
+                self.assertTrue(widget.isEnabled())
+                self.assertTrue(editor.isVisibleTo(window))
+                self.assertIn("color: #17212b", editor.styleSheet())
+                self.assertIn("padding: 0px", editor.styleSheet())
+                self.assertEqual(
+                    editor.palette().color(QPalette.ColorRole.Text).name(),
+                    QColor("#17212b").name(),
+                )
+                widget.setFocus()
+                widget.selectAll()
+                # Enter through the embedded Qt text editor, not through setValue.
+                editor.setFocus()
+                QTest.keyClicks(editor, str(new_value).replace(".", widget.locale().decimalPoint()))
+                QTest.keyClick(editor, __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.Key.Key_Tab)
+                self.app.processEvents()
+                self.assertAlmostEqual(widget.value(), new_value)
+            self.assertFalse(window.mode_apply.isEnabled())
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            self.assertFalse(window.manual_apply.isEnabled())
             window.close()
 
 
