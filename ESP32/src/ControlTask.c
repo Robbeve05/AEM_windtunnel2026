@@ -32,7 +32,7 @@
 #include "TaskData.h"
 #include "AppConfig.h"
 #include "PiProtocol.h"
-#include "Regelaar.h"
+#include "MotorModel.h"
 #include "RegelaarDesign.h"
 #include "TorqueLoadControl.h"
 #include "esp_log.h"
@@ -44,7 +44,7 @@
 // Local definitions
 
 _Static_assert(CONTROL_PERIOD_US == (1000000u / CONTROL_FREQUENCY_HZ),
-               "GPTimer and PI sample periods must be equal");
+               "GPTimer and torque PID sample periods must be equal");
 _Static_assert(SENSOR_PHASE_US * 2 == CONTROL_PERIOD_US, "Two equal clock phases required");
 _Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controller runs at 200 Hz");
 
@@ -59,9 +59,9 @@ typedef struct
 
 typedef struct
 {
-    Regelaar controller;
+    MotorModel motor_model;
     TorqueLoadControl torque_controller;
-    TorqueLoadOutput torque_diagnostics;
+    TorqueLoadOutput torque_output;
     bool torque_model_ready;
     SetpointCurve curve;
     SetpointCurve frequency_curve;
@@ -171,8 +171,7 @@ static void Control_Init(ControlContext *ctx)
     *ctx = (ControlContext){0};
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
-    /* Theory-only design is calculated once, before entering the control loop.
-     * Its torque-input gains are never passed to the V20 frequency controller. */
+    /* Design the one-mass torque PID; no parallel frequency PI exists. */
     const RegelaarDesignInput design_input = {
         .jm=J_MOTOR_KGM2, .jfan=J_FAN_KGM2,
         .frequency_hz=DISTURBANCE_FREQUENCY_HZ,
@@ -184,18 +183,28 @@ static void Control_Init(ControlContext *ctx)
         .minimum_pm_deg=DESIGN_MIN_PHASE_MARGIN_DEG
     };
     RegelaarDesignOutput design = {0};
-    if (RegelaarDesign_Calculate(&design_input, &design)) {
+    if (RegelaarDesign_Calculate(&design_input, &design) &&
+        TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S)) {
+        ctx->motor_model = (MotorModel){
+            .inertia_kgm2 = design.j,
+            .slip_gain_nm_per_rad_s = MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S,
+            .load_coeff_nm_per_rad_s2 = MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
+            .pole_pairs = MOTOR_MODEL_POLE_PAIRS,
+            .nominal_air_omega_gain = design.kv,
+            .max_command_hz = MANUAL_MAX_HZ
+        };
         ctx->torque_model_ready =
-            TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S);
-        ESP_LOGI("PID_DESIGN", "THEORY ONLY: J=%g Kp=%g Ki=%g Kd=%g Ti=%g Td=%g Tf=%g wb=%g wc=%g PM=%g error=%g",
-            (double)design.j, (double)design.kp, (double)design.ki,
-            (double)design.kd, (double)design.ti, (double)design.td,
-            (double)design.tf, (double)design.wb, (double)design.wc,
-            (double)design.pm_deg, (double)design.error_ms);
-    } else {
-        ESP_LOGW("PID_DESIGN", "Theory-only one-mass design unavailable or invalid; physical V20 PI unchanged");
+            isfinite(ctx->motor_model.slip_gain_nm_per_rad_s) &&
+            ctx->motor_model.slip_gain_nm_per_rad_s > 0.0f &&
+            isfinite(ctx->motor_model.load_coeff_nm_per_rad_s2) &&
+            ctx->motor_model.load_coeff_nm_per_rad_s2 >= 0.0f;
+        if (ctx->torque_model_ready)
+            ESP_LOGI("TORQUE_PID", "J=%g Kp=%g Ki=%g Kd=%g Kv=%g, inverse VFD map unverified",
+                     (double)design.j, (double)design.kp, (double)design.ki,
+                     (double)design.kd, (double)design.kv);
     }
-    ESP_ERROR_CHECK(Regelaar_INIT(&ctx->controller, CONTROL_CLOCK_PERIOD_S) ? ESP_OK : ESP_FAIL);
+    if (!ctx->torque_model_ready)
+        ESP_LOGW("TORQUE_PID", "AUTO inhibited: inertia, design or motor model invalid");
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
     StateMachine_Init(&ctx->machine, ctx->now_ms);
@@ -346,9 +355,8 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
                 ctx->status.mode = (OperatingMode)(int)command.values[0];
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
                 ctx->frequency_running = ctx->curve_running = false;
-                removeRegelaarHistory(&ctx->controller);
-        if (ctx->torque_model_ready) TorqueLoadControl_Reset(&ctx->torque_controller);
-        ctx->torque_diagnostics = (TorqueLoadOutput){0};
+                TorqueLoadControl_Reset(&ctx->torque_controller);
+                ctx->torque_output = (TorqueLoadOutput){0};
                 ctx->start = false;
             }
             break;
@@ -362,9 +370,8 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
             break;
         case CMD_PID:
             if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
-                (void)Regelaar_Instellen(&ctx->controller, command.values[0], command.values[1],
-                                         command.values[2], CONTROL_CLOCK_PERIOD_S, 0.0f,
-                                         MAX_OUTPUT, 0.05f);
+                (void)TorqueLoadControl_SetGains(&ctx->torque_controller, command.values[0],
+                                                 command.values[1], command.values[2]);
             break;
         case CMD_STOP:
             ctx->stop = true;
@@ -440,7 +447,10 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             isfinite(ctx->motor.actual_hz) && ctx->motor.actual_hz >= 0 &&
             ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
             (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
-        if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
+        if (ctx->status.mode == MODE_AUTO &&
+            (!ctx->torque_model_ready || (!SIMULATION_MODE && !MOTOR_MODEL_TORQUE_TO_V20_ENABLED)))
+            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+        else if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
         else if (!V20Modbus_Arm())
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
@@ -491,43 +501,41 @@ static void Control_UpdateController(ControlContext *ctx)
             bool valid = ctx->curve_running &&
                 SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
                                    &ctx->status.control_setpoint);
-            /* Parallel model-based torque calculation from load-side pitot
-             * speed and reference acceleration. The result is diagnostic only,
-             * NEVER forwarded to V20 while torque->Hz dynamics are unverified.
-             * The actual V20 command is still the frequency-domain PI below. */
-            if (valid && ctx->torque_model_ready) {
-                const float ref_accel_ms2 =
+            /* Sole AUTO loop: airspeed torque PID -> inverse motor model -> V20 Hz.
+             * Physical AUTO remains locked until motor/VFD model validation. */
+            valid = valid && ctx->torque_model_ready &&
+                (SIMULATION_MODE || MOTOR_MODEL_TORQUE_TO_V20_ENABLED);
+            if (valid) {
+                const float reference_accel_ms2 =
                     (ctx->status.control_setpoint - ctx->previous_ff_setpoint) /
                     CONTROL_CLOCK_PERIOD_S;
-                if (!TorqueLoadControl_Step(
-                        &ctx->torque_controller, ctx->status.control_setpoint,
-                        ctx->sample.value, ref_accel_ms2,
-                        MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
-                        &ctx->torque_diagnostics)) {
-                    ctx->torque_model_ready = false;
-                    ctx->torque_diagnostics = (TorqueLoadOutput){0};
-                    ESP_LOGE("TORQUE_MODEL", "Torque diagnostic invalid; disabled");
+                valid = TorqueLoadControl_Step(&ctx->torque_controller,
+                    ctx->status.control_setpoint, ctx->sample.value, reference_accel_ms2,
+                    ctx->motor_model.load_coeff_nm_per_rad_s2, &ctx->torque_output);
+                if (valid) {
+                    MotorModelRequest request = {
+                        .rotor_rad_s = ctx->torque_output.omega_est_rad_s,
+                        .reference_accel_ms2 = reference_accel_ms2,
+                        .pid_torque_nm = ctx->torque_output.pid_nm
+                    };
+                    MotorModelResult result = {0};
+                    valid = MotorModel_TorqueToFrequency(&ctx->motor_model, &request, &result);
+                    if (valid && result.saturated &&
+                        ((ctx->status.control_setpoint > ctx->sample.value &&
+                          result.requested_frequency_hz > ctx->motor_model.max_command_hz) ||
+                         (ctx->status.control_setpoint < ctx->sample.value &&
+                          result.requested_frequency_hz < 0.0f))) {
+                        /* Reject only integration that worsens output saturation. */
+                        TorqueLoadControl_RejectLatestIntegration(&ctx->torque_controller,
+                                                                  &ctx->torque_output);
+                        request.pid_torque_nm = ctx->torque_output.pid_nm;
+                        valid = MotorModel_TorqueToFrequency(&ctx->motor_model, &request, &result);
+                    }
+                    if (valid) {
+                        ctx->status.applied_hz = result.frequency_hz;
+                        ctx->status.output = 100.0f * result.frequency_hz / V20_REFERENCE_HZ;
+                    }
                 }
-            }
-            if (valid) {
-                float feedforward_pct = 0.0f;
-#if V20_FEEDFORWARD_ENABLED
-                /* Feedforward in Hz from the reference trajectory, converted to
-                 * percent of the V20 reference. No rotor-speed estimate needed.
-                 * Calibration required before commissioning this option. */
-                const float dv_dt = (ctx->status.control_setpoint - ctx->previous_ff_setpoint)
-                                    / CONTROL_CLOCK_PERIOD_S;
-                const float demand_hz =
-                    V20_FF_STATIC_HZ_PER_MS * ctx->status.control_setpoint +
-                    V20_FF_ACCEL_HZ_PER_MS2 * dv_dt;
-                feedforward_pct = 100.0f * demand_hz / V20_REFERENCE_HZ;
-                valid = isfinite(feedforward_pct) && feedforward_pct >= 0.0f &&
-                        feedforward_pct <= MAX_OUTPUT;
-#endif
-                if (valid)
-                    valid = PIDregelaarMetFeedforward(
-                        &ctx->controller, ctx->status.control_setpoint - ctx->sample.value,
-                        ctx->sample.value, feedforward_pct, &ctx->status.output);
             }
             if (!valid) {
                 StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
@@ -545,7 +553,8 @@ static void Control_UpdateController(ControlContext *ctx)
         ctx->previous_ff_setpoint = ctx->sample.value;
         ctx->status.control_setpoint = ctx->sample.value;
         ctx->status.output = 0.0f;
-        removeRegelaarHistory(&ctx->controller);
+        TorqueLoadControl_Reset(&ctx->torque_controller);
+        ctx->torque_output = (TorqueLoadOutput){0};
     }
 
     if (ctx->machine.state == STATE_RUNNING && (ctx->motor.status & 0x0040u) != 0 &&

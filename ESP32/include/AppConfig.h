@@ -150,10 +150,10 @@
 #define MANUAL_MAX_JERK_HZ_PER_S3 0.5f
 
 ///////////////////////////////////////////////////////////////////////////////
-// 06. AUTOMATIC AIRSPEED CONTROL
+// 06. AUTOMATIC AIRSPEED TORQUE PID
 ///////////////////////////////////////////////////////////////////////////////
 // AUTO shapes an airspeed setpoint in m/s with a fifth-order SetpointCurve,
-// then uses the PI controller to determine motor demand. These derivative
+// then uses the torque PID and inverse motor model to determine V20 Hz. These derivative
 // limits apply to airspeed, not to the manual frequency trajectory.
 
 // [m/s, safety-critical] Maximum requested airspeed; raising it requires validated tunnel
@@ -175,11 +175,10 @@
 #define SETPOINT_MAX_JERK_MPS3 2.0f
 
 ///////////////////////////////////////////////////////////////////////////////
-// 07. PI CONTROLLER & FAN MODEL
+// 07. TORQUE PID & FAN/MOTOR MODEL
 ///////////////////////////////////////////////////////////////////////////////
-// Existing first-order model and PI design inputs, preserved without retuning.
-// The measured reference below is distinct from assumed dynamic response.
-// Changing these inputs changes the gains calculated by the existing controller.
+// One-mass torque PID. Physical inverse-model actuation must remain disabled
+// until inertia, motor rating, slip model and V20 response are verified.
 
 // [m/s, measured reference] Approximately 40 m/s in earlier softstarter testing; not guaranteed
 // at 50 Hz. Sets model gain.
@@ -189,17 +188,6 @@
 // output; changes model/scaling gain.
 #define FREQUENTIE_NOM      (50.0f)
 
-// [s, preliminary engineering assumption] First-order motor/fan time constant; NOT
-// experimentally identified. Changes PI tuning.
-#define Tau_motor           (0.6f)
-
-// [Hz, preliminary design target] Closed-loop bandwidth used in the existing PI design;
-// increasing requests faster response.
-#define FbM                 (0.20f)
-
-// [dimensionless, preliminary design choice] Bandwidth-to-PI-zero ratio; increasing places the
-// PI zero at a lower frequency.
-#define PI_ZERO_DIVISOR     (10.0f)
 // 07A. THEORETICAL ONE-MASS CONTROLLER DESIGN (NOT V20 GAINS)
 // Enter actual shaft inertias independently; zero means unknown/not configured.
 // WEG W21 catalogue (IE3, 50 Hz, four-pole, 4 kW, frame 112M):
@@ -236,35 +224,12 @@
  ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) / \
  ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f) * \
   (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
-// Real V20 torque-to-frequency conversion remains forbidden in firmware.
+// Physical AUTO gate. Keep 0 until motor/V20 are experimentally validated.
+#ifndef MOTOR_MODEL_TORQUE_TO_V20_ENABLED
 #define MOTOR_MODEL_TORQUE_TO_V20_ENABLED (0)
-#if MOTOR_MODEL_TORQUE_TO_V20_ENABLED != 0
-#error Unidentified slip model must never command the real V20
 #endif
 
 #define DESIGN_MIN_PHASE_MARGIN_DEG (45.0f)
-// Theoretical torque-model gains must not command the frequency-controlled V20.
-#define THEORETICAL_PID_DEPLOYMENT (0)
-// 07B. FREQUENCY FEEDFORWARD (AIRSPEED -> V20 OUTPUT PERCENT)
-// Disabled until the static 50-Hz / 40-m/s mapping and closed-loop behavior
-// have been measured. Enabling changes control action; bench-test first.
-// [0/1] Feedforward sums a reference-based command with the PID correction.
-#define V20_FEEDFORWARD_ENABLED (0)
-// [Hz per (m/s)] Static feedforward from reference airspeed to V20 frequency.
-// This preliminary approximation uses the nominal point, not a fitted fan curve.
-#define V20_FF_STATIC_HZ_PER_MS (FREQUENTIE_NOM / LUCHTSNELHEID_NOM)
-// [Hz per (m/s2)] Dynamic feedforward for airspeed reference acceleration.
-// Default 0: inertia-derived torque cannot be converted to Hz without a
-// validated VFD/motor torque-slip model.
-#define V20_FF_ACCEL_HZ_PER_MS2 (0.0f)
-#if V20_FEEDFORWARD_ENABLED != 0 && V20_FEEDFORWARD_ENABLED != 1
-#error V20_FEEDFORWARD_ENABLED must be 0 or 1
-#endif
-
-#if THEORETICAL_PID_DEPLOYMENT != 0
-#error Theoretical torque PID must not be deployed to V20
-#endif
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // 08. PITOT SENSOR

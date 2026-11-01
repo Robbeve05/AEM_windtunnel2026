@@ -1,4 +1,4 @@
-/* Quasi-static induction motor and fan model. SIMULATION ONLY. */
+/* Quasi-static inverse motor/fan model. Physical use requires verified calibration. */
 #pragma once
 #include <stdbool.h>
 typedef struct {
@@ -11,7 +11,9 @@ typedef struct {
 } MotorModelRequest;
 typedef struct {
  float feedforward_torque_nm, load_torque_nm, total_torque_nm, frequency_hz;
+ float requested_frequency_hz;
+ bool saturated;
 } MotorModelResult;
 /* Uses Tmotor=Ks*(2*pi*f/p-omega), Tload=b*omega*abs(omega).
- * This local approximation is NOT a V20 drive mapping. */
+ * Local approximation, not a calibrated V20 torque loop. Clips Hz to [0,max]. */
 bool MotorModel_TorqueToFrequency(const MotorModel *model,const MotorModelRequest *request,MotorModelResult *result);

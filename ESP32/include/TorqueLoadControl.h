@@ -1,11 +1,11 @@
-/* Model-based load-side controller, output in Nm. Author R.E. van Eekelen.
- * NOT a direct Siemens V20 command. */
+/* Airspeed torque PID with acceleration/load feedforward, in Nm.
+ * Requires calibrated inverse VFD model; author R.E. van Eekelen. */
 #pragma once
 #include <stdbool.h>
 #include "RegelaarDesign.h"
 typedef struct {
   RegelaarDesignOutput design;
-  float sample_s, integral_nm, previous_error_ms;
+  float sample_s, integral_nm, integral_before_step_nm, previous_error_ms;
   float previous_measurement_ms, derivative_nm, previous_reference_ms;
   bool previous_valid;
 } TorqueLoadControl;
@@ -19,3 +19,6 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
                             float measured_ms, float reference_accel_ms2,
                             float fan_load_coefficient, TorqueLoadOutput *out);
 void TorqueLoadControl_Reset(TorqueLoadControl *c);
+
+bool TorqueLoadControl_SetGains(TorqueLoadControl *controller, float kp, float ki, float kd);
+void TorqueLoadControl_RejectLatestIntegration(TorqueLoadControl *controller, TorqueLoadOutput *output);

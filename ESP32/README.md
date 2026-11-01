@@ -2,7 +2,7 @@
 
 Firmware branch: `esp32`. Paired Pi HMI branch: `RaspberryPi`.
 
-The industrial Waveshare migration retains the existing Tustin PI, quintic setpoint ramp, text protocol and V20 Modbus register implementation. It replaces the external clock with a 200 Hz internal GPTimer, Pi UART with W5500 TCP Ethernet, and the placeholder sensor with the existing ASPD-4525 conversion/filtering. Future 16-channel ABP2 acquisition is gated until PCB addresses and ranges are verified.
+The industrial Waveshare migration uses the one-mass torque PID (no parallel frequency PI), quintic setpoint ramp, text protocol and V20 Modbus register implementation. It replaces the external clock with a 200 Hz internal GPTimer, Pi UART with W5500 TCP Ethernet, and the placeholder sensor with the existing ASPD-4525 conversion/filtering. Future 16-channel ABP2 acquisition is gated until PCB addresses and ranges are verified.
 
 Read [MIGRATION.md](MIGRATION.md) for architecture analysis, verified pin assignments, configuration, address conflict, wiring, fault behavior and ordered commissioning procedure. Read [V20_MODBUS.md](V20_MODBUS.md) for drive settings.
 
@@ -32,3 +32,5 @@ Startup ready bits describe successful local initialization, not sensor validity
 or a connected Pi. The bounded startup barrier keeps output disabled on missing
 readiness; no timer starts in that failure path. A failed initial output write or
 sensor initialization does not publish readiness.
+
+AUTO now computes torque PID -> inverse induction motor model -> V20 Hz. Physical AUTO remains inhibited by MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0 and unconfigured inertias. See TORQUE-CONTROL.md; manual Hz mode remains available for guarded commissioning.
