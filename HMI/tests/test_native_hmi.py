@@ -265,5 +265,28 @@ class NativeHMITests(unittest.TestCase):
             window.close()
 
 
+    def test_manual_minimum_comes_from_local_config_when_backend_offline(self):
+        """Offline Windows preview must not silently default to 0–50 Hz."""
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.resize(1500, 900)
+            window.show()
+            self.app.processEvents()
+            self.assertEqual(window.config_source, "local")
+            self.assertEqual(window.config["min_manual_frequency_hz"], 10)
+            self.assertEqual(window.manual_hz.minimum_value, 10)
+            window.mode_select.setCurrentText("MANUAL")
+            for invalid in ("0", "5", "60"):
+                window.manual_hz.setText(invalid)
+                self.assertFalse(window.manual_hz.has_valid_value())
+                self.assertIn("10–50 Hz", window.input_validation.text())
+                self.assertFalse(window.manual_apply.isEnabled())
+            window.manual_hz.setText("50")
+            self.assertTrue(window.manual_hz.has_valid_value())
+            self.assertEqual(window.input_validation.text(), "")
+            self.assertFalse(window.manual_apply.isEnabled())  # Offline/UNKNOWN
+            window.close()
+
+
 if __name__ == "__main__":
     unittest.main()

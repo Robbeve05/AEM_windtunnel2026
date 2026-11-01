@@ -4,6 +4,7 @@ import re
 import sys
 import time
 from backend.esp32 import status_indication
+from backend.models import Config
 from datetime import datetime
 from pathlib import Path
 
@@ -283,7 +284,12 @@ class HMIWindow(QMainWindow):
         self.resize(1600, 950)
         self.setMinimumSize(1120, 700)
         self.network = QNetworkAccessManager(self)
-        self.config = {}
+        # Load the same validated config/config.json used by FastAPI before
+        # building the native interface, even if no backend is connected.
+        configuration_file = Path(__file__).resolve().parent / "config" / "config.json"
+        self.config = Config.model_validate_json(
+            configuration_file.read_text(encoding="utf-8")
+        ).model_dump()
         self.state = {}
         self.page_key = "overview"
         self.poll_busy = False
@@ -300,6 +306,9 @@ class HMIWindow(QMainWindow):
         self._last_status_ok = 0.0
         self._build_ui()
         self._apply_style()
+        # Enforce 10–50 Hz from the local JSON before the async API reply.
+        self._on_config(self.config, None)
+        self.config_source = "local"
         self.indicator_timer = QTimer(self)
         self.indicator_timer.timeout.connect(self._tick_indicator)
         self.indicator_timer.start(150)
@@ -1383,9 +1392,14 @@ class HMIWindow(QMainWindow):
 
     def _on_config(self, data, error):
         if error:
-            self._show_error(f"Could not load HMI configuration: {error}")
+            # Keep local validated settings if backend is not running.
+            # Applying still requires fresh ESP32 READY status.
+            self.config_source = "local"
             return
-        self.config = data
+        validated = Config.model_validate({**self.config, **data})
+        self.config = validated.model_dump()
+        data = self.config
+        self.config_source = "backend"
         self.filter_cutoff.setValue(data.get("filter_cutoff_hz", 1.0))
         self.flow_toggle.blockSignals(True)
         self.flow_toggle.setChecked(data.get("flow_metrics_enabled", True))
@@ -1398,8 +1412,14 @@ class HMIWindow(QMainWindow):
             ("simulate_usb", "Simulated USB export"),
         )
         for index, (key, label) in enumerate(names):
-            self.settings_grid.addWidget(QLabel(label), index, 0)
-            self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
+            existing_name = self.settings_grid.itemAtPosition(index, 0)
+            if existing_name is None:
+                self.settings_grid.addWidget(QLabel(label), index, 0)
+            existing_value = self.settings_grid.itemAtPosition(index, 1)
+            if existing_value is None:
+                self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
+            else:
+                existing_value.widget().setText(str(data.get(key, "")))
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
         self.setpoint_spin.setMaximum(float(data["max_airspeed_ms"]))
         self.manual_hz.setMaximum(float(data["max_manual_frequency_hz"]))
