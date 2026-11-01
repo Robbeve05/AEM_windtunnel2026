@@ -168,6 +168,8 @@ class NativeHMITests(unittest.TestCase):
                 ("settings", window.filter_status.parentWidget()),
             ):
                 window._show_page(name)
+                if name == "settings":
+                    window.settings_tabs.setCurrentIndex(0)  # General card is hidden under Calibration.
                 self.app.processEvents()
                 self.assertIsNone(card.graphicsEffect(), name)
                 self.assertTrue(card.isVisibleTo(window), name)

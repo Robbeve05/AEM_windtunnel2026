@@ -63,7 +63,7 @@ class FanCharacteristicPlot(QWidget):
         rect = self.rect().adjusted(64, 28, -23, -42)
         if rect.width() < 10 or rect.height() < 10:
             return
-        maximum = max(40.0, *(v for _, v in self.points))
+        maximum = max([40.0] + [v for _, v in self.points])
         maximum = 5.0 * math.ceil(maximum / 5.0)
         painter.setPen(QColor(MUTED))
         painter.drawText(7, 19, "Airspeed (m/s)")

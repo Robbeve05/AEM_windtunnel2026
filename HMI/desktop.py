@@ -409,6 +409,7 @@ class HMIWindow(QMainWindow):
         self.mode_select.addItems(["AUTO","MANUAL"])
         self.mode_select.setToolTip("AUTO: Pitot airspeed feedback control. MANUAL: V20 frequency command.")
         self.mode_apply=QPushButton("Apply mode")
+        self.mode_apply.setEnabled(False)
         self.mode_apply.setToolTip("AUTO regulates Pitot airspeed; MANUAL commands V20 frequency with a smooth ramp. Changes require READY.")
         self.mode_apply.clicked.connect(self._apply_mode)
         self.manual_hz=QDoubleSpinBox()
