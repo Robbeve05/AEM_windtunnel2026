@@ -8,7 +8,11 @@ Six pages: Overview, Raw Data, Cp Analysis, Measurements, Storage, Settings. Set
 
 ## Local development
 
-Install `requirements-desktop.txt`, start `uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1`, then launch `python desktop.py`. For headless GUI smoke tests set `QT_QPA_PLATFORM=offscreen`. Only one backend worker is supported; avoid `--reload` during recording.
+On **Windows**, install `requirements-desktop.txt`, then use **`python start_windows.py`** instead of starting `desktop.py` alone. The launcher starts the matching local FastAPI backend if port 8000 is free, opens the native Qt HMI, and stops only the backend process it started when the HMI exits. If an incompatible/old server is already on port 8000 it refuses to launch rather than quietly showing a misleading `HMI ONLINE`.
+
+If `Save graph scale` shows **Not Found**, your native app is newer than the running FastAPI process. Locate the backend process using PowerShell `Get-NetTCPConnection -LocalPort 8000 -State Listen`, check the process name/command line before stopping it, then run `python start_windows.py` from the **updated HMI directory**. Never kill an unrelated process.
+
+For manual development, start `python -m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1`, then `python desktop.py` from a second terminal. For headless GUI smoke tests set `QT_QPA_PLATFORM=offscreen`. Only one backend worker is supported; avoid `--reload` during recording.
 
 ## Raspberry Pi deployment
 

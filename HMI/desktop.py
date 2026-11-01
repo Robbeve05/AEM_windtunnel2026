@@ -1618,8 +1618,18 @@ class HMIWindow(QMainWindow):
         def done(data, error):
             self.graph_apply.setEnabled(True)
             if error:
-                self._show_error(f"Graph scale could not be saved: {error}")
-                self.graph_limit_status.setText("Save failed; the graph scale was not changed.")
+                if str(error).strip().lower() == "not found":
+                    message = (
+                        "The running HMI backend does not support this setting. "
+                        "It is probably an older backend still listening on port 8000. "
+                        "Stop that backend and restart the current version before saving."
+                    )
+                else:
+                    message = f"Graph scale could not be saved: {error}"
+                self._show_error(message)
+                self.graph_limit_status.setText(
+                    "Save failed. Check that the current backend version is running."
+                )
                 return
             new_maximum = float(data["graph_max_airspeed_ms"])
             self.config["graph_max_airspeed_ms"] = new_maximum
