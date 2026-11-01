@@ -14,7 +14,7 @@ try:
     from PySide6.QtGui import QColor, QPalette
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QLineEdit
-    from desktop import HMIWindow
+    from desktop import HMIWindow, OperatorNumericInput
     from native_calibration import CalibrationPanel
     QT_AVAILABLE = True
 except ImportError:
@@ -185,41 +185,62 @@ class NativeHMITests(unittest.TestCase):
             window.close()
 
 
+
     def test_air_speed_and_manual_hz_text_is_visible_and_typable_without_esp32(self):
-        # Reproduces white-on-white / nested-line-edit padding regression.
+        """Exercise actual Windows Qt keyboard entry into a plain QLineEdit."""
         with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
             window = HMIWindow()
             window.resize(1500, 900)
             window.show()
             self.app.processEvents()
             window._on_status({"simulation": False, "esp32": {"stale": True}}, None)
-            for mode, widget, new_value in (
-                ("AUTO", window.setpoint_spin, 17.5),
-                ("MANUAL", window.manual_hz, 32.5),
+            for mode, widget, new_text, expected in (
+                ("AUTO", window.setpoint_spin, "17.50", 17.5),
+                ("MANUAL", window.manual_hz, "32,50", 32.5),
             ):
                 window.mode_select.setCurrentText(mode)
                 self.app.processEvents()
-                editor = widget.findChild(QLineEdit)
-                self.assertIsNotNone(editor)
+                self.assertIsInstance(widget, OperatorNumericInput)
                 self.assertTrue(widget.isEnabled())
-                self.assertTrue(editor.isVisibleTo(window))
-                self.assertIn("color: #17212b", editor.styleSheet())
-                self.assertIn("padding: 0px", editor.styleSheet())
-                self.assertEqual(
-                    editor.palette().color(QPalette.ColorRole.Text).name(),
-                    QColor("#17212b").name(),
-                )
+                self.assertTrue(widget.isVisibleTo(window))
+                self.assertIn("color: #17212b", widget.styleSheet())
+                self.assertEqual(widget.palette().color(
+                    QPalette.ColorRole.Text).name(), QColor("#17212b").name())
                 widget.setFocus()
                 widget.selectAll()
-                # Enter through the embedded Qt text editor, not through setValue.
-                editor.setFocus()
-                QTest.keyClicks(editor, str(new_value).replace(".", widget.locale().decimalPoint()))
-                QTest.keyClick(editor, __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.Key.Key_Tab)
+                QTest.keyClicks(widget, new_text)
                 self.app.processEvents()
-                self.assertAlmostEqual(widget.value(), new_value)
+                self.assertEqual(widget.text(), new_text)
+                self.assertAlmostEqual(widget.value(), expected)
             self.assertFalse(window.mode_apply.isEnabled())
             self.assertFalse(window.setpoint_apply.isEnabled())
             self.assertFalse(window.manual_apply.isEnabled())
+            window.close()
+
+    def test_numeric_field_rejects_out_of_range_and_does_not_send_commands(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="READY", mode="AUTO",
+                fault="NONE", sp=0)}, None)
+            self.assertTrue(window.setpoint_apply.isEnabled())
+            window.setpoint_spin.setText("41")
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            with self.assertRaises(ValueError):
+                window.setpoint_spin.value()
+            window.setpoint_spin.setText("20")
+            self.assertTrue(window.setpoint_apply.isEnabled())
+            window.mode_select.setCurrentText("MANUAL")
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="READY", mode="MANUAL",
+                fault="NONE", sp=0)}, None)
+            window.manual_hz.setText("51")
+            self.assertFalse(window.manual_apply.isEnabled())
+            with self.assertRaises(ValueError):
+                window.manual_hz.value()
+            window.manual_hz.setText("25,5")
+            self.assertTrue(window.manual_apply.isEnabled())
+            self.assertAlmostEqual(window.manual_hz.value(), 25.5)
             window.close()
 
 
