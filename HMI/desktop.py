@@ -1204,6 +1204,28 @@ class HMIWindow(QMainWindow):
         self.filter_status = QLabel("Filter setting will be sent when the ESP32 connects.")
         self.filter_status.setObjectName("hint")
         box.addWidget(self.filter_status)
+        graph_row = QHBoxLayout()
+        graph_caption = QLabel(
+            "Graph Y-axis maximum · m/s\n"
+            "Display scale only — does not change the 40 m/s AUTO limit."
+        )
+        graph_caption.setWordWrap(True)
+        graph_row.addWidget(graph_caption, 1)
+        self.graph_max_spin = QDoubleSpinBox()
+        self.graph_max_spin.setRange(40.0, 120.0)
+        self.graph_max_spin.setSingleStep(5.0)
+        self.graph_max_spin.setDecimals(1)
+        self.graph_max_spin.setSuffix(" m/s")
+        self.graph_max_spin.setValue(50.0)
+        graph_row.addWidget(self.graph_max_spin)
+        self.graph_apply = QPushButton("Save graph scale")
+        self.graph_apply.clicked.connect(self._apply_graph_airspeed)
+        graph_row.addWidget(self.graph_apply)
+        box.addLayout(graph_row)
+        self.graph_limit_status = QLabel("The graph can display airspeeds above the controller limit.")
+        self.graph_limit_status.setObjectName("hint")
+        self.graph_limit_status.setWordWrap(True)
+        box.addWidget(self.graph_limit_status)
         self.settings_grid = QGridLayout()
         box.addLayout(self.settings_grid)
         box.addWidget(self._heading("Pressure-tap system"))
@@ -1406,7 +1428,7 @@ class HMIWindow(QMainWindow):
         self.flow_toggle.blockSignals(False)
         names = (
             ("simulation", "Simulation mode"), ("sample_rate_hz", "Expected pitot rate · Hz"),
-            ("air_density", "Air density · kg/m³"), ("max_airspeed_ms", "Graph maximum airspeed · m/s"),
+            ("air_density", "Air density · kg/m³"), ("max_airspeed_ms", "AUTO setpoint limit · m/s"),
             ("esp32_host", "ESP32 Ethernet host"), ("esp32_port", "ESP32 TCP port"),
             ("data_directory", "Local data directory"), ("usb_mount_path", "USB mount path"),
             ("simulate_usb", "Simulated USB export"),
@@ -1420,7 +1442,8 @@ class HMIWindow(QMainWindow):
                 self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
             else:
                 existing_value.widget().setText(str(data.get(key, "")))
-        self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
+        self.graph_max_spin.setValue(float(data["graph_max_airspeed_ms"]))
+        self.chart.set_points(self.history, data["graph_max_airspeed_ms"])
         self.setpoint_spin.setMaximum(float(data["max_airspeed_ms"]))
         self.manual_hz.setMaximum(float(data["max_manual_frequency_hz"]))
         self.manual_hz.minimum_value = float(data["min_manual_frequency_hz"])
@@ -1588,6 +1611,26 @@ class HMIWindow(QMainWindow):
         self._post('tunnel/frequency', {'hz': frequency},
                    lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
+    def _apply_graph_airspeed(self):
+        maximum = self.graph_max_spin.value()
+        self.graph_apply.setEnabled(False)
+
+        def done(data, error):
+            self.graph_apply.setEnabled(True)
+            if error:
+                self._show_error(f"Graph scale could not be saved: {error}")
+                self.graph_limit_status.setText("Save failed; the graph scale was not changed.")
+                return
+            new_maximum = float(data["graph_max_airspeed_ms"])
+            self.config["graph_max_airspeed_ms"] = new_maximum
+            self.chart.set_points(self.history, new_maximum)
+            self.graph_limit_status.setText(
+                f"Graph maximum saved: {new_maximum:g} m/s. "
+                "AUTO motor setpoint limit remains unchanged."
+            )
+
+        self._post("settings/graph-airspeed", {"graph_max_airspeed_ms": maximum}, done)
+
     def _apply_filter_cutoff(self):
         cutoff_hz = self.filter_cutoff.value()
 
@@ -1742,7 +1785,7 @@ class HMIWindow(QMainWindow):
             now = time.monotonic()
             self.history.append({"t": now, "speed": speed, "mean": sample.get("flow_mean_ms")})
             self.history = [item for item in self.history if now - item["t"] <= 60]
-            self.chart.set_points(self.history, self.config.get("max_airspeed_ms", 45))
+            self.chart.set_points(self.history, self.config.get("graph_max_airspeed_ms", 50))
             self.side_speed.setText(f"{self._fixed(speed)} m/s")
             self.side_stability.setText(f"{self._fixed(stability, 1)} %" if enabled else "OFF")
             self.flow_summary.setText(f"{self._fixed(sample.get('flow_mean_ms'))} m/s")

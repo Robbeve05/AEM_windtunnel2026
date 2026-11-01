@@ -27,6 +27,30 @@ class NativeHMITests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_graph_maximum_is_independent_of_auto_limit(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            self.assertEqual(window.graph_max_spin.value(), 50.0)
+            self.assertEqual(window.chart.y_max, 50.0)
+            self.assertEqual(window.setpoint_spin.maximum(), 40.0)
+            window._on_config({"graph_max_airspeed_ms": 65}, None)
+            self.assertEqual(window.graph_max_spin.value(), 65.0)
+            self.assertEqual(window.chart.y_max, 65.0)
+            self.assertEqual(window.setpoint_spin.maximum(), 40.0)
+            window.graph_max_spin.setValue(75.0)
+            calls = []
+            def mock_post(path, body, callback):
+                calls.append((path, body))
+                callback({"graph_max_airspeed_ms": body["graph_max_airspeed_ms"]}, None)
+            with patch.object(window, "_post", mock_post):
+                window._apply_graph_airspeed()
+            self.assertEqual(calls, [(
+                "settings/graph-airspeed", {"graph_max_airspeed_ms": 75.0}
+            )])
+            self.assertEqual(window.chart.y_max, 75.0)
+            self.assertEqual(window.setpoint_spin.maximum(), 40.0)
+            window.close()
+
     def test_native_settings_and_calibration_parity(self):
         with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
             window = HMIWindow()

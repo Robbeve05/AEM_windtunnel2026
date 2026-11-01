@@ -24,6 +24,9 @@ class Config(BaseModel):
     filter_cutoff_hz: float = Field(default=1.0, ge=0.1, le=10, allow_inf_nan=False)
     air_density: float = Field(default=1.225, gt=0, le=10, allow_inf_nan=False)
     max_airspeed_ms: float = Field(gt=0, le=FIRMWARE_MAX_AIRSPEED_MS, allow_inf_nan=False)
+    # Display-only plot range; NEVER changes the ESP32/controller setpoint cap.
+    # Default permits an existing Pi config to load after a software upgrade.
+    graph_max_airspeed_ms: float = Field(default=50.0, ge=40.0, le=120.0, allow_inf_nan=False)
     min_manual_frequency_hz: float = Field(ge=0, lt=FIRMWARE_MAX_FREQUENCY_HZ, allow_inf_nan=False)
     max_manual_frequency_hz: float = Field(gt=0, le=FIRMWARE_MAX_FREQUENCY_HZ, allow_inf_nan=False)
     default_recording_rate_hz: int = Field(ge=1, le=100)
@@ -65,6 +68,10 @@ class MeasurementRequest(BaseModel):
 
 class Recalculate(BaseModel):
     air_density: float = Field(default=1.225, gt=0, le=10, allow_inf_nan=False)
+
+
+class GraphAirspeedSetting(BaseModel):
+    graph_max_airspeed_ms: float = Field(ge=40.0, le=120.0, allow_inf_nan=False)
 
 
 class FlowMetricsSetting(BaseModel):

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from backend.fan_calibration import FanCharacteristicCalibrator, CalibrationConfig
 from backend.esp32 import ESP32Client
 from backend.measurements import Measurements
-from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
+from backend.models import Config, FlowMetricsSetting, GraphAirspeedSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
 from backend.simulator import Simulator
 from backend.storage import Storage
 
@@ -263,6 +263,24 @@ async def set_flow_metrics(body: FlowMetricsSetting):
     config_path.write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
     c.event('5 s flow statistics enabled.' if body.enabled else '5 s flow statistics disabled.')
     return {'enabled': c.config.flow_metrics_enabled}
+
+
+@app.post('/api/settings/graph-airspeed')
+async def set_graph_airspeed(body: GraphAirspeedSetting):
+    """Persist display-only chart scale. No ESP32 command or motor setting."""
+    c = control()
+    async with c.lock:
+        old = c.config.graph_max_airspeed_ms
+        c.config.graph_max_airspeed_ms = body.graph_max_airspeed_ms
+        try:
+            (c.base / 'config/config.json').write_text(
+                c.config.model_dump_json(indent=2), encoding='utf-8'
+            )
+        except OSError:
+            c.config.graph_max_airspeed_ms = old
+            raise
+    c.event(f'Graph Y-axis maximum set to {body.graph_max_airspeed_ms:g} m/s')
+    return {'graph_max_airspeed_ms': c.config.graph_max_airspeed_ms}
 
 
 @app.post('/api/settings/pressure-filter')

@@ -182,11 +182,29 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('calibration',ws.receive_json())
 
 
+    def test_graph_scale_can_exceed_motor_limit_without_changing_any_commands(self):
+        self.assertEqual(self.controller.config.max_airspeed_ms, 40)
+        self.assertEqual(self.controller.config.graph_max_airspeed_ms, 50)
+        result = self.post("settings/graph-airspeed", {"graph_max_airspeed_ms": 55})
+        self.assertEqual(result["graph_max_airspeed_ms"], 55)
+        self.assertEqual(self.client.get("/api/config").json()["graph_max_airspeed_ms"], 55)
+        persisted = json.loads((self.base / "config/config.json").read_text())
+        self.assertEqual(persisted["graph_max_airspeed_ms"], 55)
+        # Display-only setting must NOT permit an unsafe motor setpoint.
+        self.assertEqual(self.controller.config.max_airspeed_ms, 40)
+        self.assertEqual(self.client.post("/api/tunnel/setpoint",
+                          json={"airspeed_ms": 41}).status_code, 400)
+        for invalid in (0, 39.99, 120.01, 999):
+            self.assertEqual(self.client.post("/api/settings/graph-airspeed",
+                json={"graph_max_airspeed_ms": invalid}).status_code, 422)
+        self.assertEqual(self.controller.config.graph_max_airspeed_ms, 55)
+
     def test_config_is_single_source_of_operating_limits(self):
         from backend.models import Config
         source = json.loads((main.BASE / 'config/config.json').read_text(encoding='utf-8'))
         model = Config.model_validate(source)
         self.assertEqual(model.max_airspeed_ms, 40)
+        self.assertEqual(model.graph_max_airspeed_ms, 50)
         self.assertEqual(model.min_manual_frequency_hz, 10)
         self.assertEqual(model.max_manual_frequency_hz, 50)
         self.assertEqual(model.calibration_defaults.frequencies(), list(range(10, 51, 5)))
