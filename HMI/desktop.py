@@ -371,6 +371,8 @@ class HMIWindow(QMainWindow):
         self.setpoint_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.setpoint_spin.setToolTip("Enter a desired airflow velocity in m/s. Applying requires a connected ESP32 in AUTO mode.")
         self.setpoint_initialized = False
+        # A locally selected mode is only a draft until the ESP32 confirms it.
+        self._mode_draft = False
         self.setpoint_apply = QPushButton("Apply setpoint")
         self.setpoint_apply.setEnabled(False)
         self.setpoint_apply.clicked.connect(self._apply_setpoint)
@@ -406,16 +408,31 @@ class HMIWindow(QMainWindow):
         self.mode_explanation.setObjectName("controlHelp")
         self.mode_explanation.setWordWrap(True)
         control_layout.addWidget(self.mode_explanation)
-        control_layout.addSpacing(7)
-        control_layout.addWidget(control_label)
-        control_layout.addWidget(self.setpoint_spin)
-        control_layout.addWidget(self.setpoint_apply)
+        # Only show inputs appropriate to the selected control mode.
+        # This is UI presentation only; selecting a mode never sends a command.
+        self.mode_value_stack = QStackedWidget()
+        auto_page = QWidget()
+        auto_layout = QVBoxLayout(auto_page)
+        auto_layout.setContentsMargins(0, 0, 0, 0)
+        auto_layout.setSpacing(6)
+        auto_layout.addWidget(control_label)
+        auto_layout.addWidget(self.setpoint_spin)
+        auto_layout.addWidget(self.setpoint_apply)
+        self.mode_value_stack.addWidget(auto_page)
+        manual_page = QWidget()
+        manual_layout = QVBoxLayout(manual_page)
+        manual_layout.setContentsMargins(0, 0, 0, 0)
+        manual_layout.setSpacing(6)
         frequency_label = QLabel("MANUAL FAN FREQUENCY · Hz")
         frequency_label.setObjectName("smallLabel")
+        manual_layout.addWidget(frequency_label)
+        manual_layout.addWidget(self.manual_hz)
+        manual_layout.addWidget(self.manual_apply)
+        self.mode_value_stack.addWidget(manual_page)
+        self.mode_value_stack.setCurrentIndex(0)
+        self.mode_select.currentTextChanged.connect(self._on_mode_selection_changed)
         control_layout.addSpacing(7)
-        control_layout.addWidget(frequency_label)
-        control_layout.addWidget(self.manual_hz)
-        control_layout.addWidget(self.manual_apply)
+        control_layout.addWidget(self.mode_value_stack)
         self.control_lock_reason = QLabel("Waiting for ESP32 connection. Values can be entered, but commands are locked.")
         self.control_lock_reason.setObjectName("controlLockReason")
         self.control_lock_reason.setWordWrap(True)
@@ -1358,7 +1375,50 @@ class HMIWindow(QMainWindow):
             self.tunnel_badge.style().unpolish(self.tunnel_badge)
             self.tunnel_badge.style().polish(self.tunnel_badge)
 
+    def _on_mode_selection_changed(self, selected):
+        # Update the visible input immediately, even when no ESP32 is connected.
+        self._mode_draft = True
+        self.mode_value_stack.setCurrentIndex(0 if selected == "AUTO" else 1)
+        self._refresh_mode_controls()
+
+    def _refresh_mode_controls(self):
+        drive = self.state.get("esp32") or {}
+        online = (
+            not self.state.get("simulation", False)
+            and not drive.get("stale", True)
+            and bool(drive.get("connected", False))
+        )
+        ready = online and drive.get("state") == "READY"
+        selected = self.mode_select.currentText()
+        active_mode = drive.get("mode")
+        self.mode_value_stack.setCurrentIndex(0 if selected == "AUTO" else 1)
+        # Input values remain editable for offline layout previews.
+        self.setpoint_spin.setEnabled(True)
+        self.manual_hz.setEnabled(True)
+        self.mode_select.setEnabled(True)
+        self.mode_apply.setEnabled(ready)
+        # All three Apply buttons require physical READY.
+        self.setpoint_apply.setEnabled(ready and selected == active_mode == "AUTO")
+        self.manual_apply.setEnabled(ready and selected == active_mode == "MANUAL")
+        if not online:
+            reason = "OFFLINE · Values can be entered, but applying requires a connected ESP32 in READY."
+        elif not ready:
+            reason = "LOCKED · Apply is only permitted when the physical machine is in READY."
+        elif selected != active_mode:
+            reason = f"Selected {selected}; ESP32 is still in {active_mode}. Click Apply mode first."
+        elif selected == "AUTO":
+            reason = "AUTO active · Enter airspeed in m/s, then Apply setpoint."
+        else:
+            reason = "MANUAL active · Enter V20 frequency in Hz, then Apply frequency."
+        self.control_lock_reason.setText(reason)
+
     def _apply_setpoint(self):
+        if (self.state.get("esp32") or {}).get("state") != "READY":
+            self._show_error("Apply setpoint requires physical READY.")
+            return
+        if self.mode_select.currentText() != "AUTO" or (self.state.get("esp32") or {}).get("mode") != "AUTO":
+            self._show_error("Apply AUTO mode before entering an airspeed setpoint.")
+            return
         if self.state.get("simulation") or (self.state.get("esp32") or {}).get("stale", True):
             self._show_error("ESP32 telemetry is not available.")
             return
@@ -1380,6 +1440,13 @@ class HMIWindow(QMainWindow):
                    lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
     def _apply_hz(self):
+        drive = self.state.get("esp32") or {}
+        if drive.get("state") != "READY":
+            self._show_error("Apply frequency requires physical READY.")
+            return
+        if self.mode_select.currentText() != "MANUAL" or drive.get("mode") != "MANUAL":
+            self._show_error("Apply MANUAL mode before entering a frequency.")
+            return
         self._post('tunnel/frequency',{'hz':self.manual_hz.value()},
                    lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
@@ -1477,24 +1544,15 @@ class HMIWindow(QMainWindow):
                 f"State: {machine_state} · physical START/RESET only"
             )
         online = not stale and not is_sim
-        self.setpoint_spin.setEnabled(True)
-        self.setpoint_apply.setEnabled(online)
-        self.mode_apply.setEnabled(online and machine_state=='READY')
-        self.mode_select.setEnabled(True)
-        self.manual_hz.setEnabled(True)
-        self.manual_apply.setEnabled(online and drive.get('mode')=='MANUAL')
-        if online and not self.mode_select.hasFocus():
-            self.mode_select.setCurrentText(drive.get('mode','AUTO'))
-        self.setpoint_apply.setEnabled(online and drive.get('mode') == 'AUTO')
-        if not online:
-            reason = "OFFLINE · You can enter target values, but applying requires ESP32 communication."
-        elif machine_state != "READY":
-            reason = "Mode changes require READY. Physical START/STOP/RESET remain on the machine."
-        elif drive.get("mode") == "AUTO":
-            reason = "AUTO · Airspeed targets can be applied; manual frequency is locked."
-        else:
-            reason = "MANUAL · Frequency targets can be applied; AUTO setpoints are locked."
-        self.control_lock_reason.setText(reason)
+        actual_mode = drive.get("mode")
+        if online and actual_mode in ("AUTO", "MANUAL"):
+            if self._mode_draft and self.mode_select.currentText() == actual_mode:
+                self._mode_draft = False
+            if not self._mode_draft and self.mode_select.currentText() != actual_mode:
+                self.mode_select.blockSignals(True)
+                self.mode_select.setCurrentText(actual_mode)
+                self.mode_select.blockSignals(False)
+        self._refresh_mode_controls()
         if online and not self.setpoint_initialized:
             try:
                 self.setpoint_spin.setValue(float(drive.get("sp", 0)))

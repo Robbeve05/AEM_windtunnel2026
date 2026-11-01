@@ -82,6 +82,38 @@ class NativeHMITests(unittest.TestCase):
             window.close()
 
 
+    def test_mode_switch_only_shows_selected_input_and_ready_gates_apply(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window._on_status({"simulation": False, "esp32": {"stale": True}}, None)
+            window.mode_select.setCurrentText("MANUAL")
+            self.assertEqual(window.mode_value_stack.currentIndex(), 1)
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            self.assertFalse(window.manual_apply.isEnabled())
+            window.mode_select.setCurrentText("AUTO")
+            self.assertEqual(window.mode_value_stack.currentIndex(), 0)
+            self.assertFalse(window.mode_apply.isEnabled())
+            # Fresh RUNNING cannot apply a new operating point.
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="RUNNING", mode="AUTO",
+                fault="NONE", sp=0)}, None)
+            self.assertFalse(window.mode_apply.isEnabled())
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="READY", mode="AUTO",
+                fault="NONE", sp=0)}, None)
+            self.assertTrue(window.setpoint_apply.isEnabled())
+            self.assertFalse(window.manual_apply.isEnabled())
+            window.mode_select.setCurrentText("MANUAL")
+            self.assertEqual(window.mode_value_stack.currentIndex(), 1)
+            self.assertFalse(window.manual_apply.isEnabled())  # Draft until applied.
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="READY", mode="MANUAL",
+                fault="NONE", sp=0)}, None)
+            self.assertTrue(window.manual_apply.isEnabled())
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

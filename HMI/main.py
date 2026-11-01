@@ -289,13 +289,28 @@ async def stop_tunnel():
     raise ValueError("STOP is exclusively the physical pushbutton")
 
 
+def require_ready_esp32(c, required_mode=None):
+    """A UI-level operating point may only be applied in physical READY.
+
+    The calibration worker talks directly to ESP32 MANUAL commands while RUNNING
+    and remains governed by the existing independent machine safety interlocks.
+    """
+    if not c.esp32_mode or c.esp32 is None or not c.esp32.fresh:
+        raise ValueError('Fresh ESP32 READY telemetry required')
+    snapshot = c.esp32.snapshot()
+    if snapshot.get('stale') or snapshot.get('state') != 'READY':
+        raise ValueError('Physical READY state required before applying a control command')
+    if required_mode is not None and snapshot.get('mode') != required_mode:
+        raise ValueError(f'Apply {required_mode} mode in READY before sending this command')
+    return snapshot
+
+
 @app.post('/api/tunnel/mode')
 async def select_mode(body: ControlMode):
     c=control()
     c.calibration.require_idle()
     async with c.calibration.lock:
-        if not c.esp32_mode or c.esp32.snapshot().get('state')!='READY':
-            raise ValueError('Physical READY state required')
+        require_ready_esp32(c)
         await c.esp32.command('MODE '+body.mode)
         return c.status()
 
@@ -304,9 +319,7 @@ async def select_frequency(body: ManualFrequency):
     c=control()
     c.calibration.require_idle()
     async with c.calibration.lock:
-        s=c.esp32.snapshot() if c.esp32_mode else {}
-        if s.get('mode')!='MANUAL' or s.get('state') not in ('READY','RUNNING'):
-            raise ValueError('Manual mode and live ESP32 required')
+        require_ready_esp32(c, 'MANUAL')
         await c.esp32.command(f'FREQ {body.hz:.3f}')
         return c.status()
 
@@ -318,6 +331,7 @@ async def setpoint(body: Setpoint):
         if body.airspeed_ms > min(40.0, c.config.max_airspeed_ms):
             raise ValueError('Setpoint exceeds configured maximum wind speed')
         if c.esp32_mode:
+            require_ready_esp32(c, 'AUTO')
             await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
             c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
             return c.status()
