@@ -73,6 +73,33 @@ class Card(QFrame):
         self.setGraphicsEffect(shadow)
 
 
+class ContentPageStack(QStackedWidget):
+    """Prevent a tall Settings/Calibration page from resizing every main page.
+
+    QStackedWidget normally bases its minimum size on the largest hidden page.
+    The calibration tab contains a scrollable form, so letting that form
+    determine the parent minimum can push all other content offscreen.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(0, 0)
+        self.currentChanged.connect(self.updateGeometry)
+
+    def sizeHint(self):
+        current = self.currentWidget()
+        if current is None:
+            return QSize(760, 500)
+        hint = current.sizeHint()
+        # This stack fills the available central area; individual pages scroll.
+        return QSize(min(1000, max(640, hint.width())),
+                     min(660, max(420, hint.height())))
+
+    def minimumSizeHint(self):
+        # Never inherit the unbounded height of a hidden calibration form.
+        return QSize(320, 200)
+
+
 class FlowChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -318,7 +345,7 @@ class HMIWindow(QMainWindow):
         self.mode_tag.setObjectName("tagAmber")
         heading.addWidget(self.mode_tag, 0, Qt.AlignmentFlag.AlignVCenter)
         main_layout.addLayout(heading)
-        self.pages = QStackedWidget()
+        self.pages = ContentPageStack()
         self._build_overview()
         self._build_raw()
         self._build_cp()
@@ -440,11 +467,6 @@ class HMIWindow(QMainWindow):
         control_layout.addWidget(self.vfd_status_text)
         control_layout.addWidget(self.timing_status_text)
         right_layout.addWidget(control)
-        self.safety_note = QLabel("START, STOP, RESET and E-STOP are physical buttons only.")
-        self.safety_note.setObjectName("safetyNote")
-        self.safety_note.setWordWrap(True)
-        self.safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_layout.addWidget(self.safety_note)
         readings = QHBoxLayout()
         self.side_speed = self._side_reading(readings, "LIVE AIRSPEED")
         self.side_stability = self._side_reading(readings, "FLOW STABILITY")
@@ -1082,6 +1104,8 @@ class HMIWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         self.settings_tabs = QTabWidget()
+        self.settings_tabs.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.settings_tabs.setMinimumSize(0, 0)
         general = QWidget()
         general_layout = QVBoxLayout(general)
         general_layout.setContentsMargins(0, 0, 0, 0)
@@ -1246,6 +1270,8 @@ class HMIWindow(QMainWindow):
         keys = [item[0] for item in PAGES]
         self.page_key = key
         self.pages.setCurrentIndex(keys.index(key))
+        # Recalculate geometry for the selected page, not the tallest hidden page.
+        self.pages.updateGeometry()
         page = PAGES[keys.index(key)]
         self.page_title.setText(page[3])
         self.page_description.setText(page[4])
@@ -1579,12 +1605,6 @@ class HMIWindow(QMainWindow):
             f" · execution {drive.get('execution_us', '—')} µs"
             f" · overruns {drive.get('overruns', '—')}"
             f" · missed {drive.get('missed_deadlines', '—')}"
-        )
-        self.safety_note.setText(
-            "Physical START and RESET required. OFF1 is not an E-stop.\n"
-            + ("Commissioning incomplete; motor RUN inhibited."
-               if not is_sim and not drive.get("commissioned") else
-               "Verify hardware safety independently before enabling the drive.")
         )
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}

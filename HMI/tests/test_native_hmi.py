@@ -115,5 +115,38 @@ class NativeHMITests(unittest.TestCase):
             window.close()
 
 
+    def test_every_page_remains_visible_after_opening_calibration(self):
+        # Regression: the large calibration form must not stretch the shared
+        # QStackedWidget so its other pages render outside the viewport.
+        from desktop import PAGES
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.resize(1600, 900)
+            window.show()
+            self.app.processEvents()
+            window._show_page("settings")
+            window.settings_tabs.setCurrentIndex(1)
+            self.app.processEvents()
+            self.assertEqual(window.settings_tabs.tabText(1), "Calibration")
+            for key, *_ in PAGES:
+                window._show_page(key)
+                self.app.processEvents()
+                current = window.pages.currentWidget()
+                self.assertTrue(current.isVisibleTo(window), key)
+                self.assertGreater(window.pages.width(), 300, key)
+                self.assertGreater(window.pages.height(), 200, key)
+                self.assertLessEqual(window.pages.height(), window.height(), key)
+                self.assertEqual(window.pages.currentIndex(),
+                                 [p[0] for p in PAGES].index(key))
+            window._show_page("overview")
+            self.app.processEvents()
+            self.assertTrue(window.chart_card.isVisibleTo(window))
+            self.assertTrue(window.recording_card.isVisibleTo(window))
+            self.assertTrue(window.operating_card.isVisibleTo(window))
+            self.assertLessEqual(window.pages.minimumSizeHint().height(), 200)
+            window.close()
+
+
+
 if __name__ == "__main__":
     unittest.main()
