@@ -201,7 +201,13 @@ static void healthy_context(ControlContext *c)
     StateMachine_Init(&c->machine, 0);
     c->machine.state = STATE_READY;
     c->machine.entered_ms = 900;
-    assert(Regelaar_INIT(&c->controller, CONTROL_CLOCK_PERIOD_S));
+    RegelaarDesignOutput design = {.j=0.3f, .kv=0.25f,
+        .kp=2.0f, .ki=1.0f, .kd=0.0f, .tf=0.05f};
+    assert(TorqueLoadControl_Init(&c->torque_controller, &design, CONTROL_CLOCK_PERIOD_S));
+    c->torque_model_ready = true;
+    c->motor_model = (MotorModel){.inertia_kgm2=0.3f, .slip_gain_nm_per_rad_s=1.0f,
+        .load_coeff_nm_per_rad_s2=0.001f, .pole_pairs=2.0f,
+        .nominal_air_omega_gain=0.25f, .max_command_hz=50.0f};
 }
 int main(void)
 {
@@ -430,10 +436,10 @@ int main(void)
     c.motor.actual_hz=10; c.motor.tick=c.now_tick;
     c.status.manual_hz=50;
     c.sample.value=999; /* Would produce a PI error; MANUAL must ignore it. */
-    const Regelaar before=c.controller;
+    const TorqueLoadControl before=c.torque_controller;
     Control_UpdateController(&c);
     assert(c.frequency_running && c.status.applied_hz>=10 && c.status.applied_hz<10.001f);
-    assert(memcmp(&before,&c.controller,sizeof(before))==0);
+    assert(memcmp(&before,&c.torque_controller,sizeof(before))==0);
     float previous_hz=c.status.applied_hz;
     for(int n=0;n<3000;n++) {
         if(n==100) c.status.manual_hz=0;
@@ -452,8 +458,8 @@ int main(void)
     assert(c.machine.state==STATE_FAULT && arms==1);
     healthy_context(&c);c.machine.state=STATE_RUNNING;c.sample.value=0;c.status.setpoint=10;
     Control_UpdateController(&c);
-    assert(c.curve_running && !c.frequency_running && c.controller.motorHist.gevuld);
-    puts("PASS manual quintic, no PI in MANUAL, AUTO PI retained, deferred target, stale feedback inhibits arm, immediate fault bypass");
+    assert(c.curve_running && !c.frequency_running && c.torque_controller.previous_valid);
+    puts("PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass");
     control_task_handle=(void*)1; sensor_task_handle=(void*)2;
     for(unsigned n=0;n<4;n++) (void)ControlClockInterrupt(NULL,NULL,NULL);
     assert(notified[0]==sensor_task_handle && notified[1]==control_task_handle &&

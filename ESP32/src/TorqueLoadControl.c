@@ -1,5 +1,5 @@
-/* Torque-domain one-mass load controller; simulation/diagnostics only.
- * R.E. van Eekelen. The V20 does NOT accept this torque as a setpoint.
+/* Torque-domain airspeed PID and load feedforward, R.E. van Eekelen.
+ * V20 accepts frequency, not direct torque; see MotorModel.c.
  */
 #include "TorqueLoadControl.h"
 #include <math.h>
@@ -26,6 +26,7 @@ void TorqueLoadControl_Reset(TorqueLoadControl *c)
 {
     if (!c) return;
     c->integral_nm = 0.0f;
+    c->integral_before_step_nm = 0.0f;
     c->previous_error_ms = 0.0f;
     c->previous_measurement_ms = 0.0f;
     c->derivative_nm = 0.0f;
@@ -63,6 +64,7 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
     const float total = pid + accel + fan;
     if (!isfinite(integral) || !isfinite(derivative) || !isfinite(pid) ||
         !isfinite(accel) || !isfinite(fan) || !isfinite(total)) return false;
+    c->integral_before_step_nm = c->integral_nm;
     c->integral_nm = integral;
     c->derivative_nm = derivative;
     c->previous_error_ms = error;
@@ -72,4 +74,25 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
     *out = (TorqueLoadOutput){.pid_nm=pid,.acceleration_nm=accel,
          .fan_load_nm=fan,.total_nm=total,.omega_est_rad_s=omega_est};
     return true;
+}
+
+bool TorqueLoadControl_SetGains(TorqueLoadControl *c, float kp, float ki, float kd)
+{
+    if (!c || !isfinite(kp) || !isfinite(ki) || !isfinite(kd) ||
+        kp < 0.0f || ki < 0.0f || kd < 0.0f || c->sample_s <= 0.0f)
+        return false;
+    c->design.kp = kp;
+    c->design.ki = ki;
+    c->design.kd = kd;
+    TorqueLoadControl_Reset(c);
+    return true;
+}
+
+void TorqueLoadControl_RejectLatestIntegration(TorqueLoadControl *c, TorqueLoadOutput *out)
+{
+    if (!c || !out || !c->previous_valid) return;
+    const float rejected = c->integral_nm - c->integral_before_step_nm;
+    c->integral_nm = c->integral_before_step_nm;
+    out->pid_nm -= rejected;
+    out->total_nm -= rejected;
 }

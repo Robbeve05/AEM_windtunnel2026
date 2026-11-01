@@ -18,7 +18,8 @@ int main(void){
  assert(fabsf(o.frequency_hz-50.0f)<1.0e-3f);
  assert(fabsf(o.load_torque_nm-torque0)<1.0e-3f);
  q.reference_accel_ms2=1.0f;
- assert(!MotorModel_TorqueToFrequency(&m,&q,&o)); /* full speed, extra torque >50 Hz */
+ assert(MotorModel_TorqueToFrequency(&m,&q,&o));
+ assert(o.saturated && o.requested_frequency_hz>50.0f && o.frequency_hz==50.0f);
  q.reference_accel_ms2=0; q.rotor_rad_s=-1;
  assert(!MotorModel_TorqueToFrequency(&m,&q,&o));
  puts("PASS motor-model tests");

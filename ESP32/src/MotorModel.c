@@ -1,5 +1,5 @@
-/* Quasi-static slip/inertia fan model, R.E. van Eekelen.
- * No real V20 actuation should use this approximate model.
+/* Quasi-static slip/inertia inverse model, R.E. van Eekelen.
+ * Physical AUTO locked until motor/VFD calibration.
  */
 #include "MotorModel.h"
 #include <math.h>
@@ -22,9 +22,11 @@ bool MotorModel_TorqueToFrequency(const MotorModel *m,const MotorModelRequest *r
  const float torque=ff+load+r->pid_torque_nm;
  const float frequency=(r->rotor_rad_s+torque/m->slip_gain_nm_per_rad_s)*
                         m->pole_pairs/(2.0f*PI_F);
- if(!isfinite(frequency)||!isfinite(torque)||frequency<0.0f||
-    frequency>m->max_command_hz)return false;
+ if(!isfinite(frequency)||!isfinite(torque))return false;
+ const bool saturated=frequency<0.0f||frequency>m->max_command_hz;
+ const float limited=fminf(m->max_command_hz,fmaxf(0.0f,frequency));
  *out=(MotorModelResult){.feedforward_torque_nm=ff,.load_torque_nm=load,
-  .total_torque_nm=torque,.frequency_hz=frequency};
+  .total_torque_nm=torque,.frequency_hz=limited,
+  .requested_frequency_hz=frequency,.saturated=saturated};
  return true;
 }

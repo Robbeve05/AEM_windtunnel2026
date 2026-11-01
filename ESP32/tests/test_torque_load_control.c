@@ -20,6 +20,14 @@ int main(void)
     assert(fabsf(o.total_nm-7.6f)<1.0e-4f);
     assert(TorqueLoadControl_Step(&c,22.0f,20.0f,0.0f,0.0f,&o));
     assert(o.pid_nm > 4.0f);
+    assert(TorqueLoadControl_SetGains(&c, 3.0f, 1.0f, 0.0f));
+    assert(c.design.kp==3.0f && !c.previous_valid);
+    assert(TorqueLoadControl_Step(&c,22.0f,20.0f,0.0f,0.0f,&o));
+    assert(TorqueLoadControl_Step(&c,22.0f,20.0f,0.0f,0.0f,&o));
+    const float prior_integral=c.integral_nm;
+    assert(TorqueLoadControl_Step(&c,22.0f,20.0f,0.0f,0.0f,&o));
+    TorqueLoadControl_RejectLatestIntegration(&c,&o);
+    assert(c.integral_nm==prior_integral);
     TorqueLoadControl_Reset(&c);
     assert(!TorqueLoadControl_Step(&c,22.0f,-1.0f,0.0f,0.0f,&o));
     puts("PASS torque-load diagnostics");
