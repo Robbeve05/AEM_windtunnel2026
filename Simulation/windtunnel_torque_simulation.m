@@ -1,13 +1,14 @@
 % Wind tunnel: torque-domain PID + feedforward + approximate V20 slip model
 % Author: R.E. van Eekelen
 % Run in MATLAB: windtunnel_torque_simulation
-% Assumed motor model: 4 poles, 50 Hz, 1450 rpm, 4 kW nameplate.
-% All curves are SIMULATED and MUST NOT be used for commissioning.
+% RUCK-confirmed shaft inertias (EL 710 D4 02, article 146531).
+% Other motor model data (4 poles, 50 Hz, 1450 rpm, 4 kW) remain
+% UNVERIFIED assumptions. Simulation output cannot commission the real V20.
 clear; close all; clc;
 Ts=0.005; t=(0:Ts:120)';
-Jm=0.10; Jfan=0.20; J=Jm+Jfan; % EXAMPLE ONLY: replace with measured inertias
+Jm=0.0182; Jfan=0.3530; J=Jm+Jfan; % RUCK: J = 0.3712 kg*m^2
 n0=1450; w0=2*pi*n0/60; v0=40; Kv=v0/w0;
-p=2; Pn=4000; fn=50;
+p=2; Pn=4000; fn=50; % motor power/slip unverified
 Tnom=Pn/w0;
 Ks=Tnom/(2*pi*fn/p-w0);
 Kload=Tnom/w0^2;

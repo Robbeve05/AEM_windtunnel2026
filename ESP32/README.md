@@ -33,4 +33,4 @@ or a connected Pi. The bounded startup barrier keeps output disabled on missing
 readiness; no timer starts in that failure path. A failed initial output write or
 sensor initialization does not publish readiness.
 
-AUTO now computes torque PID -> inverse induction motor model -> V20 Hz. Physical AUTO remains inhibited by MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0 and unconfigured inertias. See TORQUE-CONTROL.md; manual Hz mode remains available for guarded commissioning.
+AUTO now computes torque PID -> inverse induction motor model -> V20 Hz. RUCK has confirmed the rotating motor and impeller inertias for EL 710 D4 02, article 146531: 0.0182 and 0.3530 kg·m² respectively (sum: 0.3712 kg·m²). These are configured for theoretical design; power, slip, fan loading and V20 dynamics still need validation. **Physical AUTO remains inhibited** by MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0. See TORQUE-CONTROL.md; manual Hz mode remains available for guarded commissioning.

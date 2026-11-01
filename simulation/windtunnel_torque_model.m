@@ -1,7 +1,8 @@
 %% Wind tunnel: torque PID + feedforward, induction motor frequency proxy
 % R.E. van Eekelen - simulation ONLY; no V20 hardware control.
 % Requires Control System Toolbox for tf, feedback, margin.
-% All catalogue data are conditional on verified exact motor variant.
+% RUCK has confirmed rotating inertias for EL 710 D4 02, article 146531.
+% Rated motor power, rpm, slip and fan load are UNVERIFIED approximations.
 clearvars; close all; clc
 Ts = 0.005;
 P = 4000; nRated = 1450; fRated = 50; polePairs = 2;
@@ -9,16 +10,9 @@ wRated = 2*pi*nRated/60;
 Tnom = P/wRated;
 wSync = 2*pi*fRated/polePairs;
 Ks = Tnom/(wSync-wRated); % approximate SECANT, not identified slope
-JmotorCatalogue = 0.0182; % W21 IE3 4-kW 4-pole 112M ONLY
-motorVariantConfirmed = false;
-Jfan = NaN; % insert measured/estimated fan inertia after verification
-fanInertiaConfirmed = false;
-if ~motorVariantConfirmed || ~fanInertiaConfirmed || ~isfinite(Jfan) || Jfan<=0
-    warning('Missing verified motor variant / fan inertia. Demonstration only.');
-    J = 0.30; % EXAMPLE, NOT the physical wind tunnel
-else
-    J = JmotorCatalogue + Jfan;
-end
+JmotorRUCK = 0.0182; % confirmed by RUCK technical support
+JfanRUCK = 0.3530; % confirmed by RUCK technical support
+J = JmotorRUCK + JfanRUCK; % 0.3712 kg*m^2
 vNom = 40; % measured approximately; pairing with 1450 rpm NOT verified
 Kv = vNom/wRated;
 fd = 0.02; Ad = 5; maxErr = 0.5;

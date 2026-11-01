@@ -5,7 +5,9 @@ model='windtunnel_torque_ff';
 if bdIsLoaded(model), close_system(model,0); end
 new_system(model); open_system(model);
 Ts=0.005;
-Jm=0.10; Jfan=0.20; J=Jm+Jfan; % illustrative, replace
+% RUCK EL 710 D4 02, article 146531: manufacturer-confirmed inertias.
+Jm=0.0182; Jfan=0.3530; J=Jm+Jfan; % total 0.3712 kg*m^2
+% WARNING: motor rpm/power/slip below are still unverified assumptions.
 ratedRPM=1450; ratedPower=4000; ratedHz=50; polePairs=2;
 omega0=ratedRPM*2*pi/60; Kv=40/omega0;
 Ks=(ratedPower/omega0)/(2*pi*ratedHz/polePairs-omega0);
