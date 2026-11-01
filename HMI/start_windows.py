@@ -61,6 +61,10 @@ def run() -> int:
                 [
                     sys.executable, "-m", "uvicorn", "main:app",
                     "--host", "127.0.0.1", "--port", "8000", "--workers", "1",
+                    # Native HMI polls /api/status ~10 times per second.
+                    # Silence routine HTTP access lines, but keep actual errors
+                    # and ESP32 connection warnings visible in this console.
+                    "--no-access-log",
                 ],
                 cwd=ROOT,
             )

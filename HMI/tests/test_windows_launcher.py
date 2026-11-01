@@ -35,6 +35,22 @@ class LauncherTests(unittest.TestCase):
                           side_effect=URLError("Connection refused")):
             self.assertEqual(start_windows.inspect_backend(), "absent")
 
+    def test_launcher_disables_verbose_http_access_logging(self):
+        # Keep the native HMI status polling rate unchanged: 10 Hz.
+        # This test checks only how the locally spawned uvicorn is configured.
+        with patch.object(start_windows, "inspect_backend", side_effect=[
+            "absent", "current",
+        ]):
+            with patch.object(start_windows.subprocess, "Popen") as popen:
+                with patch.object(start_windows.subprocess, "call", return_value=0):
+                    popen.return_value.poll.return_value = None
+                    self.assertEqual(start_windows.run(), 0)
+                    args = popen.call_args.args[0]
+                    self.assertIn("--no-access-log", args)
+                    self.assertEqual(args[args.index("--port") + 1], "8000")
+                    self.assertEqual(args[args.index("--workers") + 1], "1")
+                    popen.return_value.terminate.assert_called_once()
+
     def test_never_kills_an_existing_incompatible_backend(self):
         with patch.object(start_windows, "inspect_backend", return_value="incompatible"):
             with patch.object(start_windows.subprocess, "Popen") as popen:
