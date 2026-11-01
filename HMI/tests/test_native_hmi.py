@@ -148,5 +148,37 @@ class NativeHMITests(unittest.TestCase):
 
 
 
+    def test_card_pages_use_direct_native_painting(self):
+        # Overview, Measurements, Storage and Settings all use Card.
+        # A graphics-effect composition regression would leave these pages blank
+        # while Raw Data/Cp placeholders (plain QFrame) still rendered.
+        from desktop import Card
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.resize(1500, 900)
+            window.show()
+            self.app.processEvents()
+            window._show_page("settings")
+            window.settings_tabs.setCurrentIndex(1)
+            self.app.processEvents()
+            for name, card in (
+                ("overview", window.chart_card),
+                ("measurements", window.measurements_empty.parentWidget()),
+                ("storage", window.local_space.parentWidget().parentWidget()),
+                ("settings", window.filter_status.parentWidget()),
+            ):
+                window._show_page(name)
+                self.app.processEvents()
+                self.assertIsNone(card.graphicsEffect(), name)
+                self.assertTrue(card.isVisibleTo(window), name)
+                self.assertGreater(card.width(), 10, name)
+                self.assertGreater(card.height(), 10, name)
+            self.assertTrue(all(
+                child.graphicsEffect() is None
+                for child in window.findChildren(Card)
+            ))
+            window.close()
+
+
 if __name__ == "__main__":
     unittest.main()

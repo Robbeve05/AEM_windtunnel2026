@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -61,16 +60,19 @@ PAGES = (
 
 
 class Card(QFrame):
+    """Native card: use Qt stylesheet borders, not QGraphicsDropShadowEffect.
+
+    Qt graphics effects can stop compositing nested card contents after switching
+    between large scrollable pages on Windows. Simple framed widgets render
+    directly and remain visible when returning from Settings > Calibration.
+    """
     def __init__(self, parent=None, accent=False):
         super().__init__(parent)
         self.setObjectName("card")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         if accent:
             self.setProperty("accent", True)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setOffset(0, 3)
-        shadow.setColor(QColor(0, 0, 0, 20))
-        self.setGraphicsEffect(shadow)
 
 
 class ContentPageStack(QStackedWidget):
@@ -472,7 +474,6 @@ class HMIWindow(QMainWindow):
         self.side_stability = self._side_reading(readings, "FLOW STABILITY")
         right_layout.addLayout(readings)
         self.health_card = Card()
-        self.health_card.setGraphicsEffect(None)
         self.health_card.setProperty("section", True)
         health_layout = QVBoxLayout(self.health_card)
         health_layout.setContentsMargins(0, 10, 0, 0)
@@ -507,7 +508,6 @@ class HMIWindow(QMainWindow):
         health_layout.addWidget(self.usb_health)
         right_layout.addWidget(self.health_card)
         warning_card = Card()
-        warning_card.setGraphicsEffect(None)
         warning_card.setProperty("section", True)
         warning_layout = QVBoxLayout(warning_card)
         warning_layout.setContentsMargins(0, 10, 0, 0)
@@ -525,7 +525,6 @@ class HMIWindow(QMainWindow):
         warning_layout.addWidget(warning_notice)
         right_layout.addWidget(warning_card)
         event_card = Card()
-        event_card.setGraphicsEffect(None)
         event_card.setProperty("section", True)
         event_layout = QVBoxLayout(event_card)
         event_layout.setContentsMargins(0, 10, 0, 0)
