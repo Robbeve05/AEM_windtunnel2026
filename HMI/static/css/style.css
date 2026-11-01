@@ -380,3 +380,12 @@ body.collapsed{grid-template-columns:72px minmax(0,1fr) 304px}
 @media (prefers-reduced-motion:reduce) {
   #esp32-machine-detail[data-state="ESTOP_RELEASED"] { animation:none; }
 }
+/* Fan calibration stays inside Settings and reuses the existing card controls. */
+#fan-configuration{flex-wrap:wrap;align-items:end}
+#fan-configuration label{display:flex;flex-direction:column;gap:6px}
+#fan-configuration input{width:110px}
+#fan-curve{display:block;width:100%;max-height:280px;margin:16px 0}
+#fan-percent{width:100%;accent-color:var(--avans-red)}
+#fan-runs p{overflow-wrap:anywhere}
+#fan-runs a{margin-right:12px}
+#fan-results td{font-variant-numeric:tabular-nums}

@@ -50,7 +50,7 @@ $('setpoint-form').addEventListener('submit',async event=>{
   event.preventDefault();
   try {
     const val=Number($('setpoint').value);
-    if(!Number.isFinite(val)||val<0||val>config.max_airspeed_ms)throw new Error('Setpoint out of range');
+    if(!Number.isFinite(val)||val<0||val>Math.min(40,config.max_airspeed_ms))throw new Error('Setpoint out of range');
     await api('tunnel/setpoint',{airspeed_ms:val});
     toast('Setpoint sent to ESP32');
   }catch(error){toast(error.message,true);}

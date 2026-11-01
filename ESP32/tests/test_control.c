@@ -12,6 +12,11 @@
 #include "../src/ControlTask.c"
 #include "../src/InputHandlerTask.c"
 
+/* Calibration storage is exercised by the separate NVS host suite. */
+static bool calibration_enabled;
+bool FanCalibration_IsValid(void) { return calibration_enabled; }
+bool FanCalibration_ControlGate(bool safe) { (void)safe;return false; }
+float FanCalibration_GetBaseFrequency(float v,float f) { (void)v;return calibration_enabled?20.0f:f; }
 static Queue q[7];
 QueueHandle_t commands = &q[0], sensors = &q[1], motor_requests = &q[2], motor_status = &q[3],
               telemetry = &q[4], safety_status = &q[5], pi_heartbeat = &q[6];
@@ -201,10 +206,33 @@ static void healthy_context(ControlContext *c)
     StateMachine_Init(&c->machine, 0);
     c->machine.state = STATE_READY;
     c->machine.entered_ms = 900;
-    assert(Regelaar_INIT(&c->controller, CONTROL_CLOCK_PERIOD_S));
+    RegelaarDesignOutput design = {.j=0.3f, .kv=0.25f,
+        .kp=2.0f, .ki=1.0f, .kd=0.0f, .tf=0.05f};
+    assert(TorqueLoadControl_Init(&c->torque_controller, &design, CONTROL_CLOCK_PERIOD_S));
+    c->torque_model_ready = true;
+    c->motor_model = (MotorModel){.inertia_kgm2=0.3f, .slip_gain_nm_per_rad_s=1.0f,
+        .load_coeff_nm_per_rad_s2=0.001f, .pole_pairs=2.0f,
+        .nominal_air_omega_gain=0.25f, .max_command_hz=50.0f};
 }
 int main(void)
 {
+    ControlContext check={0};
+    check.motor_model=(MotorModel){.inertia_kgm2=0.3f,.slip_gain_nm_per_rad_s=1,.load_coeff_nm_per_rad_s2=0.001f,.pole_pairs=2,.nominal_air_omega_gain=0.1f,.max_command_hz=50};
+    check.status.control_setpoint=10;
+    check.torque_output=(TorqueLoadOutput){.pid_nm=2,.acceleration_nm=3,.fan_load_nm=999};
+    MotorModelRequest req={.rotor_rad_s=100,.reference_accel_ms2=1,.pid_torque_nm=2};
+    MotorModelResult expected,result;
+    assert(MotorModel_TorqueToFrequency(&check.motor_model,&req,&expected));
+    assert(automatic_frequency(&check,&req,&result));
+    assert(result.frequency_hz==expected.frequency_hz);
+    calibration_enabled=true;
+    assert(automatic_frequency(&check,&req,&result));
+    assert(fabsf(result.frequency_hz-(20+5/3.14159265359f))<0.0001f);
+    check.torque_output.pid_nm=1000;
+    assert(automatic_frequency(&check,&req,&result));assert(result.frequency_hz==50 && result.saturated);
+    calibration_enabled=false;
+    puts("PASS DEFAULT physical model, CALIBRATED torque correction once, no duplicate fan/acceleration load, saturation");
+
     const unsigned sizes[] = {sizeof(PiCommand),   sizeof(Sample),    sizeof(MotorRequest),
                               sizeof(MotorStatus), sizeof(Telemetry), sizeof(SafetySnapshot),
                               sizeof(PiHeartbeat)};
@@ -430,10 +458,10 @@ int main(void)
     c.motor.actual_hz=10; c.motor.tick=c.now_tick;
     c.status.manual_hz=50;
     c.sample.value=999; /* Would produce a PI error; MANUAL must ignore it. */
-    const Regelaar before=c.controller;
+    const TorqueLoadControl before=c.torque_controller;
     Control_UpdateController(&c);
     assert(c.frequency_running && c.status.applied_hz>=10 && c.status.applied_hz<10.001f);
-    assert(memcmp(&before,&c.controller,sizeof(before))==0);
+    assert(memcmp(&before,&c.torque_controller,sizeof(before))==0);
     float previous_hz=c.status.applied_hz;
     for(int n=0;n<3000;n++) {
         if(n==100) c.status.manual_hz=0;
@@ -452,8 +480,8 @@ int main(void)
     assert(c.machine.state==STATE_FAULT && arms==1);
     healthy_context(&c);c.machine.state=STATE_RUNNING;c.sample.value=0;c.status.setpoint=10;
     Control_UpdateController(&c);
-    assert(c.curve_running && !c.frequency_running && c.controller.motorHist.gevuld);
-    puts("PASS manual quintic, no PI in MANUAL, AUTO PI retained, deferred target, stale feedback inhibits arm, immediate fault bypass");
+    assert(c.curve_running && !c.frequency_running && c.torque_controller.previous_valid);
+    puts("PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass");
     control_task_handle=(void*)1; sensor_task_handle=(void*)2;
     for(unsigned n=0;n<4;n++) (void)ControlClockInterrupt(NULL,NULL,NULL);
     assert(notified[0]==sensor_task_handle && notified[1]==control_task_handle &&

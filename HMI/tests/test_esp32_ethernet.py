@@ -96,7 +96,7 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.client.command(command), "OK QUEUED")
         self.assertEqual(await self.client.command("FREQ 5.000"), "OK QUEUED")
         self.assertEqual(await self.client.command("SETPOINT 12.000"), "OK QUEUED")
-        for denied in ("START", "RESET", "OFF2", "LED RED 0", "LAMP GREEN 1", "SETPOINT nan", "FREQ 50.1", "FREQ 55", "FREQ -1", "FREQ inf", "FREQ nan", "FREQ 50.001", "SETPOINT 30.1", "PID nan 0 0", "PID 1 0 0\n", "FILTER 1\nSTOP"):
+        for denied in ("START", "RESET", "OFF2", "LED RED 0", "LAMP GREEN 1", "SETPOINT nan", "FREQ 50.1", "FREQ 55", "FREQ -1", "FREQ inf", "FREQ nan", "FREQ 50.001", "SETPOINT 40.1", "PID nan 0 0", "PID 1 0 0\n", "FILTER 1\nSTOP"):
             with self.assertRaises(ValueError):
                 await self.client.command(denied)
         self.assertEqual(self.client.snapshot()["fault"], "EMERGENCY_STOP")

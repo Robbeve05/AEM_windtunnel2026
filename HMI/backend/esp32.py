@@ -8,9 +8,9 @@ import time
 from urllib.parse import unquote
 
 STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"}
-FLOATS = {"manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
+FLOATS = {"air_density", "manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
           "control_hz", "modbus_hz", "filter_hz"}
-INTS = {"outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
+INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
         "estop", "relay", "reset_required", "stop", "inputs_valid", "pi", "commissioned",
         "estop_pressed", "safety_relay_ok", "stop_button_ok", "pi_connected", "taps_valid",
         "sample_seq", "sensor_errors", "modbus_errors", "modbus_timeouts", "control_period_us",
@@ -90,7 +90,9 @@ class ESP32Client:
             if float(command.split()[1])>50: raise ValueError("Manual frequency too high")
         elif re.fullmatch(r"SETPOINT [0-9]+(?:\.[0-9]{1,3})?", command):
             pass
-            if float(command.split()[1]) > 30: raise ValueError("Setpoint too high")
+            if float(command.split()[1]) > 40: raise ValueError("Setpoint too high")
+        elif command in ("CAL_INFO", "CAL_COMMIT", "CAL_ABORT", "CAL_RESET") or re.fullmatch(r"CAL_(?:BEGIN|POINT) [0-9]+ [0-9]+ [0-9]+", command):
+            pass
         elif command.startswith("PID "):
             parts = command.split(" ")
             if len(parts) != 4 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 1000 for v in parts[1:]):

@@ -10,6 +10,7 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = "fan_calibration"; Sources = @("tests\test_fan_calibration.c"); Flags = "" },
     @{ Name = 'indicators'; Sources = @('tests\test_indicators.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
     @{ Name = 'outputs_default'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS' },
     @{ Name = 'outputs_disabled'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1' },
@@ -17,12 +18,15 @@ $cases = @(
     @{ Name = 'outputs_active_low'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1 /DEXTERNAL_STATUS_LEDS_ENABLED=1 /DSTATUS_LED_ACTIVE_LEVEL=0 /DVFD_ENABLE_ACTIVE_LEVEL=0' },
     @{ Name = 'ota_safety'; Sources = @('tests\test_ota_safety.c'); Flags = '' },
     @{ Name = 'sensors'; Sources = @('tests\test_sensors.c', 'src\PressureSensors.c'); Flags = '/DPRESSURE_TAPS_ENABLED=1 /DABP2_ADDRESS=0x29 /DABP2_MIN_PA=0 /DABP2_MAX_PA=1000 /DABP2_OUTPUT_MIN=1677722 /DABP2_OUTPUT_MAX=15099494' },
-    @{ Name = 'core'; Sources = @('tests\test_core.c', 'src\Regelaar.c', 'src\PiProtocol.c'); Flags = '' },
+    @{ Name = 'core'; Sources = @('tests\test_core.c', 'src\PiProtocol.c'); Flags = '' },
+    @{ Name = 'torque'; Sources = @('tests\test_torque_load_control.c', 'src\TorqueLoadControl.c'); Flags = '' },
+    @{ Name = 'motor_model'; Sources = @('tests\test_motor_model.c', 'src\MotorModel.c'); Flags = '' },
+    @{ Name = 'torque_design'; Sources = @('tests\test_regelaar_design.c', 'src\RegelaarDesign.c'); Flags = '' },
     @{ Name = 'curve'; Sources = @('tests\test_curve.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'v20'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },
     @{ Name = 'v20_inhibited'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=0' },
     @{ Name = 'startup'; Sources = @('tests\test_startup.c'); Flags = '/DSIMULATION_MODE=1' },
-    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\Regelaar.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' }
+    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\RegelaarDesign.c', 'src\TorqueLoadControl.c', 'src\MotorModel.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' }
 )
 $lines = @('@echo off', ('call "' + $vcvars + '" >nul'), 'if errorlevel 1 exit /b 1',
            ('pushd "' + $output + '"'), 'if errorlevel 1 exit /b 1')

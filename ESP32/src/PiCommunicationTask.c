@@ -15,6 +15,8 @@
 #include "SafetyIO.h"
 #include "StatusOutput.h"
 #include "DigitalOutputs.h"
+#include "FanCalibration.h"
+#include <math.h>
 #include "lwip/sockets.h"
 #include <errno.h>
 #include <unistd.h>
@@ -67,6 +69,13 @@ static void process(const char *line)
         return;
     }
 #endif
+    if (!strncmp(line,"CAL_",4)) {
+        Telemetry t={0}; MotorStatus m={0}; char response[256];
+        bool ready=xQueuePeek(telemetry,&t,0)==pdTRUE && t.state==STATE_READY;
+        bool stopped=xQueuePeek(motor_status,&m,0)==pdTRUE && m.ready && m.ok &&
+            (TickType_t)(xTaskGetTickCount()-m.tick)<pdMS_TO_TICKS(SENSOR_TIMEOUT_MS) && fabsf(m.actual_hz)<=0.2f;
+        FanCalibration_HandleCommand(line,ready,stopped,response,sizeof(response));reply(response);return;
+    }
     PiCommand c;
     if (!PiProtocol_Parse(line, &c))
     {
@@ -137,6 +146,7 @@ static void process(const char *line)
 void PiCommunicationTask(void *argument)
 {
     (void)argument;
+    FanCalibration_Init();
     Ethernet_Init();
     int server = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     ESP_ERROR_CHECK(server >= 0 ? ESP_OK : ESP_FAIL);
@@ -278,6 +288,11 @@ void PiCommunicationTask(void *argument)
                     }
                     buffer[length]=0;
                 }
+                FanCalibrationStatus cal;FanCalibration_GetStatus(&cal);
+                if(length>0 && length<(int)sizeof(buffer)-160)
+                    length+=snprintf(buffer+length,sizeof(buffer)-length,
+                        " air_density=%.4f cal_valid=%d cal_active=%d cal_points=%u cal_crc=%lu cal_version=%u cal_source=%s",
+                        AIR_DENSITY,cal.valid,cal.valid,cal.points,(unsigned long)cal.crc,cal.version,cal.valid?"CALIBRATED":"DEFAULT");
                 DigitalOutputStatus outputs;
                 DigitalOutputs_GetStatus(&outputs);
                 if(length>0 && length<(int)sizeof(buffer)-192)

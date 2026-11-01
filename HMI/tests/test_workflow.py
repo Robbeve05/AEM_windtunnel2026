@@ -40,7 +40,7 @@ class WorkflowTests(unittest.TestCase):
     def test_full_workflow_and_independent_controls(self):
         self.controller.simulation = False
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'Test'}).status_code, 400)
-        self.assertEqual(self.client.post('/api/tunnel/setpoint', json={'airspeed_ms':31}).status_code, 400)
+        self.assertEqual(self.client.post('/api/tunnel/setpoint', json={'airspeed_ms':41}).status_code, 400)
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'../bad'}).status_code, 422)
         self.controller.simulation = True
         self.post('tunnel/setpoint', {'airspeed_ms':1})
@@ -169,6 +169,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(recovered.list()[0]['state'],'ERROR')
         with self.assertRaises(ValueError):
             recovered.folder_for('../outside')
+
+    def test_calibration_routes_and_40_limit(self):
+        self.assertEqual(self.client.post('/api/tunnel/setpoint',json={'airspeed_ms':40}).status_code,200)
+        self.assertEqual(self.client.post('/api/tunnel/setpoint',json={'airspeed_ms':40.1}).status_code,400)
+        self.assertEqual(self.client.get('/api/calibration/fan/status').json()['state'],'IDLE')
+        self.assertEqual(self.client.get('/api/calibration/fan/runs').json(),[])
+        self.assertEqual(self.client.post('/api/calibration/fan/prepare',json={}).status_code,400)
+        self.assertEqual(self.client.post('/api/calibration/fan/reset').status_code,400)
+        self.assertEqual(self.client.get('/api/calibration/fan/runs/invalid/files/calibration.json').status_code,400)
+        with self.client.websocket_connect('/ws/live') as ws:
+            self.assertIn('calibration',ws.receive_json())
 
 
 if __name__ == '__main__':

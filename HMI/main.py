@@ -13,6 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.fan_calibration import FanCharacteristicCalibrator, CalibrationConfig
 from backend.esp32 import ESP32Client
 from backend.measurements import Measurements
 from backend.models import Config, FlowMetricsSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
@@ -29,6 +30,7 @@ class Controller:
         self.simulation = self.config.simulation
         self.esp32_mode = not self.simulation
         self.esp32 = ESP32Client(self.config.esp32_host, self.config.esp32_port) if self.esp32_mode else None
+        self.calibration = FanCharacteristicCalibrator(self.esp32, self.base / "data/calibrations", self.config)
         self.esp32_frame = {}
         self._last_pitot_sequence = None
         self.tunnel = Simulator(self.config) if self.simulation else None
@@ -123,6 +125,7 @@ class Controller:
         pressure_filter = {'configured_cutoff_hz': self.config.filter_cutoff_hz, 'reported_cutoff_hz': reported_filter, 'confirmed': reported_filter is not None and math.isclose(reported_filter, self.config.filter_cutoff_hz, abs_tol=0.06)}
         measurement = self.measurements.status()
         return dict(
+            calibration=self.calibration.status(),
             sample=self.sample,
             setpoint=self.setpoint,
             tunnel_state=self.tunnel_state,
@@ -144,6 +147,7 @@ class Controller:
     async def _esp32_status(self, frame: dict):
         now = time.monotonic()
         self.esp32_frame = frame
+        self.calibration.publish(frame)
         if frame.get('sensor_ok') != 1:
             return
         # The 50 Hz STATUS stream repeats the same 20 Hz pitot sample.
@@ -197,6 +201,7 @@ async def lifespan(app):
     app.state.controller = controller
     task = asyncio.create_task(controller.loop())
     yield
+    await controller.calibration.cancel()
     controller.running = False
     if controller.esp32:
         await controller.esp32.close()
@@ -260,12 +265,14 @@ async def set_flow_metrics(body: FlowMetricsSetting):
 @app.post('/api/settings/pressure-filter')
 async def set_pressure_filter(body: PressureFilterSetting):
     c = control()
-    if c.esp32_mode:
-        await c.esp32.command(f'FILTER {body.cutoff_hz:.2f}')
-    c.config.filter_cutoff_hz = body.cutoff_hz
-    (c.base / 'config/config.json').write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
-    c.event(f'Pitot pressure filter setpoint: {body.cutoff_hz:.1f} Hz')
-    return {'cutoff_hz':body.cutoff_hz, 'command_sent':c.esp32_mode, 'device_confirmed':False}
+    c.calibration.require_idle()
+    async with c.calibration.lock:
+        if c.esp32_mode:
+            await c.esp32.command(f'FILTER {body.cutoff_hz:.2f}')
+        c.config.filter_cutoff_hz = body.cutoff_hz
+        (c.base / 'config/config.json').write_text(c.config.model_dump_json(indent=2), encoding='utf-8')
+        c.event(f'Pitot pressure filter setpoint: {body.cutoff_hz:.1f} Hz')
+        return {'cutoff_hz':body.cutoff_hz, 'command_sent':c.esp32_mode, 'device_confirmed':False}
 
 
 @app.post('/api/tunnel/start')
@@ -286,36 +293,42 @@ async def stop_tunnel():
 @app.post('/api/tunnel/mode')
 async def select_mode(body: ControlMode):
     c=control()
-    if not c.esp32_mode or c.esp32.snapshot().get('state')!='READY':
-        raise ValueError('Physical READY state required')
-    await c.esp32.command('MODE '+body.mode)
-    return c.status()
+    c.calibration.require_idle()
+    async with c.calibration.lock:
+        if not c.esp32_mode or c.esp32.snapshot().get('state')!='READY':
+            raise ValueError('Physical READY state required')
+        await c.esp32.command('MODE '+body.mode)
+        return c.status()
 
 @app.post('/api/tunnel/frequency')
 async def select_frequency(body: ManualFrequency):
     c=control()
-    s=c.esp32.snapshot() if c.esp32_mode else {}
-    if s.get('mode')!='MANUAL' or s.get('state') not in ('READY','RUNNING'):
-        raise ValueError('Manual mode and live ESP32 required')
-    await c.esp32.command(f'FREQ {body.hz:.3f}')
-    return c.status()
+    c.calibration.require_idle()
+    async with c.calibration.lock:
+        s=c.esp32.snapshot() if c.esp32_mode else {}
+        if s.get('mode')!='MANUAL' or s.get('state') not in ('READY','RUNNING'):
+            raise ValueError('Manual mode and live ESP32 required')
+        await c.esp32.command(f'FREQ {body.hz:.3f}')
+        return c.status()
 
 @app.post('/api/tunnel/setpoint')
 async def setpoint(body: Setpoint):
     c = control()
-    if body.airspeed_ms > min(30.0, c.config.max_airspeed_ms):
-        raise ValueError('Setpoint exceeds configured maximum wind speed')
-    if c.esp32_mode:
-        await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
-        c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
+    c.calibration.require_idle()
+    async with c.calibration.lock:
+        if body.airspeed_ms > min(40.0, c.config.max_airspeed_ms):
+            raise ValueError('Setpoint exceeds configured maximum wind speed')
+        if c.esp32_mode:
+            await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
+            c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
+            return c.status()
+        if not c.simulation:
+            raise ValueError('Airspeed setpoint control is unavailable in this mode')
+        if body.airspeed_ms > min(40.0, c.config.max_airspeed_ms):
+            raise ValueError('Setpoint exceeds configured maximum wind speed')
+        c.tunnel.setpoint = body.airspeed_ms
+        c.event(f'Setpoint changed to {body.airspeed_ms:g} m/s')
         return c.status()
-    if not c.simulation:
-        raise ValueError('Airspeed setpoint control is unavailable in this mode')
-    if body.airspeed_ms > min(30.0, c.config.max_airspeed_ms):
-        raise ValueError('Setpoint exceeds configured maximum wind speed')
-    c.tunnel.setpoint = body.airspeed_ms
-    c.event(f'Setpoint changed to {body.airspeed_ms:g} m/s')
-    return c.status()
 
 
 @app.post('/api/measurement/start')
@@ -420,3 +433,37 @@ async def live(websocket: WebSocket):
             await asyncio.sleep(0.1)
     except (WebSocketDisconnect, RuntimeError, OSError):
         pass
+
+
+@app.post('/api/calibration/fan/prepare')
+async def prepare_fan(body: CalibrationConfig):
+    return await control().calibration.prepare(body)
+
+@app.get('/api/calibration/fan/status')
+async def fan_status():
+    return control().calibration.status()
+
+@app.post('/api/calibration/fan/cancel')
+async def cancel_fan():
+    return await control().calibration.cancel()
+
+@app.get('/api/calibration/fan/runs')
+async def fan_runs():
+    return await asyncio.to_thread(control().calibration.runs)
+
+@app.get('/api/calibration/fan/runs/{identifier}')
+async def fan_run(identifier: str):
+    import json
+    return json.loads(control().calibration.file(identifier).read_text(encoding='utf-8'))
+
+@app.get('/api/calibration/fan/runs/{identifier}/files/{filename}')
+async def fan_file(identifier: str, filename: str):
+    return FileResponse(control().calibration.file(identifier, filename), filename=filename)
+
+@app.post('/api/calibration/fan/runs/{identifier}/deploy')
+async def deploy_fan(identifier: str):
+    return await control().calibration.deploy(identifier)
+
+@app.post('/api/calibration/fan/reset')
+async def reset_fan():
+    return await control().calibration.reset()
