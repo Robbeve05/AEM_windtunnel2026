@@ -419,6 +419,7 @@ class HMIWindow(QMainWindow):
         self.manual_hz.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.manual_hz.setToolTip("Enter a V20 frequency from 0 to 50 Hz. Applying requires MANUAL mode.")
         self.manual_apply=QPushButton("Apply frequency")
+        self.manual_apply.setEnabled(False)
         self.manual_apply.clicked.connect(self._apply_hz)
         self.vfd_status_text = QLabel("VFD: UNKNOWN")
         self.vfd_status_text.setObjectName("hint")
