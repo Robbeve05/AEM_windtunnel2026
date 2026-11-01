@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QAbstractSpinBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -334,7 +335,7 @@ class HMIWindow(QMainWindow):
 
         self.right = QWidget()
         self.right.setObjectName("rightSidebar")
-        self.right.setFixedWidth(304)
+        self.right.setFixedWidth(324)
         right_layout = QVBoxLayout(self.right)
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(9)
@@ -367,18 +368,24 @@ class HMIWindow(QMainWindow):
         self.setpoint_spin.setDecimals(2)
         self.setpoint_spin.setSingleStep(0.5)
         self.setpoint_spin.setSuffix(" m/s")
-        self.setpoint_spin.setEnabled(False)
+        self.setpoint_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.setpoint_spin.setToolTip("Enter a desired airflow velocity in m/s. Applying requires a connected ESP32 in AUTO mode.")
         self.setpoint_initialized = False
         self.setpoint_apply = QPushButton("Apply setpoint")
         self.setpoint_apply.setEnabled(False)
         self.setpoint_apply.clicked.connect(self._apply_setpoint)
         self.mode_select=QComboBox()
         self.mode_select.addItems(["AUTO","MANUAL"])
-        self.mode_apply=QPushButton("Apply control mode (READY only)")
+        self.mode_select.setToolTip("AUTO: Pitot airspeed feedback control. MANUAL: V20 frequency command.")
+        self.mode_apply=QPushButton("Apply mode")
+        self.mode_apply.setToolTip("AUTO regulates Pitot airspeed; MANUAL commands V20 frequency with a smooth ramp. Changes require READY.")
         self.mode_apply.clicked.connect(self._apply_mode)
         self.manual_hz=QDoubleSpinBox()
         self.manual_hz.setRange(0,50)
         self.manual_hz.setSuffix(" Hz")
+        self.manual_hz.setDecimals(2)
+        self.manual_hz.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.manual_hz.setToolTip("Enter a V20 frequency from 0 to 50 Hz. Applying requires MANUAL mode.")
         self.manual_apply=QPushButton("Apply frequency")
         self.manual_apply.clicked.connect(self._apply_hz)
         self.vfd_status_text = QLabel("VFD: UNKNOWN")
@@ -387,14 +394,32 @@ class HMIWindow(QMainWindow):
         self.timing_status_text = QLabel("Control cycle: awaiting telemetry")
         self.timing_status_text.setObjectName("hint")
         self.timing_status_text.setWordWrap(True)
-        control_layout.addWidget(control_label)
         control_layout.addWidget(self.tunnel_state_detail)
-        control_layout.addWidget(self.setpoint_spin)
-        control_layout.addWidget(self.setpoint_apply)
+        mode_label = QLabel("CONTROL MODE")
+        mode_label.setObjectName("smallLabel")
+        control_layout.addWidget(mode_label)
         control_layout.addWidget(self.mode_select)
         control_layout.addWidget(self.mode_apply)
+        self.mode_explanation = QLabel(
+            "AUTO regulates airspeed using the Pitot sensor. MANUAL commands the V20 frequency."
+        )
+        self.mode_explanation.setObjectName("controlHelp")
+        self.mode_explanation.setWordWrap(True)
+        control_layout.addWidget(self.mode_explanation)
+        control_layout.addSpacing(7)
+        control_layout.addWidget(control_label)
+        control_layout.addWidget(self.setpoint_spin)
+        control_layout.addWidget(self.setpoint_apply)
+        frequency_label = QLabel("MANUAL FAN FREQUENCY · Hz")
+        frequency_label.setObjectName("smallLabel")
+        control_layout.addSpacing(7)
+        control_layout.addWidget(frequency_label)
         control_layout.addWidget(self.manual_hz)
         control_layout.addWidget(self.manual_apply)
+        self.control_lock_reason = QLabel("Waiting for ESP32 connection. Values can be entered, but commands are locked.")
+        self.control_lock_reason.setObjectName("controlLockReason")
+        self.control_lock_reason.setWordWrap(True)
+        control_layout.addWidget(self.control_lock_reason)
         control_layout.addWidget(self.vfd_status_text)
         control_layout.addWidget(self.timing_status_text)
         right_layout.addWidget(control)
@@ -565,9 +590,16 @@ class HMIWindow(QMainWindow):
         setattr(self, f"{key}_note", note)
 
     def _build_overview(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # Use a scrollable overview content widget so the cards remain visible
+        # across Windows DPI scaling and QStackedWidget page switches.
+        page = QScrollArea()
+        page.setObjectName("overviewScroll")
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setWidgetResizable(True)
+        self.overview_content = QWidget()
+        self.overview_content.setObjectName("overviewContent")
+        layout = QVBoxLayout(self.overview_content)
+        layout.setContentsMargins(1, 1, 9, 1)
         layout.setSpacing(12)
         self.metrics_widget = QWidget()
         self.metrics_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -684,7 +716,7 @@ class HMIWindow(QMainWindow):
         self.measurement_name.setPlaceholderText("e.g. NACA0012_AOA5_Run01")
         self.measurement_name.setMaxLength(80)
         recording.addWidget(self.measurement_name)
-        recording_hint = QLabel("Recording only · 100 Hz saves every incoming sample; current Uno sends about 25 samples/s.")
+        recording_hint = QLabel("Recording rate selects how often new Pitot data is saved; the ESP32 supplies about 20 unique samples/s.")
         recording_hint.setObjectName("recordingHint")
         recording.addWidget(recording_hint)
         stats = QHBoxLayout()
@@ -761,7 +793,7 @@ class HMIWindow(QMainWindow):
             self.operating_grid.addWidget(cell_widget, index // 2, index % 2)
             self.operating_values[title] = value
         operating.addLayout(self.operating_grid)
-        hint = QLabel("Live values are derived from the single USB-connected pitot sensor.")
+        hint = QLabel("Live values are derived from the ESP32-connected Pitot pressure sensor.")
         hint.setObjectName("hint")
         operating.addWidget(hint)
         self.flow_summary = self.operating_values["5 S MEAN"]
@@ -774,6 +806,8 @@ class HMIWindow(QMainWindow):
         layout.setStretch(0, 0)
         layout.setStretch(1, 1)
         layout.setStretch(2, 0)
+        page.setWidget(self.overview_content)
+        self.overview_page = page
         self.pages.addWidget(page)
 
     def _build_raw(self):
@@ -1134,7 +1168,15 @@ class HMIWindow(QMainWindow):
             #sideValue {{ font-size:19px; font-weight:700; }}
             #development {{ background:#292c30; border:1px solid #444; border-radius:4px; }}
             #rightSidebar #developmentText {{ color:#ffd58a; background:transparent; border:0; padding:0; font-size:11px; font-weight:700; }}
-            #rightSidebar #hint {{ color:#9da1a6; font-size:9px; }}
+            #rightSidebar #hint {{ color:#abb0b6; font-size:10px; }}
+            #rightSidebar #controlHelp {{ color:#bbc3cb; font-size:10px; line-height:1.2; }}
+            #rightSidebar #controlLockReason {{ color:#e6bc77; background:#393124; border:1px solid #665337; border-radius:5px; padding:8px; font-size:10px; }}
+            #rightSidebar #development QDoubleSpinBox, #rightSidebar #development QComboBox {{ background:white; color:#1b2229; border:1px solid #cbd1d7; border-radius:5px; padding:9px 10px; min-height:24px; font-size:13px; }}
+            #rightSidebar #development QDoubleSpinBox:focus, #rightSidebar #development QComboBox:focus {{ border:2px solid {RED}; }}
+            #rightSidebar #development QPushButton {{ padding:9px 10px; min-height:22px; border-radius:5px; font-weight:600; }}
+            #rightSidebar #development QPushButton:disabled {{ background:#3b4147; border:1px solid #535961; color:#949da6; }}
+            #rightSidebar #development QPushButton:enabled {{ background:white; color:#21262e; }}
+            #rightSidebar #development QPushButton:hover:enabled {{ background:#fff0ed; border-color:{RED}; }}
             #safetyNote {{ color:#92969a; font-size:9px; }}
             #developmentText {{ color:#9a6100; background:#fff4dd; border:1px solid #ead0a2; border-radius:4px; padding:4px 6px; font-size:9px; font-weight:700; }}
             #warningNotice {{ background:#3a3022; border:1px solid #5b482c; border-radius:4px; }}
@@ -1435,15 +1477,24 @@ class HMIWindow(QMainWindow):
                 f"State: {machine_state} · physical START/RESET only"
             )
         online = not stale and not is_sim
-        self.setpoint_spin.setEnabled(online)
+        self.setpoint_spin.setEnabled(True)
         self.setpoint_apply.setEnabled(online)
         self.mode_apply.setEnabled(online and machine_state=='READY')
-        self.mode_select.setEnabled(online and machine_state=='READY')
-        self.manual_hz.setEnabled(online and drive.get('mode')=='MANUAL')
+        self.mode_select.setEnabled(True)
+        self.manual_hz.setEnabled(True)
         self.manual_apply.setEnabled(online and drive.get('mode')=='MANUAL')
         if online and not self.mode_select.hasFocus():
             self.mode_select.setCurrentText(drive.get('mode','AUTO'))
-        self.setpoint_apply.setEnabled(online and drive.get('mode')!='MANUAL')
+        self.setpoint_apply.setEnabled(online and drive.get('mode') == 'AUTO')
+        if not online:
+            reason = "OFFLINE · You can enter target values, but applying requires ESP32 communication."
+        elif machine_state != "READY":
+            reason = "Mode changes require READY. Physical START/STOP/RESET remain on the machine."
+        elif drive.get("mode") == "AUTO":
+            reason = "AUTO · Airspeed targets can be applied; manual frequency is locked."
+        else:
+            reason = "MANUAL · Frequency targets can be applied; AUTO setpoints are locked."
+        self.control_lock_reason.setText(reason)
         if online and not self.setpoint_initialized:
             try:
                 self.setpoint_spin.setValue(float(drive.get("sp", 0)))

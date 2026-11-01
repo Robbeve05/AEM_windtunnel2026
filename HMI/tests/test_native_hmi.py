@@ -61,5 +61,27 @@ class NativeHMITests(unittest.TestCase):
             window.close()
 
 
+    def test_overview_visible_after_navigation_without_esp32(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.show()
+            self.app.processEvents()
+            window._show_page("settings")
+            window._show_page("overview")
+            self.app.processEvents()
+            self.assertIs(window.pages.currentWidget(), window.overview_page)
+            self.assertIs(window.overview_page.widget(), window.overview_content)
+            self.assertTrue(window.chart_card.isVisibleTo(window))
+            self.assertTrue(window.recording_card.isVisibleTo(window))
+            self.assertTrue(window.operating_card.isVisibleTo(window))
+            self.assertTrue(window.setpoint_spin.isEnabled())
+            self.assertTrue(window.manual_hz.isEnabled())
+            self.assertFalse(window.setpoint_apply.isEnabled())
+            self.assertFalse(window.mode_apply.isEnabled())
+            self.assertFalse(window.manual_apply.isEnabled())
+            window.close()
+
+
+
 if __name__ == "__main__":
     unittest.main()
