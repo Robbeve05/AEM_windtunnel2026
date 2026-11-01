@@ -1,0 +1,62 @@
+name: Windtunnel software verification
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hmi:
+    name: Windows native Qt and FastAPI tests
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: HMI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native and backend dependencies
+        run: python -m pip install -r requirements-desktop.txt
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run complete HMI unit and integration suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+      - name: Validate native startup without ESP32
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "from PySide6.QtWidgets import QApplication; from desktop import HMIWindow; from unittest.mock import patch; app=QApplication([]); p=patch.object(HMIWindow,'_get',lambda *a,**kw:None); p.start(); w=HMIWindow(); w.resize(1600,900); w.show(); app.processEvents(); w._show_page('settings'); w.settings_tabs.setCurrentIndex(1); app.processEvents(); w._show_page('overview'); app.processEvents(); assert w.chart_card.isVisibleTo(w); print('Native smoke check OK'); w.close(); p.stop()"
+  esp32-host:
+    name: Windows C host regression suite
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run all C regression tests
+        shell: pwsh
+        run: ./tests/run_host_tests.ps1
+        working-directory: ESP32
+  esp32-build:
+    name: ESP32 PlatformIO compile (no upload)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: ESP32
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Build production firmware
+        run: python -m platformio run -e waveshare_s3
+      - name: Build simulation firmware
+        run: python -m platformio run -e waveshare_s3_sim
