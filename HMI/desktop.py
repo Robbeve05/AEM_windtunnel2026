@@ -7,6 +7,7 @@ from backend.esp32 import status_indication
 from datetime import datetime
 from pathlib import Path
 
+from native_calibration import CalibrationPanel
 from PySide6.QtCore import QIODevice, QSize, Qt, QTimer, QUrl, QSaveFile
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QTabWidget,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -361,7 +363,7 @@ class HMIWindow(QMainWindow):
         self.tunnel_state_detail.setWordWrap(True)
         self.tunnel_state_detail.setMinimumHeight(35)
         self.setpoint_spin = QDoubleSpinBox()
-        self.setpoint_spin.setRange(0, 30)
+        self.setpoint_spin.setRange(0, 40)
         self.setpoint_spin.setDecimals(2)
         self.setpoint_spin.setSingleStep(0.5)
         self.setpoint_spin.setSuffix(" m/s")
@@ -1028,7 +1030,11 @@ class HMIWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        card, box = self._card(layout, "System configuration", "Live acquisition settings for the Raspberry Pi HMI.")
+        self.settings_tabs = QTabWidget()
+        general = QWidget()
+        general_layout = QVBoxLayout(general)
+        general_layout.setContentsMargins(0, 0, 0, 0)
+        card, box = self._card(general_layout, "System configuration", "Live acquisition settings for the Raspberry Pi HMI.")
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(QLabel("5 s flow statistics\nFlow stability, rolling mean, standard deviation and min/max."))
         self.flow_toggle = QCheckBox()
@@ -1056,8 +1062,13 @@ class HMIWindow(QMainWindow):
         box.addWidget(self._heading("Pressure-tap system"))
         box.addWidget(QLabel("IN DEVELOPMENT · Multi-point Cp hardware is not connected yet."))
         box.addWidget(QLabel("Current hardware: ESP32-S3 + ASPD-4525 differential pressure sensor over Ethernet TCP. Fan/VFD control and angle-of-attack sensing remain disabled until commissioned."))
-        layout.addWidget(card)
-        layout.addStretch(1)
+        general_layout.addWidget(card)
+        general_layout.addStretch(1)
+        self.settings_tabs.addTab(general, "General")
+        self.calibration_panel = CalibrationPanel(self)
+        self.settings_tabs.addTab(self.calibration_panel, "Calibration")
+        self.settings_tabs.currentChanged.connect(lambda index: self.calibration_panel.refresh_runs() if index == 1 else None)
+        layout.addWidget(self.settings_tabs)
         self.pages.addWidget(page)
 
     def _apply_style(self):
@@ -1162,6 +1173,12 @@ class HMIWindow(QMainWindow):
             QLineEdit:focus, QComboBox:focus {{ border-color:{RED}; }}
             QHeaderView::section {{ background:#f1f1ee; color:#555; border:0; padding:7px; font-weight:700; }}
             QTableWidget {{ gridline-color:#e9e8e4; }}
+            QTabWidget::pane {{ border:1px solid #deded9; background:{CREAM}; }}
+            QTabBar::tab {{ background:#eee; padding:10px 22px; color:{INK}; }}
+            QTabBar::tab:selected {{ background:white; color:{RED}; border-bottom:2px solid {RED}; }}
+            #calibrationCard {{ background:white; border:1px solid #deded9; border-radius:5px; }}
+            #calibrationHeading {{ font-size:17px; font-weight:700; }}
+            #calibrationSource {{ color:{INK}; font-weight:600; }}
             QProgressBar {{ background:#eee; border:0; height:10px; text-align:center; }}
             QProgressBar::chunk {{ background:{RED}; }}
         """)
@@ -1178,6 +1195,8 @@ class HMIWindow(QMainWindow):
             button.setChecked(name == key)
         if key in ("measurements", "storage"):
             self._refresh_data()
+        if key == "settings" and self.settings_tabs.currentIndex() == 1:
+            self.calibration_panel.refresh_status()
 
     def _request(self, path, body=None, callback=None):
         request = QNetworkRequest(QUrl("http://127.0.0.1:8000/api/" + path))
@@ -1232,6 +1251,7 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(label), index, 0)
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
+        self.setpoint_spin.setMaximum(min(40.0, float(data.get("max_airspeed_ms", 40))))
 
     def _set_signal_indicator(self, label, color, blink=False, detail=""):
         """Non-safety indication; based solely on fresh status telemetry."""
@@ -1372,6 +1392,8 @@ class HMIWindow(QMainWindow):
             return
         self._last_status_ok = time.monotonic()
         self.state = data
+        if self.page_key == "settings" and self.settings_tabs.currentIndex() == 1:
+            self.calibration_panel.render(data.get("calibration") or {})
         filter_status = data.get("pressure_filter", {})
         if self.page_key == "settings":
             configured = filter_status.get("configured_cutoff_hz", self.config.get("filter_cutoff_hz", 1.0))

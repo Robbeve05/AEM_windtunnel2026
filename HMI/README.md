@@ -1,176 +1,23 @@
-# Windtunnel 2026 · Flight Deck HMI
+# Avans Windtunnel — Native PySide6 HMI
 
-FastAPI, vanilla JavaScript and offline canvas charts for the Avans wind tunnel. Runs without hardware on Windows and Raspberry Pi OS 64-bit. All six pages work without internet access. No frontend build step or CDN.
+The only operator interface is the native Qt application (`desktop.py`). The local FastAPI backend (`main.py`) remains responsible for acquisition, ESP32 Ethernet communication, measurements, calibration sequencing, persistent storage and exports. The browser-based operator frontend has been removed.
 
-**Nederlandstalige stap-voor-stap installatie vanaf een lege Pi, inclusief Arduino-firmware:** [HANDLEIDING-NEDERLANDS.md](./HANDLEIDING-NEDERLANDS.md).
+## Native interface
 
-## Start on Windows
+Six pages: Overview, Raw Data, Cp Analysis, Measurements, Storage, Settings. Settings has two tabs: General and Calibration. Calibration uses the existing ESP32 MANUAL mode, physical START/STOP and the FastAPI calibration endpoints. It supports configuration of 10–50 Hz, 5 Hz steps and 5-second averaging, live stability/status, plot, history, CSV/JSON export, Save & Activate and Reset Fan Calibration. Calibration lookup/CRC/NVS and torque-PID execution remain in ESP32 firmware.
 
-Open PowerShell in this **HMI** folder. Install Python 3.11 or newer if needed.
+## Local development
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+Install `requirements-desktop.txt`, start `uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1`, then launch `python desktop.py`. For headless GUI smoke tests set `QT_QPA_PLATFORM=offscreen`. Only one backend worker is supported; avoid `--reload` during recording.
 
-If script activation is blocked, activation is optional:
+## Raspberry Pi deployment
 
-```powershell
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
+Use `deploy/setup-pi-from-github.sh` for initial installation from `main`, or `deploy/update-pi.sh` for updates. `deploy/install-pi.sh` installs a local systemd backend service and a native PySide6 desktop launcher. Do not expose the backend publicly. All existing measurement data and configuration are retained by the installation/update scripts.
 
-Open http://localhost:8000. API documentation: http://localhost:8000/docs.
-Use one server process / worker: controller and recording ownership are process-local.
-Development reload interrupts active experiments; use the command without `--reload` during recording.
+## Physical safety
 
-## Operator workflow
+Remote START/RESET are unavailable. ESP32 operational interlocks, drive commissioning, safety circuit and physical STOP remain authoritative. Successful GUI/API tests do not commission real hardware. OTA remains maintenance-gated.
 
-1. Set the airspeed and press **Start tunnel**. The simulated fan ramps up with a first-order response.
-2. Wait for **RUNNING**. Enter a measurement name, for example `NACA0012_AOA5_Run01`.
-3. Choose a recording rate (1–100 Hz), enter a measurement name and press **Start measurement**. The selected rate only controls recording; it does not change the live display or the Arduino filter. At or above the sensor's incoming rate, every incoming sample is saved without creating duplicate samples.
-4. Press **Stop & save** to close CSV files, write metadata and calculate the mean Cp curve. The tunnel keeps running.
-5. Inspect the run in **Measurements**. The on-screen raw and processed previews show at most 200 rows. Use **Download complete raw CSV** / **Download complete processed CSV**, or export the measurement folder to USB, to get the complete recording.
-6. Choose a run in **Cp Analysis** to recalculate from stored samples using a different density.
-7. Open **Storage**, export a run or all unexported runs, then eject the simulated USB.
-8. Press **Software stop** to ramp the tunnel down. This does not stop an active recording; stopping flow during an experiment remains recorded.
+## API
 
-The software stop is **not a safety-rated emergency stop**. Physical E-stop, interlocks, watchdog and real-time control must be implemented independently in hardware / ESP32 firmware.
-
-## Storage and USB
-
-Each run is stored locally first:
-
-```text
-data/measurements/<UTC timestamp>_<sanitized name>_<unique suffix>/
-  raw_data.csv         # every selected incoming sample, with host UTC and measured values
-  processed_data.csv   # velocity, calculated q_inf and per-tap Cp
-  cp_curve.csv         # mean of valid per-sample Cp, pressure and tap geometry
-  experiment.json     # configuration snapshot, timing, counts and export state
-```
-
-Files flush each second and flush/fsync/close on stop. A run left open by an interrupted process is marked ERROR at the next startup; its CSV files are retained for recovery. This does not guarantee survival of every sample during power loss. Use reliable power and storage for experiments.
-
-The default `simulate_usb: true` exports to **data/simulated_usb/** on the local disk. This is a test destination, not a physical USB device. **Reconnect simulated USB** reverses simulated ejection.
-
-For physical USB, set `simulate_usb: false` and `usb_mount_path` to an existing, OS-mounted drive root (Windows example `E:/`; Linux example `/media/pi/WINDDATA`). The application never creates a missing physical mount. It checks free space, stages the full folder as `.partial`, then renames it after copying. Local data is never deleted. Re-exporting creates another uniquely named copy. Recalculating Cp marks the run unexported again. A failed export can leave a `.partial` folder on the destination for inspection.
-
-Physical safe unmount is delegated to the operating system: the UI's physical eject action provides instructions and does not claim to unmount the device. On Raspberry Pi use the desktop eject action or `udisksctl unmount -b /dev/sdX1` with the actual USB partition; on Windows use **Safely Remove Hardware**. Do not remove a device while export is running.
-
-## Configuration and Cp conventions
-
-Edit **config/config.json**, then restart. Settings displays the loaded configuration; it is intentionally read-only while experiments can be running.
-
-- `sample_rate_hz`: HMI acquisition/simulation-loop setting (default 20 Hz); it is separate from the per-measurement recording target. Browser WebSocket updates are bounded at 10 Hz to reduce Pi workload. Python supervisory timing is not hard real-time.
-- `recording_rate_hz`: selected per run from 1–100 Hz. The Pi retains at most one incoming sensor sample per selected interval. A 100 Hz target saves every sample the device sends; it does not upsample the input. The current Arduino sketch sends roughly 25 samples/s, so rates above that will report the actual lower incoming rate until faster sensor acquisition is commissioned. Each run records its requested and actual rate in `experiment.json`.
-- `filter_cutoff_hz`: Arduino-side first-order low-pass cutoff for pitot differential pressure (default 1 Hz, range 0.1–10 Hz). The Pi saves the value and automatically sends it to the Uno whenever it connects over USB; use **Apply to Arduino** only to change the saved setting. The Uno must have the updated firmware before it can apply or confirm changes. Lower cutoffs smooth more noise but increase response lag.
-- `pressure_taps`: any 1–128 uniquely named taps, with `x_c` from 0–1 and `surface` upper/lower.
-- `air_density`, `max_airspeed_ms`: validated flow parameters.
-- `serial_port`, `baud_rate`: future transport settings.
-- `data_directory`: absolute or relative to this HMI folder.
-- `simulation`, `simulate_usb`, `usb_mount_path`: simulation and export settings.
-
-Simulated pressure taps and p_inf use **absolute Pa**. Cp = (p − p_inf)/(0.5 ρ V²). Cp is blank/null when calculated q < 1 Pa, preventing division by zero and unstable coefficients near zero speed. Stored curves average valid per-sample Cp values, using the original run's tap configuration. Recalculation updates `cp_curve.csv` and Cp metadata; the original per-sample processed CSV is retained with its original density in the configuration snapshot. Negative Cp is plotted upward. `charts.js` accepts extra series for future XFOIL comparison; importing XFOIL files is not part of this delivery.
-
-Raw simulator values are already expressed in engineering units; the raw and calibrated columns are identical until actual calibration and ADC counts are supplied by firmware. The complete incoming frame is also visible in Raw Data.
-
-## ESP32 integration
-
-ESP32 firmware belongs in the top-level `../ESP32/` project folder. `backend/esp32.py` is the existing host-side serial adapter; it is not ESP32 firmware. Hardware mode intentionally fails startup until a validated firmware protocol is integrated. Keep `simulation: true` for this release. Commission command acknowledgements, sequence numbers, timestamp rollover, heartbeat timeout, pressure units/reference, sensor quality, reconnect behavior, fault reset and hardware interlocks before wiring the transport into `Controller`. The ESP32 must own PID, VFD and fast safety behavior; browser connection loss must never be the physical safety mechanism.
-
-The browser reconnects automatically with bounded exponential backoff and detects stale telemetry after four seconds. On disconnect it marks values stale and disables controls. Recording belongs to the server and continues if a browser disconnects.
-
-## Raspberry Pi OS 64-bit
-
-The Pi can run the HMI as a Python desktop application. Its interface is built with PySide6/Qt and reuses the Python acquisition and storage service; it does not open Chromium or render the web interface. The native interface follows the same navigation, colors, status panels, charts and measurement workflow.
-
-To install or replace the old manually copied version, paste this **single command** into the Pi terminal:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Robbeve05/AEM_windtunnel2026/RaspberryPi/HMI/deploy/setup-pi-from-github.sh -o /tmp/setup-windtunnel-hmi.sh && bash /tmp/setup-windtunnel-hmi.sh
-```
-
-The script uses the public GitHub repository without logging into GitHub. It installs Git and Python prerequisites, clones the `RaspberryPi` branch into `~/AEM_windtunnel2026`, and links `~/HMI` to its `HMI` project folder. If an older `~/HMI` or `~/AEM_windtunnel2026` already exists, it is renamed to a timestamped backup first. The existing `config/config.json` and all files in `data/` are copied into the new installation. It then installs the Python environment and creates the local service, **Windtunnel HMI** desktop/menu launcher, and desktop-session autostart. `sudo` may ask for the Pi's normal system password to install prerequisites; no GitHub credentials are needed.
-
-After installation, start **Windtunnel HMI** from the desktop menu. It opens as a native Qt window; close it with **Alt+F4**. The local service listens on `127.0.0.1` and is not exposed to the network.
-
-### Updating after programming on another computer
-
-On the development computer, commit and push your changes to the public `RaspberryPi` branch. On the Pi, close the HMI window, open a terminal, and run:
-
-```bash
-cd ~/AEM_windtunnel2026 && bash HMI/deploy/update-pi.sh
-```
-
-This pulls the latest code, reinstalls updated Python dependencies and desktop launchers, and restarts the backend service. The updater preserves the Pi's `HMI/config/config.json` and measurement files in `HMI/data/`; it stops with an error instead of overwriting other uncommitted source changes. Reopen **Windtunnel HMI** from the desktop menu after it finishes. The initial setup command is only needed once.
-
-### Updating Arduino firmware from the Pi
-
-If the Uno's USB cable is connected to the Pi, it can be flashed without opening the
-tunnel enclosure. From the repository checkout, install Arduino CLI and the Uno core once:
-
-```bash
-cd ~/AEM_windtunnel2026
-bash HMI/deploy/install-arduino-cli.sh
-bash HMI/deploy/flash-arduino.sh
-```
-
-The helper stops the HMI service before uploading and restarts it afterward. Turn off
-airflow and keep the pitot out of the airflow during startup zero calibration. See
-[ARDUINO-USB-SETUP.md](./ARDUINO-USB-SETUP.md) for serial-port and calibration details.
-
-For a browser-only/server deployment instead, copy this directory to `/home/pi/windtunnel-hmi` (replace `pi` with your actual login). Do not copy a Windows `.venv`; recreate it on the Pi.
-
-```bash
-cd /home/pi/windtunnel-hmi
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-hostname -I
-```
-
-From another PC on the same trusted network, open `http://<Pi-IP>:8000`. This initial local-lab application has no authentication; do not expose port 8000 to the public internet. Configure authentication and network access controls before broader deployment.
-
-For automatic startup, save this as `/etc/systemd/system/windtunnel-hmi.service`, adjusting the user and paths:
-
-```ini
-[Unit]
-Description=Windtunnel HMI
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/windtunnel-hmi
-ExecStart=/home/pi/windtunnel-hmi/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=60
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now windtunnel-hmi
-journalctl -u windtunnel-hmi -f
-```
-
-Give the service user write permission to the measurement directory and mounted USB. Later, serial access may require adding that user to the `dialout` group.
-
-## Project map / verification
-
-- `main.py`: API routes, lifespan, acquisition loop, WebSocket stream.
-- `backend/`: simulator, serial transport, models, measurement storage, Cp and USB abstraction.
-- `static/`: responsive HTML/CSS and ES modules for UI, offline charts and reconnecting WebSocket.
-- `config/config.json`: validated startup settings.
-- `tests/test_workflow.py`: isolated temporary-directory tests; no operator measurements modified.
-
-```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-The tests cover recording guards, independent stop behavior, file persistence, Cp, export/eject, interrupted-run recovery and a reconnecting WebSocket client. Host and hardware remain simulated on this first delivery; Raspberry Pi performance and physical USB/ESP32 operation need testing on the target device.
+The local API endpoints remain for Qt, including `/api/status`, `/api/config`, `/api/measurement/*`, `/api/storage/*` and `/api/calibration/fan/*`. These are backend interfaces, not a second browser HMI.

@@ -50,7 +50,7 @@ if [[ "${#SOURCE_DIRS[@]}" -gt 0 ]]; then
   done
 fi
 
-git clone --branch feature/raspberry-pi-ethernet-hmi --single-branch "$REPOSITORY_URL" "$CLONE_DIR"
+git clone --branch main --single-branch "$REPOSITORY_URL" "$CLONE_DIR"
 
 if systemctl --user is-active --quiet windtunnel-hmi.service; then
   systemctl --user stop windtunnel-hmi.service
@@ -88,7 +88,7 @@ config["device_mode"] = "esp32_tcp"
 config["simulation"] = False
 config["esp32_host"] = config.get("esp32_host") or "192.168.50.10"
 config["esp32_port"] = 5000
-config["max_airspeed_ms"] = min(float(config.get("max_airspeed_ms", 30)), 30)
+config["max_airspeed_ms"] = 40
 config["filter_cutoff_hz"] = max(0.1, min(float(config.get("filter_cutoff_hz", 1)), 10))
 config["simulate_usb"] = False
 config.pop("serial_port", None)
@@ -100,6 +100,6 @@ cd "$APP_LINK"
 bash deploy/install-pi.sh
 
 echo
-echo "Windtunnel HMI is installed from the ESP32 Ethernet feature branch."
+echo "Windtunnel native PySide6 HMI is installed from main."
 echo "No GitHub login was used. Existing files are backed up under your home directory."
 echo "Start it from the desktop menu as 'Windtunnel HMI'."

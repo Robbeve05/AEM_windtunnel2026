@@ -11,7 +11,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from backend.fan_calibration import FanCharacteristicCalibrator, CalibrationConfig
 from backend.esp32 import ESP32Client
@@ -216,7 +215,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Avans Windtunnel HMI', lifespan=lifespan)
-app.mount('/static', StaticFiles(directory=BASE / 'static'), name='static')
+
 
 
 def control():
@@ -236,7 +235,7 @@ async def storage_error(request, exc):
 
 @app.get('/')
 def index():
-    return FileResponse(BASE / 'static/index.html')
+    return {'application': 'Avans Windtunnel', 'operator_hmi': 'native-pyside6', 'status': '/api/status'}
 
 
 @app.get('/api/status')

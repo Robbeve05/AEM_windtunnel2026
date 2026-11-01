@@ -31,7 +31,7 @@ restore_config() {
 trap restore_config EXIT
 
 git -C "$REPOSITORY_DIR" restore --source=HEAD --staged --worktree -- HMI/config/config.json
-git -C "$REPOSITORY_DIR" pull --ff-only origin feature/raspberry-pi-ethernet-hmi
+git -C "$REPOSITORY_DIR" pull --ff-only origin main
 
 restore_config
 trap - EXIT
@@ -47,7 +47,7 @@ config["device_mode"] = "esp32_tcp"
 config["simulation"] = False
 config["esp32_host"] = config.get("esp32_host") or "192.168.50.10"
 config["esp32_port"] = 5000
-config["max_airspeed_ms"] = min(float(config.get("max_airspeed_ms", 30)), 30)
+config["max_airspeed_ms"] = 40
 config["filter_cutoff_hz"] = max(0.1, min(float(config.get("filter_cutoff_hz", 1)), 10))
 config["simulate_usb"] = False
 config.pop("serial_port", None)
