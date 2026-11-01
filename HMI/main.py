@@ -28,7 +28,11 @@ class Controller:
         self.config = Config.model_validate_json((base / 'config/config.json').read_text(encoding='utf-8'))
         self.simulation = self.config.simulation
         self.esp32_mode = not self.simulation
-        self.esp32 = ESP32Client(self.config.esp32_host, self.config.esp32_port) if self.esp32_mode else None
+        self.esp32 = (ESP32Client(
+            self.config.esp32_host, self.config.esp32_port,
+            max_airspeed_ms=self.config.max_airspeed_ms,
+            max_frequency_hz=self.config.max_manual_frequency_hz,
+        ) if self.esp32_mode else None)
         self.calibration = FanCharacteristicCalibrator(self.esp32, self.base / "data/calibrations", self.config)
         self.esp32_frame = {}
         self._last_pitot_sequence = None
@@ -56,7 +60,7 @@ class Controller:
             self.speed_window.clear()
             return dict(flow_stability_pct=None, flow_mean_ms=None, flow_std_ms=None, flow_min_ms=None, flow_max_ms=None)
         self.speed_window.append((now, velocity))
-        while self.speed_window and self.speed_window[0][0] < now - 5.0:
+        while self.speed_window and self.speed_window[0][0] < now - self.config.flow_statistics_window_s:
             self.speed_window.popleft()
         values = [v for _, v in self.speed_window]
         if not values:
@@ -319,6 +323,11 @@ async def select_frequency(body: ManualFrequency):
     c=control()
     c.calibration.require_idle()
     async with c.calibration.lock:
+        if not c.config.min_manual_frequency_hz <= body.hz <= c.config.max_manual_frequency_hz:
+            raise ValueError(
+                f"Manual frequency must be between {c.config.min_manual_frequency_hz:g} "
+                f"and {c.config.max_manual_frequency_hz:g} Hz"
+            )
         require_ready_esp32(c, 'MANUAL')
         await c.esp32.command(f'FREQ {body.hz:.3f}')
         return c.status()
@@ -328,8 +337,8 @@ async def setpoint(body: Setpoint):
     c = control()
     c.calibration.require_idle()
     async with c.calibration.lock:
-        if body.airspeed_ms > min(40.0, c.config.max_airspeed_ms):
-            raise ValueError('Setpoint exceeds configured maximum wind speed')
+        if body.airspeed_ms > c.config.max_airspeed_ms:
+            raise ValueError(f'Setpoint exceeds configured {c.config.max_airspeed_ms:g} m/s maximum')
         if c.esp32_mode:
             require_ready_esp32(c, 'AUTO')
             await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
@@ -337,8 +346,6 @@ async def setpoint(body: Setpoint):
             return c.status()
         if not c.simulation:
             raise ValueError('Airspeed setpoint control is unavailable in this mode')
-        if body.airspeed_ms > min(40.0, c.config.max_airspeed_ms):
-            raise ValueError('Setpoint exceeds configured maximum wind speed')
         c.tunnel.setpoint = body.airspeed_ms
         c.event(f'Setpoint changed to {body.airspeed_ms:g} m/s')
         return c.status()
@@ -449,8 +456,17 @@ async def live(websocket: WebSocket):
 
 
 @app.post('/api/calibration/fan/prepare')
-async def prepare_fan(body: CalibrationConfig):
-    return await control().calibration.prepare(body)
+async def prepare_fan(body: dict | None = None):
+    c = control()
+    payload = {**c.config.calibration_defaults.model_dump(), **(body or {})}
+    config = CalibrationConfig.model_validate(payload)
+    if (config.start_hz < c.config.min_manual_frequency_hz or
+            config.end_hz > c.config.max_manual_frequency_hz):
+        raise ValueError(
+            f'Calibration frequencies must lie within '
+            f'{c.config.min_manual_frequency_hz:g}–{c.config.max_manual_frequency_hz:g} Hz'
+        )
+    return await c.calibration.prepare(config)
 
 @app.get('/api/calibration/fan/status')
 async def fan_status():

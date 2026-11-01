@@ -11,5 +11,24 @@
   "pressure_taps": [],
   "device_mode": "esp32_tcp",
   "esp32_host": "192.168.50.10",
-  "esp32_port": 5000
+  "esp32_port": 5000,
+  "min_manual_frequency_hz": 10,
+  "max_manual_frequency_hz": 50,
+  "default_recording_rate_hz": 25,
+  "flow_statistics_window_s": 5,
+  "calibration_defaults": {
+    "start_hz": 10,
+    "end_hz": 50,
+    "step_hz": 5,
+    "average_s": 5,
+    "window_s": 3,
+    "min_samples": 80,
+    "applied_tolerance": 0.15,
+    "actual_tolerance": 0.2,
+    "std_ms": 0.15,
+    "relative_std": 0.01,
+    "trend_ms2": 0.05,
+    "stabilization_timeout_s": 30,
+    "ramp_timeout_s": 180
+  }
 }

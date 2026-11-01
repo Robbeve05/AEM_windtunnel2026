@@ -243,6 +243,27 @@ class NativeHMITests(unittest.TestCase):
             self.assertAlmostEqual(window.manual_hz.value(), 25.5)
             window.close()
 
+    def test_single_config_limits_and_visible_validation_feedback(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window._on_config(dict(
+                filter_cutoff_hz=1.0, flow_metrics_enabled=True, max_airspeed_ms=40,
+                min_manual_frequency_hz=10, max_manual_frequency_hz=50,
+                default_recording_rate_hz=25,
+                calibration_defaults=dict(start_hz=10,end_hz=50,step_hz=5,average_s=5,window_s=3),
+            ), None)
+            window.mode_select.setCurrentText("AUTO")
+            window.setpoint_spin.setText("50")
+            self.assertIn("0–40 m/s", window.input_validation.text())
+            window.setpoint_spin.setText("30")
+            self.assertEqual(window.input_validation.text(), "")
+            window.mode_select.setCurrentText("MANUAL")
+            window.manual_hz.setText("5")
+            self.assertIn("10–50 Hz", window.input_validation.text())
+            window.manual_hz.setText("50")
+            self.assertEqual(window.input_validation.text(), "")
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

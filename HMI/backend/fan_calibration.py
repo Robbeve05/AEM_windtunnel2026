@@ -55,7 +55,7 @@ class FanCharacteristicCalibrator:
         self.client=client; self.directory=Path(directory); self.settings=settings
         self.queue=asyncio.Queue(maxsize=128); self.lock=asyncio.Lock(); self.task=None
         self.state='IDLE'; self.message=''; self.points=[]; self.target=0; self.index=0
-        self.config=CalibrationConfig(); self.run_id=None; self.progress=0; self.stability=None
+        self.config=settings.calibration_defaults.model_copy(); self.run_id=None; self.progress=0; self.stability=None
         self.last_sequence=None; self.last_unique=0; self.raw=[]; self.metadata={}
 
     @property

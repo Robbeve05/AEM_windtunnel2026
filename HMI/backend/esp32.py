@@ -60,7 +60,14 @@ def status_indication(drive):
                      'ESP32 disconnected/stale; fan may still rotate')
 
 class ESP32Client:
-    def __init__(self, host, port=5000, *, status_timeout=1.0):
+    def __init__(self, host, port=5000, *, status_timeout=1.0,
+                 max_airspeed_ms=None, max_frequency_hz=None):
+        from backend.models import FIRMWARE_MAX_AIRSPEED_MS, FIRMWARE_MAX_FREQUENCY_HZ
+        self.max_airspeed_ms = float(max_airspeed_ms if max_airspeed_ms is not None else FIRMWARE_MAX_AIRSPEED_MS)
+        self.max_frequency_hz = float(max_frequency_hz if max_frequency_hz is not None else FIRMWARE_MAX_FREQUENCY_HZ)
+        if not (0 < self.max_airspeed_ms <= FIRMWARE_MAX_AIRSPEED_MS and
+                0 < self.max_frequency_hz <= FIRMWARE_MAX_FREQUENCY_HZ):
+            raise ValueError('Configured limits exceed validated ESP32 firmware ceilings')
         self.host, self.port, self.status_timeout = host, port, status_timeout
         self._writer = self._reader = None
         self._connected = False
@@ -87,10 +94,11 @@ class ESP32Client:
         if command in ("PING", "STOP") or command in ("MODE AUTO","MODE MANUAL"):
             pass
         elif re.fullmatch(r"FREQ [0-9]+(?:\.[0-9]{1,3})?",command):
-            if float(command.split()[1])>50: raise ValueError("Manual frequency too high")
+            if float(command.split()[1]) > self.max_frequency_hz:
+                raise ValueError(f"Frequency exceeds {self.max_frequency_hz:g} Hz maximum")
         elif re.fullmatch(r"SETPOINT [0-9]+(?:\.[0-9]{1,3})?", command):
-            pass
-            if float(command.split()[1]) > 40: raise ValueError("Setpoint too high")
+            if float(command.split()[1]) > self.max_airspeed_ms:
+                raise ValueError(f"Airspeed exceeds {self.max_airspeed_ms:g} m/s maximum")
         elif command in ("CAL_INFO", "CAL_COMMIT", "CAL_ABORT", "CAL_RESET") or re.fullmatch(r"CAL_(?:BEGIN|POINT) [0-9]+ [0-9]+ [0-9]+", command):
             pass
         elif command.startswith("PID "):

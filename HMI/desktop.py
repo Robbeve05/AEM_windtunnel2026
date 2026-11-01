@@ -125,8 +125,9 @@ class OperatorNumericInput(QLineEdit):
             value = float(raw)
         except ValueError as exc:
             raise ValueError("Enter a valid number.") from exc
-        if not math.isfinite(value) or not 0 <= value <= self._maximum:
-            raise ValueError(f"Enter a number between 0 and {self._maximum:g}.")
+        minimum = getattr(self, "minimum_value", 0.0)
+        if not math.isfinite(value) or not minimum <= value <= self._maximum:
+            raise ValueError(f"Enter a number between {minimum:g} and {self._maximum:g}.")
         return value
 
     def has_valid_value(self):
@@ -521,6 +522,10 @@ class HMIWindow(QMainWindow):
         self.mode_select.currentTextChanged.connect(self._on_mode_selection_changed)
         control_layout.addSpacing(7)
         control_layout.addWidget(self.mode_value_stack)
+        self.input_validation = QLabel("")
+        self.input_validation.setWordWrap(True)
+        self.input_validation.setStyleSheet("color:#ffb3a7; font-size:11px; font-weight:600;")
+        control_layout.addWidget(self.input_validation)
         self.control_lock_reason = QLabel("Waiting for ESP32 connection. Values can be entered, but commands are locked.")
         self.control_lock_reason.setObjectName("controlLockReason")
         self.control_lock_reason.setWordWrap(True)
@@ -1396,7 +1401,13 @@ class HMIWindow(QMainWindow):
             self.settings_grid.addWidget(QLabel(label), index, 0)
             self.settings_grid.addWidget(QLabel(str(data.get(key, ""))), index, 1)
         self.chart.set_points(self.history, data.get("max_airspeed_ms", 45))
-        self.setpoint_spin.setMaximum(min(40.0, float(data.get("max_airspeed_ms", 40))))
+        self.setpoint_spin.setMaximum(float(data["max_airspeed_ms"]))
+        self.manual_hz.setMaximum(float(data["max_manual_frequency_hz"]))
+        self.manual_hz.minimum_value = float(data["min_manual_frequency_hz"])
+        self.recording_rate_spin.setValue(int(data["default_recording_rate_hz"]))
+        if hasattr(self, "calibration_panel"):
+            self.calibration_panel.set_defaults(data["calibration_defaults"], data)
+        self._refresh_mode_controls()
 
     def _set_signal_indicator(self, label, color, blink=False, detail=""):
         """Non-safety indication; based solely on fresh status telemetry."""
@@ -1490,6 +1501,14 @@ class HMIWindow(QMainWindow):
         self.manual_apply.setEnabled(
             ready and selected == active_mode == "MANUAL" and self.manual_hz.has_valid_value()
         )
+        active_input = self.setpoint_spin if selected == "AUTO" else self.manual_hz
+        if not active_input.has_valid_value():
+            self.input_validation.setText(
+                f"Invalid value. Enter {getattr(active_input, 'minimum_value', 0):g}–{active_input.maximum():g} "
+                + ("m/s." if selected == "AUTO" else "Hz.")
+            )
+        else:
+            self.input_validation.setText("")
         if not online:
             reason = "OFFLINE · Values can be entered, but applying requires a connected ESP32 in READY."
         elif not ready:

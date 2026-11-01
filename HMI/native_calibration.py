@@ -281,6 +281,17 @@ class CalibrationPanel(QWidget):
             self.refresh_runs()
         self.hmi._post("calibration/fan/" + path, body or {}, done)
 
+    def set_defaults(self, defaults, config):
+        self.start_hz.setRange(float(config["min_manual_frequency_hz"]), float(config["max_manual_frequency_hz"]))
+        self.end_hz.setRange(float(config["min_manual_frequency_hz"]), float(config["max_manual_frequency_hz"]))
+        self.step_hz.setMaximum(float(config["max_manual_frequency_hz"]))
+        for key, spin in (
+            ("start_hz", self.start_hz), ("end_hz", self.end_hz),
+            ("step_hz", self.step_hz), ("average_s", self.average_s),
+            ("window_s", self.window_s),
+        ):
+            spin.setValue(float(defaults[key]))
+
     def _configuration(self):
         return {
             "start_hz": self.start_hz.value(),
