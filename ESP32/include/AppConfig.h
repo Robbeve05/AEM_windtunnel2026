@@ -156,6 +156,22 @@
 // then uses the torque PID and inverse motor model to determine V20 Hz. These derivative
 // limits apply to airspeed, not to the manual frequency trajectory.
 
+// [Compile-time] Select the feedback action used by AUTO torque control.
+// NONE keeps model-based acceleration and fan-load feedforward, but disables
+// proportional/integral/derivative feedback. MANUAL Hz mode is unaffected.
+// This selection NEVER overrides motor-model or safety commissioning gates.
+#define CONTROLLER_NONE 0
+#define CONTROLLER_P    1
+#define CONTROLLER_PI   2
+#define CONTROLLER_PID  3
+#ifndef CONTROLLER_SETTING
+#define CONTROLLER_SETTING CONTROLLER_PI
+#endif
+#if CONTROLLER_SETTING != CONTROLLER_NONE && CONTROLLER_SETTING != CONTROLLER_P && \
+    CONTROLLER_SETTING != CONTROLLER_PI && CONTROLLER_SETTING != CONTROLLER_PID
+#error "Invalid CONTROLLER_SETTING: use CONTROLLER_NONE, CONTROLLER_P, CONTROLLER_PI or CONTROLLER_PID"
+#endif
+
 // [m/s, safety-critical] Maximum requested airspeed; raising it requires validated tunnel
 // operating limits.
 #define MAX_SETPOINT 40.0f
