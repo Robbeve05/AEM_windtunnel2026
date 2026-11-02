@@ -20,7 +20,7 @@ This folder is the **entry point** for project documentation. Module-specific te
 | [Pi installation record](../HMI/deploy/PI-INSTALLATION.md) | Dated installation notes; verify the actual installed Pi before using |
 | [HMI verification record](../HMI/VERIFICATION.md) | Tests of an earlier browser HMI, not validation of the current PySide6 UI |
 | [HMI visual redesign](../HMI/AVANS-REDESIGN.md) | Earlier design history, not current operator documentation |
-| [Arduino USB prototype](../HMI/ARDUINO-USB-SETUP.md) | Superseded by the ESP32/Ethernet architecture; **do not use for current hardware** |
+| Arduino USB prototype documentation | Historical Arduino/USB workflow; the former file path is not currently accessible on `main`. Do not use it for current hardware. |
 | [Dutch Arduino installation guide](../HMI/HANDLEIDING-NEDERLANDS.md) | Historical Arduino Uno installation procedure; **not current deployment** |
 
 ## Document maintenance
