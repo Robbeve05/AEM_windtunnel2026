@@ -1,5 +1,7 @@
 # Installed on windtunnel · 2026-10-05
 
+> **DATED INSTALLATION RECORD (2026-10-05).** The installed Pi and its service status must be checked on the device. The current source branch is `main`, not `RaspberryPi`; see [HMI README](../README.md) for supported installation and updates.
+
 - User: `windtunnel_pi`; application: `/home/windtunnel_pi/HMI`.
 - Platform: Debian 13, aarch64, Python 3.13, labwc Wayland desktop.
 - Existing configuration, measurements and native virtual environment retained.
