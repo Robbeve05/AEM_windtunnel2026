@@ -9,7 +9,7 @@ Software and documentation for the Avans Aerospace wind tunnel project. The syst
 | Component | Purpose | Documentation |
 | --- | --- | --- |
 | Waveshare industrial ESP32-S3 | FreeRTOS machine controller, input supervision, sensor acquisition, fan control | [ESP32 firmware](ESP32/README.md) |
-| Siemens SINAMICS V20 | Frequency converter for the fan, controlled through RS-485 Modbus RTU | [V20 protocol and configuration](ESP32/V20_MODBUS.md) |
+| Siemens SINAMICS V20 | Frequency converter for the fan, controlled through RS-485 Modbus RTU | [V20 protocol and configuration](docs/hardware/V20_MODBUS.md) |
 | Raspberry Pi / Windows | Native PySide6 operator interface, local FastAPI backend, data recording, calibration and export | [HMI](HMI/README.md) |
 | Pitot and pressure sensors | Airspeed feedback and experimental pressure measurements | [ESP32 architecture](ESP32/README.md) |
 
@@ -29,15 +29,16 @@ Software and documentation for the Avans Aerospace wind tunnel project. The syst
 AEM_windtunnel2026/
 ├── README.md                   Project overview (this page)
 ├── docs/
-│   └── README.md               Documentation map and status
+│   ├── README.md               Documentation map and status
+│   ├── control/                Control design
+│   ├── hardware/               V20 integration
+│   └── archive/                Historical notes
 ├── ESP32/
 │   ├── README.md               Firmware architecture, safety and build
 │   ├── src/                    Firmware implementations
 │   ├── include/                Public headers and configuration
 │   ├── tests/                  Host-based regression tests
-│   ├── TORQUE-CONTROL.md        Control-model detail
-│   ├── V20_MODBUS.md           Modbus and drive detail
-│   └── MIGRATION.md            Historical migration and commissioning notes
+│   
 └── HMI/
     ├── README.md               Native UI, backend and deployment
     ├── desktop.py              PySide6 operator application
