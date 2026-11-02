@@ -66,6 +66,8 @@ typedef struct
     bool torque_model_ready;
     SetpointCurve curve;
     SetpointCurve frequency_curve;
+    SetpointCurve stop_curve;
+    bool stop_profile_complete;
     bool frequency_running;
     StateMachine machine;
     Telemetry status;
@@ -427,7 +429,7 @@ static void Control_CheckSafety(ControlContext *ctx)
     /* This becomes true only after a fresh, acknowledged OFF1 and status
      * frame from the V20, not merely because an old speed was zero. */
     const bool stop_confirmed =
-        ctx->machine.state == STATE_STOP &&
+        ctx->machine.state == STATE_STOP && ctx->stop_profile_complete &&
         V20Modbus_StopConfirmed((int64_t)ctx->machine.entered_ms * 1000LL, STOP_CONFIRM_HZ);
 
     ctx->inputs = (MachineInputs){.now_ms = ctx->now_ms,
@@ -475,10 +477,18 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
     }
 
-    /* Disarm immediately on STOP or FAULT; the separate operational K2
-     * permissive is kept enabled through a healthy normal OFF1 ramp. */
-    if ((previous_state == STATE_RUNNING && ctx->machine.state != STATE_RUNNING) ||
-        (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT))
+    if (previous_state == STATE_RUNNING && ctx->machine.state == STATE_STOP) {
+        ctx->stop_profile_complete = false;
+        const float hz = ctx->status.output * V20_REFERENCE_HZ / 100.0f;
+        if (!isfinite(hz) || hz < 0 || hz > MANUAL_MAX_HZ ||
+            !SetpointCurve_Init(&ctx->stop_curve, hz, CONTROL_CLOCK_PERIOD_S,
+                MANUAL_MAX_SLEW_HZ_PER_S, MANUAL_MAX_ACCEL_HZ_PER_S2))
+            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+        ctx->stop_curve.max_third_derivative = MANUAL_MAX_JERK_HZ_PER_S3;
+    }
+    /* FAULT bypasses the curve. STOP retains the existing arm until zero,
+     * then sends OFF1; it can never arm or restart the drive. */
+    if (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT)
         V20Modbus_Disarm();
 }
 
@@ -567,7 +577,21 @@ static void Control_UpdateController(ControlContext *ctx)
             ctx->previous_ff_setpoint = ctx->status.control_setpoint;
         }
     }
-    if (ctx->machine.state != STATE_RUNNING)
+    if (ctx->machine.state == STATE_STOP && !ctx->stop_profile_complete) {
+        if (!SetpointCurve_Step(&ctx->stop_curve, 0, CONTROL_CLOCK_PERIOD_S,
+                                &ctx->status.applied_hz)) {
+            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+            V20Modbus_Disarm();
+        } else {
+            ctx->status.output = 100.0f * ctx->status.applied_hz / V20_REFERENCE_HZ;
+            if (ctx->stop_curve.elapsed >= ctx->stop_curve.duration &&
+                ctx->status.applied_hz == 0) {
+                ctx->stop_profile_complete = true;
+                V20Modbus_Disarm();
+            }
+        }
+    }
+    if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
     {
         ctx->frequency_running = false;
         ctx->status.applied_hz = 0;
@@ -674,7 +698,7 @@ static void Control_PublishStatus(ControlContext *ctx)
     ctx->status.reason = ctx->machine.fault == FAULT_NONE ? StateMachine_Name(ctx->machine.state)
                                                           : FaultReason_Name(ctx->machine.fault);
     ctx->status.transitions = ctx->machine.transition_count;
-    if (!ctx->status.running)
+    if (!ctx->status.running && ctx->machine.state != STATE_STOP)
         ctx->status.output = 0.0f;
 
     ctx->status.output = fminf(100.0f * MANUAL_MAX_HZ / V20_REFERENCE_HZ,
@@ -683,7 +707,8 @@ static void Control_PublishStatus(ControlContext *ctx)
         ctx->status.applied_hz = ctx->status.output * V20_REFERENCE_HZ / 100.0f;
     const MotorRequest command = {.output = ctx->status.output,
                                   .tick = ctx->now_tick,
-                                  .run = ctx->status.running,
+                                  .run = ctx->status.running ||
+                                      (ctx->machine.state == STATE_STOP && !ctx->stop_profile_complete),
                                   .permissive = ctx->machine.permissive,
                                   .coast = ctx->machine.state == STATE_FAULT,
                                   .epoch = ctx->machine.epoch};

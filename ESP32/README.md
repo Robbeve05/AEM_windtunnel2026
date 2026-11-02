@@ -4,6 +4,9 @@ Firmware branch: `esp32`. Paired Pi HMI branch: `RaspberryPi`.
 
 The industrial Waveshare migration uses the one-mass torque PID (no parallel frequency PI), quintic setpoint ramp, text protocol and V20 Modbus register implementation. It replaces the external clock with a 200 Hz internal GPTimer, Pi UART with W5500 TCP Ethernet, and the placeholder sensor with the existing ASPD-4525 conversion/filtering. Future 16-channel ABP2 acquisition is gated until PCB addresses and ranges are verified.
 
+The 30 October 2026 schematic update and its software-only verification are described in
+[SCHEMATIC-20261030.md](SCHEMATIC-20261030.md).
+
 Read [MIGRATION.md](MIGRATION.md) for architecture analysis, verified pin assignments, configuration, address conflict, wiring, fault behavior and ordered commissioning procedure. Read [V20_MODBUS.md](V20_MODBUS.md) for drive settings.
 
 Build in a local path without spaces:

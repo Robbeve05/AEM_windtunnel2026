@@ -141,7 +141,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
             StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
     }
     if (i->reset && (m->state == STATE_WAIT || m->state == STATE_FAULT) && fresh &&
-        !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok)
+        !i->safety.estop_pressed && i->safety.stop_ok)
     {
         m->reset_pending = true;
         m->reset_until_ms = i->now_ms + RESET_FEEDBACK_WINDOW_MS;
@@ -153,7 +153,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        if (fresh && i->sensor_ok && i->drive_ready && i->drive_ok && i->safety.outputs_ok)
+        /* Validate all NC circuits before leaving INIT. */
+        if (fresh && !i->safety.stop_ok)
+            StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
+        else if (fresh && !i->safety.estop_pressed && i->safety.relay_ok && i->sensor_ok && i->drive_ready && i->drive_ok && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
         else if (i->now_ms - m->boot_ms >= INIT_TIMEOUT_MS)
             StateMachine_Fault(m, FAULT_INTERNAL, i->now_ms);
@@ -178,7 +181,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
             transition(m, STATE_READY, i->now_ms);
         break;
     case STATE_READY:
-        if (i->start && !i->reset && !i->stop && i->safety.stop_ok && healthy && process)
+        if (i->start && !i->reset && !i->safety.reset_pressed && !i->stop && i->safety.stop_ok && healthy && process)
             transition(m, STATE_RUNNING, i->now_ms);
         break;
     case STATE_RUNNING:

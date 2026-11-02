@@ -25,3 +25,18 @@ Remote START/RESET are unavailable. ESP32 operational interlocks, drive commissi
 ## API
 
 The local API endpoints remain for Qt, including `/api/status`, `/api/config`, `/api/measurement/*`, `/api/storage/*` and `/api/calibration/fan/*`. These are backend interfaces, not a second browser HMI.
+
+## Revised machine inputs (30 October 2026)
+
+The machine keeps INIT, WAIT, READY, RUNNING, STOP and FAULT. DI1 Emergency Stop
+and DI5 Safety are NC/active LOW and latch FAULT; DI4 Stop is NC/active LOW and
+starts controlled fifth-order deceleration. DI2 Reset and DI3 Start are NO/active
+HIGH and use debounced press edges. Reset never starts the fan; a fresh Start is
+required after recovery or completed Stop. See
+[firmware behavior and software verification](../ESP32/SCHEMATIC-20261030.md).
+
+The simulator starts in INIT/WAIT and now also requires Reset before Start.
+`POST /api/tunnel/reset` simulates the Reset button only in simulation mode;
+physical START/RESET remain mandatory for live hardware. Tests can inject contact
+levels with `Simulator.set_input(di, high)`. No simulated result validates physical
+safety or the independent hardware shutdown path.

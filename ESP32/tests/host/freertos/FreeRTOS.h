@@ -28,3 +28,6 @@ void Host_ExitCritical(portMUX_TYPE *lock);
 
 #define portMAX_DELAY ((TickType_t)0xffffffffu)
 #define portTICK_PERIOD_MS 1u
+
+#define portENTER_CRITICAL_ISR(x) portENTER_CRITICAL(x)
+#define portEXIT_CRITICAL_ISR(x) portEXIT_CRITICAL(x)

@@ -39,7 +39,7 @@ Diagnostics in STATUS include measured task frequency, execution time, maximum t
 | Pitot ASPD-4525 | Expansion SDA GPIO42, SCL GPIO41, GND | I2C address 0x28. Module supply 4–5.5 V, nominal 5 V; check actual module pull-ups/level shifting so ESP32 bus never rises to 5 V |
 | Sensor PCB | Same SDA/SCL and common logic ground | Two TCA9548A, planned 0x70 and 0x71; eight ABP2 channels each; 100 kHz configurable |
 | DO1–DO8 | TCA9554 address 0x20, bits 0–7 / EXIO1–8 | DO1 K2; proposed DO2 green, DO3 yellow, DO4 red; DO5–8 reserved. External lamps disabled by default. See MACHINE-IO.md |
-| DI1–DI8 | GPIO4,5,6,7,8,9,10,11 | Industrial terminals. DI1 safety relay, DI2 emergency indication, DI3 STOP, DI4 START, DI5 RESET, DI6 optional VFD fault, DI7 optional K2 feedback, DI8 reserved |
+| DI1–DI8 | GPIO4,5,6,7,8,9,10,11 | Industrial terminals. DI1 NC emergency stop, DI2 NO RESET, DI3 NO START, DI4 NC STOP, DI5 NC Safety, DI6 optional VFD fault, DI7 optional K2 feedback, DI8 reserved |
 | Emergency stop | Independent safety circuit | Must stop the machine independently of MCU, Ethernet and Modbus; operational DI/STOP is not a safety function |
 
 Reserved: W5500 MOSI13/MISO14/SCLK15/CS16/INT12/RESET39; RTC 0x51 with INT40; RGB38; buzzer46; CAN2/3; TF45/47/48; BOOT0; USB19/20; UART debug43/44. Do not reuse these or flash/PSRAM pins. Verify expansion header orientation and voltage on the actual revision; a numbered connector pin layout is intentionally not guessed.

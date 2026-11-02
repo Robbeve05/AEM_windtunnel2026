@@ -17,15 +17,14 @@
 
 typedef struct
 {
-    bool initialized, start_raw, start_stable, reset_raw, reset_stable, start_armed, reset_armed,
-        reset_candidate;
+    bool initialized, start_raw, start_stable, reset_raw, reset_stable, start_armed, reset_armed;
     uint32_t start_changed, reset_changed;
 } Buttons;
 
 ///////////////////////////////////////////////////////////////////////////////
 // static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
 /*
- * Debounces START on press and RESET on release. Preserves the existing
+ * Debounces START and RESET on rising (press) edges. Preserves the existing
  * arming, validity and emergency inhibition conditions and event timestamps.
  */
 static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
@@ -44,7 +43,6 @@ static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
     if (!s->valid || s->estop_pressed)
     {
         b->reset_armed = false;
-        b->reset_candidate = false;
         b->start_armed = false;
     }
     if (s->start_pressed != b->start_raw)
@@ -74,14 +72,9 @@ static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
     {
         if (b->reset_raw && !b->reset_stable && b->reset_armed && s->valid && !s->estop_pressed)
         {
-            b->reset_candidate = true;
-            b->reset_armed = false;
-        }
-        if (!b->reset_raw && b->reset_stable && b->reset_candidate && !s->estop_pressed && s->valid)
-        {
             s->reset_sequence++;
             s->reset_ms = now;
-            b->reset_candidate = false;
+            b->reset_armed = false;
         }
         if (!b->reset_raw && !s->estop_pressed && s->valid)
             b->reset_armed = true;

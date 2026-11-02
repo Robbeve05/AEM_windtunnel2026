@@ -328,37 +328,38 @@
 // 11. PHYSICAL INPUT POLARITIES
 ///////////////////////////////////////////////////////////////////////////////
 // Safety-critical commissioning values: -1 means unknown/unverified, 0 means
-// active low, and 1 means active high. Physically measure each input before
-// setting its level. Commissioning flags are grouped in section 13.
+// active low, and 1 means active high. DI1..DI5 follow 30 October 2026.
+// NC OK signals are HIGH when healthy (LOW trips). Verify actual wiring before
+// commissioning; flags remain disabled in section 13.
 
 #ifndef SAFETY_RELAY_OK_ACTIVE_LEVEL
 // [Logic level, safety-critical] Level indicating healthy safety relay feedback; wrong polarity
 // misinterprets relay state.
-#define SAFETY_RELAY_OK_ACTIVE_LEVEL (-1)
+#define SAFETY_RELAY_OK_ACTIVE_LEVEL 1
 #endif
 
 #ifndef ESTOP_PRESSED_ACTIVE_LEVEL
 // [Logic level, safety-critical] Level indicating a pressed emergency stop; wrong polarity
 // reverses its software indication.
-#define ESTOP_PRESSED_ACTIVE_LEVEL (-1)
+#define ESTOP_PRESSED_ACTIVE_LEVEL 0
 #endif
 
 #ifndef STOP_BUTTON_OK_ACTIVE_LEVEL
 // [Logic level, safety-critical] Level indicating the stop circuit is healthy; wrong polarity
 // reverses the stop permissive.
-#define STOP_BUTTON_OK_ACTIVE_LEVEL (-1)
+#define STOP_BUTTON_OK_ACTIVE_LEVEL 1
 #endif
 
 #ifndef START_BUTTON_ACTIVE_LEVEL
 // [Logic level, safety-critical] Level indicating physical START; wrong polarity misinterprets
 // button activation.
-#define START_BUTTON_ACTIVE_LEVEL (-1)
+#define START_BUTTON_ACTIVE_LEVEL 1
 #endif
 
 #ifndef RESET_BUTTON_ACTIVE_LEVEL
 // [Logic level, safety-critical] Level indicating physical RESET; wrong polarity misinterprets
 // reset requests.
-#define RESET_BUTTON_ACTIVE_LEVEL (-1)
+#define RESET_BUTTON_ACTIVE_LEVEL 1
 #endif
 
 #ifndef VFD_FAULT_DI_ACTIVE_LEVEL
@@ -431,8 +432,10 @@
 // [ms, safety-critical] Initialization timeout; increasing allows a longer startup before faulting.
 #define INIT_TIMEOUT_MS 15000u
 
-// [ms, safety-critical] Maximum normal-stop wait; increasing delays stop-timeout faulting.
-#define NORMAL_STOP_TIMEOUT_MS 30000u
+// [ms, safety-critical] Total quintic stop + OFF1 confirmation deadline.
+// Default 50 Hz / 2 Hz/s quintic takes 46.875 s; allow drive confirmation.
+// Revalidate this bound if frequency profile limits change.
+#define NORMAL_STOP_TIMEOUT_MS 80000u
 
 // [Hz, safety-critical] Frequency threshold for confirmed stop; increasing accepts more
 // residual rotation.

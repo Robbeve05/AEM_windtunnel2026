@@ -57,7 +57,7 @@ bool SetpointCurve_Init(SetpointCurve *curve, float initial, float time,
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Een sample van de bewegingscurve. STOP en fouten gaan buiten deze functie om.
+// Een sample van de bewegingscurve. STOP gebruikt een aparte curve naar nul; fouten omzeilen de curve.
 bool SetpointCurve_Step(SetpointCurve *curve, float target, float dt, float *output)
 {
     if (curve == NULL || output == NULL || !isfinite(target) || !isfinite(dt) ||

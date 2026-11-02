@@ -13,7 +13,7 @@ StatusIndicator StatusIndicators_Get(SystemState_t s,FaultReason_t f,bool presse
     case STATE_WAIT: return (StatusIndicator){.amber=blink,.text="WAITING FOR RESET / CHECKS"};
     case STATE_READY: return (StatusIndicator){.green=blink,.text="READY - PRESS START"};
     case STATE_RUNNING: return (StatusIndicator){.green=true,.text="RUNNING"};
-    case STATE_STOP: return (StatusIndicator){.amber=true,.text="STOPPING - WAIT FOR VFD"};
+    case STATE_STOP: return (StatusIndicator){.amber=true,.text="STOPPING - CONTROLLED DECELERATION; WAIT FOR VFD"};
     default: return (StatusIndicator){.red=true,.text=FaultReason_Name(f)};
     }
 }

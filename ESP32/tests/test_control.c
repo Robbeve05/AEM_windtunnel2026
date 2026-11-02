@@ -270,6 +270,7 @@ int main(void)
     Control_CheckSafety(&c);
     Control_UpdateStateMachine(&c);
     assert(c.machine.state == STATE_RUNNING && arms == 1);
+    assert(SafetyIO_Simulate("STOP", false));
     assert(SafetyIO_Simulate("STOP", true));
     Control_ProcessCommands(&c, 0);
     assert(c.stop);
@@ -278,6 +279,7 @@ int main(void)
     assert(c.machine.state == STATE_STOP && c.machine.permissive);
     assert(SafetyIO_Simulate("STOP", false));
     (void)SafetyIO_Stop();
+    Control_UpdateController(&c); /* Zero-frequency stop completes before OFF1 ack. */
     stop_confirmed = true;
     Control_ProcessCommands(&c, 0);
     Control_CheckSafety(&c);
@@ -293,6 +295,7 @@ int main(void)
     healthy_context(&c);
     c.machine.state = STATE_WAIT;
     c.safety.reset_sequence = 1;
+    c.safety.reset_pressed = true;
     Control_ProcessCommands(&c, EVT_RESET_BUTTON);
     assert(c.reset && !c.start);
     Control_CheckSafety(&c);
@@ -400,7 +403,7 @@ int main(void)
     s.tick_ms = 160;
     Buttons_Update(&b, &s, 160);
     SafetyIO_PublishButtonEvents(&s, &previous);
-    assert(Control_ReadButtonEvents() == 0);
+    assert(Control_ReadButtonEvents() == EVT_RESET_BUTTON);
     previous = s;
     s.reset_pressed = false;
     s.tick_ms = 170;
@@ -409,7 +412,7 @@ int main(void)
     s.tick_ms = 200;
     Buttons_Update(&b, &s, 200);
     SafetyIO_PublishButtonEvents(&s, &previous);
-    assert(Control_ReadButtonEvents() == EVT_RESET_BUTTON);
+    assert(Control_ReadButtonEvents() == 0);
     previous = s;
     s.stop_ok = false;
     s.tick_ms = 210;
@@ -487,6 +490,83 @@ int main(void)
     assert(notified[0]==sensor_task_handle && notified[1]==control_task_handle &&
            notified[2]==sensor_task_handle && notified[3]==control_task_handle);
     puts("PASS alternating 2.5ms sensor/control phases preserve 5ms control period");
+
+    /* Full normal-stop command path, both modes, including worst-case duration.
+     * New demands and START edges during STOP cannot retarget/restart it. */
+    for (unsigned mode_index=0; mode_index<2; ++mode_index) {
+        healthy_context(&c);
+        c.status.mode=mode_index ? MODE_MANUAL : MODE_AUTO;
+        c.machine.state=STATE_RUNNING;
+        c.status.output=100.0f*MANUAL_MAX_HZ/V20_REFERENCE_HZ;
+        c.status.applied_hz=MANUAL_MAX_HZ;
+        c.stop=true;
+        stop_confirmed=true; /* Even an early/spurious ack cannot bypass curve. */
+        unsigned arms_before=arms, disarms_before=disarms;
+        Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+        assert(c.machine.state==STATE_STOP && disarms==disarms_before);
+        double previous_output=MANUAL_MAX_HZ;
+        unsigned count=0;
+        while(!c.stop_profile_complete && count++<20000) {
+            c.now_ms+=5;c.now_tick+=5;c.safety.tick_ms=c.now_ms;
+            c.safety.start_sequence++;c.safety.start_ms=c.now_ms;
+            c.status.manual_hz=MANUAL_MAX_HZ;c.status.setpoint=40;
+            Control_ProcessCommands(&c,EVT_START_BUTTON);
+            Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+            assert(c.machine.state==STATE_STOP && c.machine.permissive);
+            Control_UpdateController(&c);Control_PublishStatus(&c);
+            xQueuePeek(motor_requests,&request,0);
+            assert(request.permissive && !request.coast && arms==arms_before);
+            assert(c.status.applied_hz<=previous_output+0.00001);
+            assert(previous_output-c.status.applied_hz<=
+                   MANUAL_MAX_SLEW_HZ_PER_S*CONTROL_CLOCK_PERIOD_S+0.00001);
+            previous_output=c.status.applied_hz;
+            assert(request.run==!c.stop_profile_complete);
+        }
+        assert(c.stop_profile_complete && c.status.applied_hz==0 && count>9000);
+        assert(c.stop_curve.duration*1000 < NORMAL_STOP_TIMEOUT_MS);
+        assert(disarms==disarms_before+1);
+        Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+        assert(c.machine.state==STATE_READY && !c.machine.permissive && arms==arms_before);
+        Control_ProcessCommands(&c,EVT_START_BUTTON);
+        Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+        assert(c.machine.state==STATE_READY); /* Late notification cannot restart. */
+    }
+    /* Either NC fault cancels a nonzero ramp in the same control cycle. */
+    for(unsigned trip=0;trip<2;trip++) {
+        healthy_context(&c);c.machine.state=STATE_RUNNING;c.status.output=40;
+        c.stop=true;Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+        Control_UpdateController(&c);assert(c.status.output>0);
+        if(trip)c.safety.relay_ok=false;else c.safety.estop_pressed=true;
+        Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+        Control_UpdateController(&c);Control_PublishStatus(&c);
+        xQueuePeek(motor_requests,&request,0);
+        assert(c.machine.state==STATE_FAULT && !request.run && !request.permissive &&
+               request.coast && request.output==0);
+        c.safety.relay_ok=true;c.safety.estop_pressed=false;
+        Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+        assert(c.machine.state==STATE_FAULT);
+    }
+    /* Held-at-boot NO inputs and sub-debounce bounce produce no action. */
+    b=(Buttons){0};s=healthy();s.start_pressed=s.reset_pressed=true;
+    Buttons_Update(&b,&s,0);Buttons_Update(&b,&s,100);
+    assert(!s.start_sequence && !s.reset_sequence);
+    s.start_pressed=s.reset_pressed=false;
+    Buttons_Update(&b,&s,110);Buttons_Update(&b,&s,140);
+    s.reset_pressed=true;Buttons_Update(&b,&s,150);
+    s.reset_pressed=false;Buttons_Update(&b,&s,160);
+    s.reset_pressed=true;Buttons_Update(&b,&s,170);
+    Buttons_Update(&b,&s,199);assert(!s.reset_sequence);
+    Buttons_Update(&b,&s,200);assert(s.reset_sequence==1);
+    Buttons_Update(&b,&s,300);assert(s.reset_sequence==1);
+    s.start_pressed=true;Buttons_Update(&b,&s,310);Buttons_Update(&b,&s,340);
+    assert(!s.start_sequence); /* RESET held inhibits START. */
+    s.reset_pressed=false;Buttons_Update(&b,&s,350);Buttons_Update(&b,&s,380);
+    assert(!s.start_sequence); /* Releasing RESET never starts a held START. */
+    s.start_pressed=false;Buttons_Update(&b,&s,390);Buttons_Update(&b,&s,420);
+    s.start_pressed=true;Buttons_Update(&b,&s,430);Buttons_Update(&b,&s,460);
+    assert(s.start_sequence==1);
+    puts("PASS full AUTO/MANUAL fifth-order STOP, deadline, no premature OFF1/ack/restart, fault override, held/bouncing NO inputs");
+
     puts("All focused control regression checks passed (mocked hardware/RTOS).");
     return 0;
 }
