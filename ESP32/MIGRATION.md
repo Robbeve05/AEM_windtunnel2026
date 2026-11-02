@@ -1,5 +1,7 @@
 # Waveshare industrial controller migration
 
+> **HISTORICAL MIGRATION RECORD.** The DI mapping and branch names below describe an earlier design; they are not the current electrical or firmware authority. See [ESP32 README](README.md), the current electrical schematic and tested pin definitions.
+
 ## Existing architecture and retained behavior
 
 The starting `esp32` branch used Arduino-ESP32 2.0.17/IDF 4.4, an external GPIO4 clock, UART1 Pi text commands, a placeholder real sensor driver and a working Siemens RTU driver. The Pi actually acquired an ASPD-4525 through an Arduino Uno; its unused ESP32 adapter expected incompatible JSON. Both web and native Qt HMI had fan controls disabled. Cp calculation helpers exist, but recording/recalculation of Cp was already disabled pending the pressure PCB.
