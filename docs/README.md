@@ -1,30 +1,22 @@
-# Documentation guide
+# Documentation index
 
-This folder is the **entry point** for project documentation. Module-specific technical references remain with their source code under `ESP32/` and `HMI/`. This avoids moving files and accidentally breaking relative links, scripts or references.
+The root README provides the project overview. The ESP32 and HMI folders each contain a module README. Supporting engineering documents are listed here.
 
-## Current documentation
+## Current references
 
-| Reference | Scope |
-| --- | --- |
-| [Project overview](../README.md) | Overall system, repository navigation and quick start |
-| [ESP32 README](../ESP32/README.md) | Current firmware tasks, safety, control, build and commissioning checklist |
-| [HMI README](../HMI/README.md) | Native PySide6 interface, FastAPI backend, Windows/Pi installation |
-| [Torque control](../ESP32/TORQUE-CONTROL.md) | One-mass torque controller, assumptions and validation still required |
-| [V20 Modbus](../ESP32/V20_MODBUS.md) | Siemens V20 integration and drive-related detail |
+- [Project overview](../README.md)
+- [ESP32 firmware](../ESP32/README.md)
+- [Native HMI](../HMI/README.md)
+- [Torque control](control/TORQUE-CONTROL.md)
+- [Siemens V20 Modbus](hardware/V20_MODBUS.md)
 
-## Dated or legacy references
+## Historical records
 
-| Reference | Status / precautions |
-| --- | --- |
-| [ESP32 migration](../ESP32/MIGRATION.md) | Historical migration record. **Old DI mapping is not authoritative**; consult current electrical drawing and pin definitions |
-| [Pi installation record](../HMI/deploy/PI-INSTALLATION.md) | Dated installation notes; verify the actual installed Pi before using |
-| [HMI verification record](../HMI/VERIFICATION.md) | Tests of an earlier browser HMI, not validation of the current PySide6 UI |
-| [HMI visual redesign](../HMI/AVANS-REDESIGN.md) | Earlier design history, not current operator documentation |
-| Arduino USB prototype documentation | Historical Arduino/USB workflow; the former file path is not currently accessible on `main`. Do not use it for current hardware. |
-| [Dutch Arduino installation guide](../HMI/HANDLEIDING-NEDERLANDS.md) | Historical Arduino Uno installation procedure; **not current deployment** |
+- [Previous HMI verification](archive/HMI-VERIFICATION-2026-10-02.md) — earlier browser-based software; not current acceptance evidence
+- [Historical HMI design notes](archive/AVANS-REDESIGN.md)
+- [Raspberry Pi installation record](../HMI/deploy/PI-INSTALLATION.md) — dated installation details
+- [Earlier Arduino Uno guide](../HMI/HANDLEIDING-NEDERLANDS.md) — obsolete hardware instructions
 
-## Document maintenance
+The old ESP32 migration document was removed from the current tree. Its history remains in Git.
 
-Update the module README when a module changes. Keep design details close to the module, and update the root README only when system-wide interfaces, capabilities or commissioning status change. Historical records should be visibly labeled rather than silently removed.
-
-**Source of truth:** executable firmware and measured hardware behavior, reviewed electrical drawings and commissioning records, not an older setup guide. Safety-related behavior must be confirmed with a physical test plan.
+Keep active module documentation current, and clearly distinguish software simulation from physical commissioning.
