@@ -142,7 +142,7 @@ class Controller:
             cp=[],
             system=system,
             warnings=warnings,
-            esp32=self.esp32.snapshot() if self.esp32_mode else None,
+            esp32=self.esp32.snapshot() if self.esp32_mode else self.tunnel.snapshot(),
             device_mode='simulation' if self.simulation else 'esp32_tcp',
             errors=[self.measurements.error] if self.measurements.error else [],
         )
@@ -303,6 +303,16 @@ async def start_tunnel():
         raise ValueError('The fan can only START using the physical Start button.')
     c.tunnel.start()
     c.event('Tunnel start requested')
+    return c.status()
+
+
+@app.post('/api/tunnel/reset')
+async def reset_simulated_tunnel():
+    c = control()
+    if not c.simulation:
+        raise ValueError('RESET requires the physical Reset button (DI2).')
+    c.tunnel.reset()
+    c.event('Simulated physical RESET rising edge')
     return c.status()
 
 

@@ -44,6 +44,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/measurement/start', json={'name':'../bad'}).status_code, 422)
         self.controller.simulation = True
         self.post('tunnel/setpoint', {'airspeed_ms':1})
+        self.post('tunnel/reset')
         self.post('tunnel/start')
         # Drive the physics deterministically rather than waiting for spin-up.
         self.controller.tunnel.read(20)
@@ -218,12 +219,24 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Config.model_validate({**source, **changes})
 
+    def test_reset_is_simulation_only_and_fault_status_is_visible(self):
+        self.controller.tunnel.set_input(5, False)
+        status = self.client.get('/api/status').json()
+        self.assertEqual(status['esp32']['fault'], 'SAFETY_FEEDBACK')
+        self.assertFalse(status['esp32']['vfd_enable'])
+        self.controller.simulation = False
+        self.assertEqual(self.client.post('/api/tunnel/reset').status_code, 400)
+        self.assertEqual(self.client.post('/api/tunnel/start').status_code, 400)
+        self.controller.simulation = True
+
     def test_manual_command_requires_ready_and_configured_10_to_50_hz(self):
         # Simulation does not fake hardware readiness for manual motor commands.
         for requested in (0, 5, 9.99, 10, 50, 50.01, 60):
             result = self.client.post('/api/tunnel/frequency', json={'hz': requested})
             self.assertNotEqual(result.status_code, 200)
         self.assertEqual(self.client.post('/api/tunnel/mode', json={'mode': 'MANUAL'}).status_code, 400)
+        self.assertEqual(self.client.post('/api/tunnel/start').status_code, 400)
+        self.post('tunnel/reset')
         self.assertEqual(self.client.post('/api/tunnel/start').status_code, 200)  # Simulator only.
         self.assertEqual(self.client.post('/api/tunnel/stop').status_code, 400)
 

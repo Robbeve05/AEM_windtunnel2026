@@ -1712,7 +1712,7 @@ class HMIWindow(QMainWindow):
         is_sim = bool(data.get("simulation"))
         stale = bool(drive.get("stale", True)) if not is_sim else False
         machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
-        machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
+        machine_fault = drive.get("fault", "NONE" if is_sim else "UNKNOWN")
         estop_pressed = drive.get("estop_pressed") == 1
         self._update_signal_from_status(drive, is_sim, stale,
                                         machine_state, machine_fault, estop_pressed)
@@ -1725,6 +1725,16 @@ class HMIWindow(QMainWindow):
                 "E-stop PRESSED; fan may coast." if estop_pressed else
                 "E-stop released; physical RESET required. Fan may still rotate."
             )
+        elif machine_fault == "SAFETY_FEEDBACK":
+            self._set_machine_badge("FAULT", "tagError")
+            self.tunnel_state_detail.setText(
+                "Safety circuit DI5 open/latched; enable removed. Restore circuit and press RESET (DI2)."
+            )
+        elif machine_state == "STOP" and machine_fault in ("NONE", None):
+            self._set_machine_badge("STOP", "tagAmber")
+            self.tunnel_state_detail.setText(
+                "Controlled fifth-order deceleration; wait for VFD confirmation. New START (DI3) required."
+            )
         elif machine_state == "FAULT" or machine_fault not in ("NONE", None):
             self._set_machine_badge("FAULT", "tagError")
             self.tunnel_state_detail.setText(f"Fault: {machine_fault}. Physical RESET required.")
@@ -1732,7 +1742,7 @@ class HMIWindow(QMainWindow):
             self._set_machine_badge(machine_state,
                                     "tagSuccess" if machine_state in ("READY", "RUNNING") else "tagAmber")
             self.tunnel_state_detail.setText(
-                f"State: {machine_state} · physical START/RESET only"
+                f"State: {machine_state} · START DI3 / RESET DI2: press; STOP DI4: NC opens"
             )
         online = not stale and not is_sim
         actual_mode = drive.get("mode")

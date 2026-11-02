@@ -1,11 +1,11 @@
 #pragma once
 /* Author: R.E. van Eekelen. Physical assignments only. */
-// DIGITAL INPUTS - existing optically isolated DI1..DI8
-#define SAFETY_RELAY_OK_GPIO 4
-#define ESTOP_PRESSED_GPIO 5
-#define STOP_BUTTON_OK_GPIO 6
-#define START_BUTTON_GPIO 7
-#define RESET_BUTTON_GPIO 8
+// DIGITAL INPUTS - electrical schematic 30 October 2026
+#define ESTOP_PRESSED_GPIO 4   // DI1: NC, LOW trips
+#define RESET_BUTTON_GPIO 5    // DI2: NO, HIGH pressed
+#define START_BUTTON_GPIO 6    // DI3: NO, HIGH pressed
+#define STOP_BUTTON_OK_GPIO 7  // DI4: NC, LOW requests controlled stop
+#define SAFETY_RELAY_OK_GPIO 8 // DI5: NC, LOW trips
 #define VFD_FAULT_DI_GPIO 9
 #define CONTACTOR_FEEDBACK_GPIO 10
 #define SPARE_DI_GPIO 11

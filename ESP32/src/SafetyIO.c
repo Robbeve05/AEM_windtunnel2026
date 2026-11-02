@@ -8,6 +8,7 @@
 #include <string.h>
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool emergency_latch, relay_latch, stop_latch;
+static volatile bool stop_was_ok;
 static volatile uint32_t unsafe_generation;
 #if SIMULATION_MODE
 static SafetySnapshot simulated = {
@@ -29,9 +30,11 @@ static void IRAM_ATTR input_isr(void *arg)
         relay_latch = true;
         unsafe_generation++;
     }
-    if (STOP_BUTTON_OK_ACTIVE_LEVEL >= 0 &&
-        gpio_get_level(STOP_BUTTON_OK_GPIO) != STOP_BUTTON_OK_ACTIVE_LEVEL)
+    const bool stop_ok = STOP_BUTTON_OK_ACTIVE_LEVEL >= 0 &&
+        gpio_get_level(STOP_BUTTON_OK_GPIO) == STOP_BUTTON_OK_ACTIVE_LEVEL;
+    if (stop_was_ok && !stop_ok)
         stop_latch = true;
+    stop_was_ok = stop_ok;
     portEXIT_CRITICAL_ISR(&lock);
 }
 #endif
@@ -59,6 +62,9 @@ SafetySnapshot SafetyIO_Read(void)
 #if SIMULATION_MODE
     portENTER_CRITICAL(&lock);
     s = simulated;
+    s.raw_levels = (!s.estop_pressed ? 1u : 0u) |
+        (s.reset_pressed ? 2u : 0u) | (s.start_pressed ? 4u : 0u) |
+        (s.stop_ok ? 8u : 0u) | (s.relay_ok ? 16u : 0u);
     portEXIT_CRITICAL(&lock);
 #else
     for (int i = 0; i < 8; i++)
@@ -99,8 +105,9 @@ SafetySnapshot SafetyIO_Read(void)
             unsafe_generation++;
         relay_latch = true;
     }
-    if (s.valid && !s.stop_ok)
+    if (s.valid && stop_was_ok && !s.stop_ok)
         stop_latch = true;
+    stop_was_ok = s.valid && s.stop_ok;
     portEXIT_CRITICAL(&lock);
     return s;
 }
@@ -152,7 +159,7 @@ bool SafetyIO_Simulate(const char *name, bool active)
     portENTER_CRITICAL(&lock);
     if (!strcmp(name, "ESTOP"))
         simulated.estop_pressed = active;
-    else if (!strcmp(name, "RELAY"))
+    else if (!strcmp(name, "RELAY") || !strcmp(name, "SAFETY"))
         simulated.relay_ok = active;
     else if (!strcmp(name, "STOP"))
         simulated.stop_ok = !active;

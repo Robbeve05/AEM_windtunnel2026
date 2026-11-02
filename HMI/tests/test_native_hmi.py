@@ -27,6 +27,21 @@ class NativeHMITests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_schematic_stop_and_safety_messages(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            for simulation in (False, True):
+                for state, fault, expected in [
+                    ("STOP", "NONE", "Controlled fifth-order deceleration"),
+                    ("FAULT", "SAFETY_FEEDBACK", "Safety circuit DI5"),
+                    ("FAULT", "EMERGENCY_STOP", "physical RESET required"),
+                    ("READY", "NONE", "START DI3 / RESET DI2"),
+                ]:
+                    window._on_status(dict(simulation=simulation, tunnel_state=state,
+                        esp32=dict(stale=False, state=state, fault=fault)), None)
+                    self.assertIn(expected, window.tunnel_state_detail.text())
+            window.close()
+
     def test_graph_maximum_is_independent_of_auto_limit(self):
         with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
             window = HMIWindow()

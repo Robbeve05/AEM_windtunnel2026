@@ -6,15 +6,16 @@ Author: R.E. van Eekelen
 
 MachinePins.h is the sole definition of machine GPIO and zero-based expander bit assignments.
 BoardConfig.h is a compatibility include. AppConfig.h owns addresses, polarities, enable and commissioning
-flags, all existing controller design parameters and V20 settings; values and motor behavior are unchanged.
+flags, controller design parameters and V20 settings. DI1..DI5 below follow the revised
+electrical schematic dated 30 October 2026; see SCHEMATIC-20261030.md for behavior and tests.
 
 | Signal | Terminal | ESP32 GPIO / expander bit | Function |
 | --- | --- | --- | --- |
-| Safety relay feedback | DI1 | GPIO4 | Safety status |
-| Emergency stop | DI2 | GPIO5 | Emergency indication |
-| STOP button | DI3 | GPIO6 | Normal stop |
-| START button | DI4 | GPIO7 | Physical start |
-| RESET button | DI5 | GPIO8 | Physical reset |
+| Emergency stop | DI1 | GPIO4 | NC, LOW latches FAULT |
+| RESET button | DI2 | GPIO5 | NO, debounced HIGH rising edge |
+| START button | DI3 | GPIO6 | NO, debounced HIGH rising edge |
+| STOP button | DI4 | GPIO7 | NC, LOW falling edge starts controlled stop |
+| Safety | DI5 | GPIO8 | NC, LOW latches FAULT |
 | V20 fault | DI6 | GPIO9 | Optional fault feedback |
 | K2 feedback | DI7 | GPIO10 | Optional contactor feedback |
 | Spare input | DI8 | GPIO11 | Reserved |
@@ -26,7 +27,7 @@ flags, all existing controller design parameters and V20 settings; values and mo
 
 The lamp assignments are proposed until installed wiring is verified. This table is a logical signal
 assignment, not a complete electrical wiring diagram. DO bits are not ESP32 GPIO numbers or voltage
-sources. All existing optically isolated input assignments are retained, as are UART1 TX17/RX18/DE21,
+sources. DI1..DI5 use the revised mapping; the remaining assignments are retained, including UART1 TX17/RX18/DE21,
 I2C SDA42/SCL41, W5500 MOSI13/MISO14/SCLK15/CS16/INT12/RESET39 and onboard RGB38.
 
 ## Output ownership and failure behavior
