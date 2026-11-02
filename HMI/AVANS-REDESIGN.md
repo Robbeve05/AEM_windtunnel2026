@@ -1,5 +1,7 @@
 # Avans-style HMI redesign
 
+> **HISTORICAL DESIGN NOTES.** These were written for an earlier interface and are not a specification or validation of the current native PySide6 UI. See [HMI README](README.md).
+
 Changes in this build:
 - Avans-inspired red / off-white / black visual identity.
 - Avans-style wordmark asset in the left navigation.
