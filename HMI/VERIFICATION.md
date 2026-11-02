@@ -1,5 +1,7 @@
 # Delivery verification · 2026-10-02
 
+> **HISTORICAL TEST RECORD — NOT CURRENT ACCEPTANCE.** This documents the prior browser HMI; the current operator interface is native PySide6. See [HMI README](README.md).
+
 - Python unit/integration tests: 3 passed (`python -m unittest discover -s tests -v`).
 - All three JavaScript modules pass `node --check`.
 - Browser: no JavaScript error messages during the final workflow.
