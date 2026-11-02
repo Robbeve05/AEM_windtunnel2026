@@ -32,6 +32,7 @@ AEM_windtunnel2026/
 │   ├── README.md               Documentation map and status
 │   ├── control/                Control design
 │   ├── hardware/               V20 integration
+│   ├── deployment/             OTA setup and deployment notes
 │   └── archive/                Historical notes
 ├── ESP32/
 │   ├── README.md               Firmware architecture, safety and build
