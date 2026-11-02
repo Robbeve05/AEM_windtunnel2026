@@ -1,5 +1,7 @@
 # Nederlandstalige installatiehandleiding: Raspberry Pi en Arduino Uno
 
+> **LEGACY ARDUINO UNO PROTOTYPE — DO NOT USE FOR CURRENT DEPLOYMENT.** The current wind tunnel uses an industrial ESP32-S3 and Ethernet TCP, not the Arduino USB control path described below. Use [HMI README](README.md) and [ESP32 README](../ESP32/README.md) for current instructions. The following content is preserved as historical reference.
+
 Deze handleiding beschrijft de volledige eerste installatie van de windtunnel-HMI en het uploaden van de Arduino-firmware. De HMI draait als een Python-desktopprogramma op de Raspberry Pi. De Arduino Uno sluit je met USB op de Pi aan; de Pi kan de firmware daarna rechtstreeks naar de Uno uploaden.
 
 ## Wat je nodig hebt
