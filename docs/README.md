@@ -9,8 +9,14 @@ The root README provides the project overview. The ESP32 and HMI folders each co
 - [Native HMI](../HMI/README.md)
 - [Torque control](control/TORQUE-CONTROL.md)
 - [Siemens V20 Modbus](hardware/V20_MODBUS.md)
+- [Machine I/O](hardware/MACHINE-IO.md) — new schematic mapping; verify against actual firmware and hardware
+- [OTA setup](deployment/OTA-SETUP.md) — maintenance-gated, not commissioned
 
 ## Historical records
+
+- [Firmware integration summary](archive/INTEGRATION-FINAL.md)
+- [Integration validation, 30 October 2026](archive/INTEGRATION-VALIDATION.md)
+- [IO validation, 30 October 2026](archive/IO-VALIDATION.md)
 
 - [Previous HMI verification](archive/HMI-VERIFICATION-2026-10-02.md) — earlier browser-based software; not current acceptance evidence
 - [Historical HMI design notes](archive/AVANS-REDESIGN.md)
