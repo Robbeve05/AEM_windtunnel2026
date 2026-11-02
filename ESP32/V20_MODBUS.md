@@ -1,51 +1,71 @@
-# Siemens SINAMICS V20 via Modbus RTU
+# Siemens SINAMICS V20 — Modbus RTU
 
-Voor 6SL3210-5BE25-5UV1. De implementatie gebruikt **115200 baud, 8E1, slave 1** via UART1 en de ingebouwde geïsoleerde RS485-transceiver; er wordt geen Modbus TCP gebruikt. De drive wordt niet door deze software gecommissioned of automatisch van storingen gereset.
+Technical integration reference for Siemens V20 `6SL3210-5BE25-5UV1` and the industrial ESP32-S3 controller. **This describes the software interface, not a commissioned installation.** Verify all drive settings against the physical V20, its current manual and the actual motor nameplate.
 
-## Aansluiten en configureren
+## Transport and wiring
 
-Interne boardverbindingen: GPIO17 TX, GPIO18 RX, GPIO21 RTS. Gebruik de geïsoleerde A+/B- klemmen; geen externe transceiver nodig. De UART-driver schakelt de zendrichting. Gebruik de RS485-aansluitingen van de drive volgens de Siemens-handleiding; controleer polariteit, referentie, afscherming en busterminatie. ESP32-pinnen niet rechtstreeks op RS485 aansluiten.
+- Built-in isolated RS-485 interface; ESP32 internal UART connections are TX GPIO17, RX GPIO18 and RTS GPIO21. Use the board's isolated A+/B- terminals, not raw ESP32 pins.
+- Modbus **RTU** (not Modbus TCP), configured in the application for **115200 baud, 8E1, slave 1**. Verify the drive's actual P2010 encoding before using this baud rate.
+- Check A/B polarity, reference connection, termination, shielding and the drive's documented terminals.
+- The electrical emergency stop must remain independent of Modbus, the ESP32 and its software. OFF1 is an operational stop, **not** a safety-rated stop.
 
-Stel de actieve command/data set van de V20 passend in:
+## Drive parameter checklist
 
-| Parameter | Instelling voor deze software |
+| Parameter | Intended setup / verification |
 | --- | --- |
-| P0700 | 5, opdrachten via USS/Modbus |
-| P1000 | 5, frequentiesetpoint via USS/Modbus |
-| P2023 | 2, Modbus; daarna voorgeschreven power-cycle |
-| P2021 | 1, slave-adres |
-| P2022 | 20 ms maximale antwoordvorming; ESP32 wacht 80 ms inclusief ontvangst |
-| P2010[0] | **Instellen volgens 115200 baud** uit `AppConfig.h`; verifieer de exacte Siemens parametercodering op de drive |
-| P2034 / P2035 | 2 / 1, even parity / 1 stopbit (8E1) |
-| P2000 | 50 Hz referentiefrequentie |
-| P2014[0] | 500 ms telegramwatchdog; init schrijft en verifieert dit |
+| P0700 | 5 — command source USS/Modbus |
+| P1000 | 5 — frequency setpoint USS/Modbus |
+| P2023 | 2 — Modbus; perform required power cycle |
+| P2021 | 1 — slave address |
+| P2022 | 20 ms drive response processing; firmware receive timeout is configured separately |
+| P2010[0] | Set per Siemens coding for **115200 baud**; verify on the real V20 |
+| P2034 / P2035 | 2 / 1 — even parity and one stop bit (8E1) |
+| P2000 | 50 Hz reference frequency |
+| P2014[0] | 500 ms telegram watchdog; verify on drive and test physical communication loss |
 
-Controleer motorgegevens, toegestane maximumfrequentie, draairichting en P1120/P1121 ramps afzonderlijk. De code verandert deze niet. De 0,6 s uit het PI-model is een geschatte planttijdconstante, geen aanbevolen rampinstelling. Een fysieke noodstop blijft onafhankelijk van Modbus. OFF1 is een normale afremstop volgens de ingestelde ramp.
+Motor data, allowable frequency range, direction and drive acceleration/deceleration parameters P1120/P1121 need independent verification. Do not infer motor rated shaft power from the V20's 5.5 kW system rating.
 
-## Registercontract
+## Modbus register contract
 
-| Functie | Register | PDU-adres | Waarde |
+| Function | Holding register | PDU address | Meaning |
 | --- | --- | --- | --- |
-| STW | 40100 | 99 | 0x047E OFF1, 0x047F vooruit/run |
-| HSW | 40101 | 100 | 0..16384 = 0..100% van P2000 |
-| ZSW / HIW | 40110 / 40111 | 109 / 110 | status en werkelijke frequentie |
+| STW | 40100 | 99 | Command word: 0x047E OFF1; 0x047F forward/run |
+| HSW | 40101 | 100 | Setpoint 0–16384 for 0–100% of P2000 |
+| ZSW / HIW | 40110 / 40111 | 109 / 110 | Status word and actual-frequency indication |
 | Watchdog | 40001 | 0 | 500 ms |
-| Referentie | 40016 | 15 | 5000 = 50,00 Hz |
+| Reference | 40016 | 15 | 5000 = 50.00 Hz |
 
-FC16 schrijft STW en HSW samen. FC03 leest status/waarden; FC06 stelt de watchdog in. Bytevolgorde: registers big-endian, CRC little-endian. Init stuurt eerst STOP en weigert een andere P2000. De statuscontrole vereist ready-to-switch-on en remote-control, zonder fault of switch-on-inhibit. Operation-enabled is niet verplicht bij stilstand. Een start met 0% blijft een RUN-opdracht; STOP gebruikt altijd OFF1 en nul HSW.
+The driver uses FC16 for combined STW/HSW writes, FC03 for reads and FC06 for watchdog configuration. Modbus registers are big-endian with low-byte-first CRC transmission. Driver initialization requests OFF1 and checks the reference and status before permitting operation. A 0 Hz setpoint does not replace an explicit OFF1 stop.
 
-Iedere opdracht krijgt een begrensde response-wachttijd van 80 ms, plus zend- en framepauze. De drive moet binnen die termijn antwoorden; meet dit bij ingebruikname. Controleer specifiek of P2010 daadwerkelijk de bitrate 115200 selecteert; laat de firmware en drive niet met verschillende baudrates werken. P2022=20 ms voorkomt dat een veel later gevormd antwoord bij een volgende aanvraag terechtkomt. Een aanvraag kan bij overschrijding al uitgevoerd zijn, daarom volgt bij ontbrekende bevestiging STOP. Late antwoorden na timeout worden uitgefilterd met een extra wachttijd. Slave, functie, lengte, bytecount, schrijfbevestiging en CRC worden gecontroleerd. Exceptions zijn fouten. Er zijn geen automatische RUN-retries. Bij fouten volgt een best-effort STOP; een geslaagde gestopte cyclus is vereist voordat RUN weer mag. ControlTask valt bij een motorfout terug naar gestopt en vereist opnieuw START. Een mislukte initialisatie vereist een firmwareherstart na herstel. Als STOP niet aankomt, is de drivewatchdog de terugvalvoorziening; test kabelverlies daadwerkelijk.
+Requests have bounded response handling, including frame timing and late-response quarantine. A write timeout does **not** prove that the V20 ignored a RUN command. The controller therefore avoids blind automatic RUN retries and attempts a stop following communication errors. The drive's independent telegram-watchdog response must be tested in hardware.
 
-## Bouwen en testen
+## Current controller architecture
 
-- `pio run -e waveshare_s3_sim`: simulatie (standaard).
-- `pio run -e waveshare_s3`: echte Modbus- en ASPD-4525-code, SIMULATION_MODE=0.
-- `./tests/run_host_tests.ps1`: controller/protocol en V20-mocktests met Visual Studio C++ tools.
+The ESP32 uses an internal GPTimer and a **200 Hz / 5 ms** control cycle. V20 service is asynchronous; responses are not expected to complete inside each 5 ms control period.
 
-De ASPD-4525-driver gebruikt de bestaande Uno-conversie en filtering. Houd de pitot bij opstart in stilstaande lucht voor nulkalibratie. De interne GPTimer wekt ControlTask op 1 kHz; sensoren nominal 25 Hz en actuator 10 Hz. Zie MIGRATION.md voor bedrading, foutrespons en hardwaretests.
+- **MANUAL:** frequency setpoint through a separate fifth-order ramp.
+- **AUTO:** Pitot airspeed feedback, a fifth-order reference, one-mass torque PID and an approximate inverse motor model that generates V20 frequency.
+- There is **no separate legacy frequency-domain PI controller** in the current firmware.
+- Real AUTO remains inhibited until motor and fan model parameters are independently validated.
 
-De PI gebruikt het vfd_proxy-model uit windtunnel_pi_design.py: G(s)=0,8/(0,6s+1), crossover 0,20 Hz, PI-nulpunt 0,02 Hz. Kp=1,557722505 Hz/(m/s), Ki=0,195749183 Hz/m; de C-uitgang in procenten gebruikt tweemaal deze gains. Tustin gebruikt de werkelijke sampletijd van de aanroeper (5 ms / 200 Hz). De oude torque-modus en robot-Ka/Kt worden niet gebruikt. Het Python-bronbestand zelf is niet gewijzigd. De bestaande simulator (30 m/s bij 100%, tau 0,5 s) blijft een afzonderlijk testmodel.
+See [ESP32 README](README.md) and [Torque control](TORQUE-CONTROL.md). The current software state and commissioning flags, not historical tuning figures, determine whether the machine can be operated.
 
-Bron: [Siemens V20 Operating Instructions 12/2024, sectie 7.2 en parameterlijst](https://support.industry.siemens.com/cs/attachments/109977897/V20_op_instr_1224_en-US.pdf).
+## Build and validation
 
-Aanvullend gecontroleerd tegen de aangeleverde Siemens Operating Instructions 09/2014, A5E34559884: p. 139-145 (Modbus), p. 157 (statusbits), p. 235 (P2022). Deze oudere editie vermeldt geen P2014-koppeling in de watchdog-registertabel; controleer P2014[0]=500 ms ook op de drive zelf en test F72 bij kabelverlies.
+From `ESP32/`:
+
+```bash
+pio run -e waveshare_s3
+pio run -e waveshare_s3_sim
+```
+
+Windows host regression tests: `./tests/run_host_tests.ps1`.
+
+The host tests use hardware mocks. Physical commissioning must additionally verify the V20 parameter values, feedback scaling, initial OFF1 behavior, frequency tracking, fault handling, connection-loss watchdog, K2 operational enable, independent emergency stop and fan coast-down.
+
+## Sources
+
+- [Siemens V20 Operating Instructions (12/2024)](https://support.industry.siemens.com/cs/attachments/109977897/V20_op_instr_1224_en-US.pdf)
+- [Siemens V20 Operating Instructions (03/2021)](https://support.industry.siemens.com/cs/attachments/109799545/V20_op_instr_0321_en-US.pdf)
+
+Parameter/register interpretations must be confirmed for the firmware revision and actual installed drive before commissioning.
