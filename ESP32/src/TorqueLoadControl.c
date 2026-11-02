@@ -2,6 +2,7 @@
  * V20 accepts frequency, not direct torque; see MotorModel.c.
  */
 #include "TorqueLoadControl.h"
+#include "AppConfig.h"
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -46,8 +47,13 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
     *out = (TorqueLoadOutput){0};
     const float dt = c->sample_s;
     const float error = reference_ms - measured_ms;
-    const float kp = c->design.kp, ki = c->design.ki;
-    const float kd = c->design.kd, tf = c->design.tf;
+    /* Enforce the compile-time controller mode at the execution point.
+     * Runtime PID gain commands cannot enable disabled feedback terms. */
+    const float kp = CONTROLLER_SETTING == CONTROLLER_NONE ? 0.0f : c->design.kp;
+    const float ki = (CONTROLLER_SETTING == CONTROLLER_PI || CONTROLLER_SETTING == CONTROLLER_PID)
+                         ? c->design.ki : 0.0f;
+    const float kd = CONTROLLER_SETTING == CONTROLLER_PID ? c->design.kd : 0.0f;
+    const float tf = c->design.tf;
 
     /* Tustin integral; no implicit actuator anti-windup. Use diagnostics only. */
     const float integral = c->integral_nm +
