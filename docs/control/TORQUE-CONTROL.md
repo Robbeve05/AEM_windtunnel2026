@@ -1,0 +1,15 @@
+# Torque-only AUTO controller (R.E. van Eekelen)
+
+AUTO uses exactly one speed loop: airspeed setpoint -> fifth-order reference -> PID torque correction [Nm] + J*d(omega_ref)/dt + fan load -> quasi-static induction-motor inverse -> frequency reference [Hz] -> V20 Modbus -> fan -> Pitot airspeed feedback. MANUAL remains separate and directly commands Hz through its own quintic ramp.
+
+The frequency-domain PI and its preliminary 0.6 s first-order tuning have been removed from the firmware. The PID command from the Pi (PID Kp Ki Kd) now adjusts **torque** gains; these gains must not be confused with prior %/(m/s) gains. Controller coefficients are calculated from RegelaarDesign.c using an approximate one-mass torque-input plant.
+
+The motor inverse uses T_motor=Ks*(2*pi*f/p-omega) and T_fan=b*omega*abs(omega). It is a **local approximation**, not a verified Siemens V20 torque-control characteristic. The torque controller and motor converter both account for acceleration and fan load; the converter receives only the PID torque correction so these terms are NOT added twice. The estimated shaft speed comes from measured airspeed divided by nominal K_v; airflow dynamics/slip can invalidate the estimate during transients.
+
+**Confirmed rotating inertias:** RUCK technical support (Thomas Haag, e-mail "Technical Inquiry - Moment of Inertia", supplied 2026-11-01) provided values for **EL 710 D4 02, article 146531**: motor `J_MOTOR_KGM2 = 0.0182 kg·m²` and impeller `J_FAN_KGM2 = 0.3530 kg·m²`. The directly coupled shaft has `J_TOTAL_KGM2 = 0.3712 kg·m²`. These are now in `AppConfig.h` and are used by the one-mass controller design and motor inertia model. `MOTOR_VARIANT_CONFIRMED=1` acknowledges only the verified inertia data, **not** the motor nameplate or controller commissioning.
+
+**Physical AUTO remains locked.** `MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0` even though inertia is now nonzero. The assumed **4 kW, 1450 rpm** motor model, estimated slip coefficient and fan load coefficient are NOT verified for this installed motor. A **5.5 kW** V20/fan system rating does not automatically establish the motor's rated shaft-output power. `SAFETY_IO_COMMISSIONED=0` and `V20_RUN_COMMISSIONED=0` are unchanged. Never enable these flags without physical verification. `SIMULATION_MODE` may use the manufacturer inertias but remains a simulation, not commissioning.
+
+Check the actual motor nameplate, J_motor, J_fan, V20 V/f setup, slip/torque slope, fan aerodynamic load and Kv. Validate the frequency limits, ramps, steady-state v(f) and transients in simulation and with separate guarded manual experiments before permitting AUTO. A clamped command flags saturation, and the controller rejects integral increments that worsen saturation. Actual V20 ramp tracking can cause additional windup; improve tracking anti-windup before production.
+
+The 200 Hz task, state machine, physical start/reset, STOP/OFF1, watchdog, hardware safety wiring and manual Hz profile are not changed. The hardware safety circuit remains independent of software.
