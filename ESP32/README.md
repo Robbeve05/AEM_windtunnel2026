@@ -56,6 +56,23 @@ These values describe the field-side signals, **not guaranteed ESP32 GPIO logic 
 
 **The ESP32 ISR and K2 command are not safety-rated functions.** The independent electrical safety circuit must remove hazardous actuation regardless of MCU execution, Ethernet, RTOS or Modbus. In particular, do not mistake an OFF1 controlled stop for a safety-rated emergency stop.
 
+## Compile-time feedback-controller selection
+
+Set `CONTROLLER_SETTING` in `include/AppConfig.h`:
+
+```c
+#define CONTROLLER_SETTING CONTROLLER_PI
+```
+
+| Value | AUTO torque feedback | Feedforward |
+| --- | --- | --- |
+| `CONTROLLER_NONE` | No P, I or D | Acceleration and fan-load model remain active |
+| `CONTROLLER_P` | Proportional only | Active |
+| `CONTROLLER_PI` | Proportional and integral (default) | Active |
+| `CONTROLLER_PID` | Proportional, integral and filtered derivative | Active |
+
+Selection is enforced in `TorqueLoadControl_Step()`, so commands that update stored PID gains cannot activate disabled terms. It does **not** affect MANUAL frequency control and **does not** bypass physical AUTO commissioning gates. `NONE` means no feedback correction, not a stopped fan or disabled feedforward. Rebuild/flash firmware after changing the setting. These modes have not been physically tuned or commissioned.
+
 ## Control and calibration
 
 **MANUAL:** enter a requested frequency from 0 to 50 Hz. The output follows a separate fifth-order frequency profile with slew, acceleration and jerk limits. MANUAL does not close the airspeed feedback loop.
