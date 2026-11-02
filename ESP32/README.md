@@ -26,7 +26,7 @@ Firmware for the Avans Aerospace wind tunnel, maintained on the **`main` branch*
 | `src/FanCalibration.c` | Stores and retrieves the calibrated fan characteristic in NVS |
 | `include/AppConfig.h` | Operating limits, timing, model parameters and commissioning flags |
 
-Other drivers and public headers are organized under `src/` and `include/`; host tests are in `tests/`. For module-specific detail see [TORQUE-CONTROL.md](TORQUE-CONTROL.md), [V20_MODBUS.md](V20_MODBUS.md) and [MIGRATION.md](MIGRATION.md). **MIGRATION.md contains historical DI assignments and must not be used as the current wiring authority.**
+Other drivers and public headers are organized under `src/` and `include/`; host tests are in `tests/`. For module-specific detail see [Torque control](../docs/control/TORQUE-CONTROL.md) and [V20 Modbus](../docs/hardware/V20_MODBUS.md). Historical migration notes were removed because they contain superseded IO assignments.
 
 ### FreeRTOS tasks
 
