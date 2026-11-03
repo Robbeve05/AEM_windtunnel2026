@@ -43,10 +43,28 @@ def migrate_config(defaults: dict, existing: dict) -> dict:
     # Never raise an existing operating ceiling while upgrading software.
     # Respect configured lower maxima, but reject out-of-range settings.
     airspeed = float(result["max_airspeed_ms"])
+    validated_airspeed = float(defaults["max_airspeed_ms"])
+    # Before graph_max_airspeed_ms existed, some Pi sites configured
+    # max_airspeed_ms as a plot Y-axis limit (e.g. 45 or 50 m/s).
+    # Preserve that user intent on the new DISPLAY-ONLY key, but never
+    # carry the old value through as an AUTO motor setpoint ceiling.
+    # Reject corrupted/implausible legacy values instead of guessing.
+    if not (0 < airspeed <= 120):
+        raise ValueError("Legacy max_airspeed_ms is invalid (must be 0–120 m/s)")
+    if airspeed > validated_airspeed:
+        if "graph_max_airspeed_ms" not in existing:
+            result["graph_max_airspeed_ms"] = max(
+                validated_airspeed, airspeed,
+                float(defaults["graph_max_airspeed_ms"]),
+            )
+        result["max_airspeed_ms"] = validated_airspeed
+        print(
+            f"Migrating legacy {airspeed:g} m/s maximum: "
+            f"AUTO motor limit = {validated_airspeed:g} m/s, "
+            f"graph Y-axis = {result['graph_max_airspeed_ms']:g} m/s.",
+        )
     min_hz = float(result["min_manual_frequency_hz"])
     max_hz = float(result["max_manual_frequency_hz"])
-    if not (0 < airspeed <= float(defaults["max_airspeed_ms"])):
-        raise ValueError("max_airspeed_ms exceeds validated firmware/HMI limit")
     if not (float(defaults["min_manual_frequency_hz"]) <= min_hz < max_hz <=
             float(defaults["max_manual_frequency_hz"])):
         raise ValueError("manual frequency range must stay within 10–50 Hz")

@@ -23,10 +23,26 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(result['esp32_host'],'10.0.0.25')
         self.assertEqual(result['max_airspeed_ms'],35)
         self.assertEqual(migrate_config(DEFAULTS,result),result)
+    def test_migrates_legacy_chart_maximum_without_raising_motor_limit(self):
+        legacy = {k: v for k, v in DEFAULTS.items()
+                  if k != "graph_max_airspeed_ms"}
+        legacy["max_airspeed_ms"] = 50
+        migrated = migrate_config(DEFAULTS, legacy)
+        self.assertEqual(migrated["max_airspeed_ms"], 40)
+        self.assertEqual(migrated["graph_max_airspeed_ms"], 50)
+        self.assertEqual(migrate_config(DEFAULTS, migrated), migrated)
+
+    def test_migrates_high_legacy_value_but_respects_explicit_chart_preference(self):
+        legacy = {**DEFAULTS, "max_airspeed_ms": 60,
+                  "graph_max_airspeed_ms": 70}
+        migrated = migrate_config(DEFAULTS, legacy)
+        self.assertEqual(migrated["max_airspeed_ms"], 40)
+        self.assertEqual(migrated["graph_max_airspeed_ms"], 70)
+
     def test_rejects_unsafe_or_conflicting_limits(self):
         for delta in ({'max_manual_frequency_hz':60},
                       {'min_manual_frequency_hz':0},
-                      {'max_airspeed_ms':45},
+                      {'max_airspeed_ms':200},
                       {'max_manual_frequency_hz':30}):
             with self.subTest(delta=delta),self.assertRaises(ValueError):
                 migrate_config(DEFAULTS,{**DEFAULTS,**delta})
