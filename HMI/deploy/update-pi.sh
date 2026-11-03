@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-REPOSITORY_DIR="$(cd -- "$APP_DIR/.." && pwd)"
+# The public launcher path ~/HMI is a symlink to the checkout's HMI/.
+# Resolve the script's *physical* location first. Otherwise invoking this
+# script via ~/HMI causes REPOSITORY_DIR to be incorrectly set to $HOME.
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+APP_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd -P)"
+REPOSITORY_DIR="$(cd -- "$APP_DIR/.." && pwd -P)"
 EXPECTED_REPOSITORY="$HOME/AEM_windtunnel2026"
 
 if [[ "$REPOSITORY_DIR" != "$EXPECTED_REPOSITORY" ]]; then
