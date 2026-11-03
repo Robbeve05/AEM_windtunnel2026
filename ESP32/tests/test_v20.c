@@ -300,7 +300,7 @@ static void test_run_stop(void)
     V20Modbus_Disarm();
     assert(!V20Modbus_StopConfirmed(stopped_us, .1f));
     r.run = false;
-    r.permissive = true; /* Normal OFF1 keeps the operational K2 permissive. */
+    r.permissive = true; /* Normal OFF1 keeps the operational VFD-enable relay permissive. */
     r.output = 100;
     run_until_command(&r);
     assert(fake.stw == 0x047e && fake.hsw == 0);

@@ -80,6 +80,7 @@ typedef struct
     bool curve_running;
     float previous_ff_setpoint;
     bool v20_initialized;
+    bool control_clock_started;
     uint32_t cycles;
     int64_t window_start_us;
 
@@ -226,8 +227,12 @@ static void Control_Init(ControlContext *ctx)
     ctx->now_tick = xTaskGetTickCount();
     StateMachine_Init(&ctx->machine, ctx->now_ms);
     ctx->v20_initialized = V20Modbus_Init();
-    if (!ctx->v20_initialized)
+    if (ctx->v20_initialized)
+        ESP_LOGI("Control", "V20 Modbus UART initialization successful; drive communication pending");
+    else {
+        ESP_LOGE("Control", "V20 Modbus UART initialization failed; motor remains disarmed");
         StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+    }
     V20Modbus_Disarm();
     ctx->window_start_us = esp_timer_get_time();
     Control_PublishStatus(ctx);
@@ -475,7 +480,7 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
     }
 
-    /* Disarm immediately on STOP or FAULT; the separate operational K2
+    /* Disarm immediately on STOP or FAULT; the separate operational VFD-enable relay
      * permissive is kept enabled through a healthy normal OFF1 ramp. */
     if ((previous_state == STATE_RUNNING && ctx->machine.state != STATE_RUNNING) ||
         (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT))
@@ -665,6 +670,9 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
  */
 static void Control_PublishStatus(ControlContext *ctx)
 {
+    ctx->status.control_ready = ctx->tasks_ready;
+    ctx->status.control_clock_started = ctx->control_clock_started;
+    ctx->status.modbus_initialized = ctx->v20_initialized;
     ctx->status.state = ctx->machine.state;
     ctx->status.fault = ctx->machine.fault;
     ctx->status.last_fault = ctx->machine.last_fault;
@@ -768,6 +776,7 @@ void ControlTask(void *argument)
         Control_HoldInitializationFault(ctx);
     ctx->window_start_us = esp_timer_get_time();
     StartControlClock();
+    ctx->control_clock_started = true;
 
     for (;;)
     {

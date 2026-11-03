@@ -7,6 +7,7 @@
 #pragma once
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -38,6 +39,11 @@ extern "C"
     extern EventGroupHandle_t handle_ButtonEventGroup;
     extern EventGroupHandle_t handle_ThreadEventGroup;
     extern EventGroupHandle_t handle_SystemEventGroup;
+    extern TaskHandle_t input_task_handle;
+    extern TaskHandle_t pi_task_handle;
+    extern TaskHandle_t heartbeat_task_handle;
+    extern volatile bool ota_task_alive;
+    extern volatile bool ota_valid_task_alive;
 
     ///////////////////////////////////////////////////////////////////////////////
     // Function prototypes

@@ -8,6 +8,10 @@ ROOT=Path(__file__).resolve().parents[1]
 DEFAULTS=json.loads((ROOT/'config/config.json').read_text(encoding='utf-8'))
 
 class MigrationTests(unittest.TestCase):
+    def test_default_endpoint_targets_static_esp32_listener(self):
+        self.assertEqual(DEFAULTS['esp32_host'], '192.168.50.2')
+        self.assertEqual(DEFAULTS['esp32_port'], 5000)
+
     def test_legacy_file_receives_new_limits(self):
         legacy={k:v for k,v in DEFAULTS.items() if k not in (
             'min_manual_frequency_hz','max_manual_frequency_hz',
@@ -23,6 +27,10 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(result['esp32_host'],'10.0.0.25')
         self.assertEqual(result['max_airspeed_ms'],35)
         self.assertEqual(migrate_config(DEFAULTS,result),result)
+
+    def test_migrates_previous_placeholder_esp32_address(self):
+        values={**DEFAULTS,'esp32_host':'192.168.50.10'}
+        self.assertEqual(migrate_config(DEFAULTS,values)['esp32_host'],'192.168.50.2')
     def test_migrates_legacy_chart_maximum_without_raising_motor_limit(self):
         legacy = {k: v for k, v in DEFAULTS.items()
                   if k != "graph_max_airspeed_ms"}

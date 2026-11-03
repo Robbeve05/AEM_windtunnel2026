@@ -39,6 +39,8 @@ def migrate_config(defaults: dict, existing: dict) -> dict:
     result["simulate_usb"] = False
     result.pop("serial_port", None)
     result.pop("baud_rate", None)
+    if result.get("esp32_host") == "192.168.50.10":
+        result["esp32_host"] = defaults["esp32_host"]
 
     # Never raise an existing operating ceiling while upgrading software.
     # Respect configured lower maxima, but reject out-of-range settings.

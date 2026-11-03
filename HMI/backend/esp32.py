@@ -13,6 +13,8 @@ FLOATS = {"air_density", "manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp"
 INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
         "estop", "relay", "reset_required", "stop", "inputs_valid", "pi", "commissioned",
         "estop_pressed", "safety_relay_ok", "stop_button_ok", "pi_connected", "taps_valid",
+        "ethernet", "ethernet_link", "ipv4_configured", "pi_tcp_connected",
+        "pi_heartbeat_received", "pi_heartbeat_fresh",
         "sample_seq", "sensor_errors", "modbus_errors", "modbus_timeouts", "control_period_us",
         "execution_us", "missed_deadlines", "overruns"}
 
@@ -81,10 +83,38 @@ class ESP32Client:
     def fresh(self):
         return self._connected and self._last > 0 and time.monotonic() - self._last <= self.status_timeout
 
+    @property
+    def connection_status(self):
+        if not self._connected:
+            return "OFFLINE"
+        if not self.fresh:
+            return "TCP_CONNECTED_NO_FRESH_STATUS"
+        if self._latest.get("ethernet_link") == 0:
+            return "ETHERNET_DISCONNECTED"
+        if self._latest.get("ipv4_configured") == 0:
+            return "CONNECTED_NO_IP"
+        if self._latest.get("pi_tcp_connected") == 0:
+            return "APPLICATION_DISCONNECTED"
+        heartbeat = self._latest.get("pi_heartbeat_fresh")
+        received = self._latest.get("pi_heartbeat_received")
+        if heartbeat is None:
+            heartbeat = self._latest.get("pi_connected")
+        if received == 0:
+            return "HEARTBEAT_NOT_RECEIVED"
+        if heartbeat == 0:
+            return "HEARTBEAT_TIMEOUT"
+        if heartbeat is None or self._latest.get("ethernet_link") is None or self._latest.get("ipv4_configured") is None:
+            return "STATUS_FRESH"
+        return "ONLINE"
+
     def snapshot(self):
         if self.fresh:
-            return dict(self._latest, connected=True, stale=False)
+            return dict(self._latest, connected=True, tcp_connected=True, stale=False,
+                        connection_status=self.connection_status)
         return dict(state="UNKNOWN", fault="UNKNOWN", connected=False, stale=True,
+                    tcp_connected=self._connected, connection_status=self.connection_status,
+                    ethernet_link=None, ipv4_configured=None,
+                    pi_heartbeat_received=None, pi_heartbeat_fresh=None,
                     estop_pressed=None, reset_required=True, motor_ok=False, sensor_ok=False,
                     pv=None, sp=None, out=None, warning="Fan may still be rotating.")
 
@@ -144,6 +174,13 @@ class ESP32Client:
             if text.startswith("STATUS "):
                 data = parse_status(text)
                 if data:
+                    if self._last == 0:
+                        logging.info(
+                            "ESP32 STATUS state=%s ethernet=%s ipv4=%s pi_tcp=%s heartbeat=%s",
+                            data.get("state"), data.get("ethernet_link"),
+                            data.get("ipv4_configured"), data.get("pi_tcp_connected"),
+                            data.get("pi_heartbeat_fresh"),
+                        )
                     self._latest = data
                     self._last = time.monotonic()
                     await callback(data)
@@ -162,6 +199,7 @@ class ESP32Client:
         delay = 0.5
         while not self._stopped:
             try:
+                logging.info("Connecting to ESP32 TCP listener %s:%d", self.host, self.port)
                 self._reader, self._writer = await asyncio.wait_for(
                     asyncio.open_connection(self.host, self.port, limit=8192), 3.0)
                 self._connected, self._last = True, 0

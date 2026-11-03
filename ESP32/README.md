@@ -6,11 +6,13 @@ Firmware for the Avans Aerospace wind tunnel, maintained on the **`main` branch*
 
 ## Architecture
 
-- **Hardware:** Waveshare industrial ESP32-S3-PoE-ETH-8DI-8DO; Ethernet TCP to the Pi, RS-485 Modbus RTU to Siemens SINAMICS V20, I2C to Pitot/pressure-sensor hardware, industrial DI/DO for buttons and operational K2 enable.
+- **Hardware:** Waveshare industrial ESP32-S3-PoE-ETH-8DI-8DO; Ethernet TCP to the Pi, RS-485 Modbus RTU to Siemens SINAMICS V20, I2C to Pitot/pressure-sensor hardware, industrial DI/DO for buttons and the VFD-enable relay.
 - **RTOS:** FreeRTOS with an internal GPTimer, **200 Hz (5 ms)** control cycles. Timer alarms alternate sensor and control notifications at **2.5 ms** phases. Modbus communication is serviced asynchronously; a 5 ms control period is not a 5 ms Modbus round-trip guarantee.
 - **Startup:** hardware, queues and event groups are created before tasks. The control loop waits for required task-ready bits; those bits indicate local initialization, not live sensor, V20 or Pi health. Failed initialization leaves motor outputs inhibited.
 - **Control modes:** MANUAL commands V20 frequency in Hz through a fifth-order ramp; AUTO uses an airspeed reference ramp, torque PID, a one-mass motor/fan model and an inverse motor model to produce V20 Hz. A valid stored fan calibration can supply the base frequency.
 - **Operational state machine:** `INIT → WAIT → READY → RUNNING → STOP → FAULT` (transitions are governed by interlocks and commands). The controller publishes state, input and drive diagnostics to the HMI.
+
+The serial console also reports startup readiness and task states every five seconds. Its diagnostics distinguish local task initialization from current hardware health: sensor samples may remain invalid or stale, the V20 may not respond, and the Pi heartbeat may be absent even after the corresponding task/listener initialized. Ethernet link/IP, each raw DI1-DI8 level, interpreted input function and configured polarity, commissioning flags, machine state/fault, output image and status indication are included. Output-image acknowledgement is not physical contact feedback. External status lamps are not software-driven. These reports do not issue output or motor commands.
 
 ### Main firmware files
 
@@ -18,7 +20,7 @@ Firmware for the Avans Aerospace wind tunnel, maintained on the **`main` branch*
 | --- | --- |
 | `src/main.c` | Calls `StartApplicationTasks()` |
 | `src/ApplicationTasks.c` | Creates hardware services, queues, event groups and FreeRTOS tasks |
-| `src/InputHandlerTask.c` | Reads/validates buttons, applies K2 operational output request |
+| `src/InputHandlerTask.c` | Reads/validates buttons, applies VFD-enable relay request |
 | `src/SafetyIO.c` | Reads safety-related DI, interrupt latches, fault/stop signals and simulated inputs |
 | `src/SensorTask.c` | Acquires and publishes sensor samples |
 | `src/ControlTask.c` | State machine coordination, references, torque controller, drive requests and diagnostics |
@@ -42,19 +44,21 @@ Other drivers and public headers are organized under `src/` and `include/`; host
 
 ## Physical inputs and safety
 
-**Intended wiring from the electrical schematic dated 30 October 2026** (verify actual firmware pin definitions, signal levels, terminals and wiring before commissioning):
+**Intended wiring from the electrical schematic dated 30 October 2026** (verify signal levels and terminals before commissioning):
 
-| Industrial input | Function | Contact | Intended signal when healthy / idle | Operated state |
-| --- | --- | --- | --- | --- |
-| DI1 | Emergency stop indication | NC | 24 V | Open / 0 V |
-| DI2 | Reset | NO | 0 V | 24 V |
-| DI3 | Start | NO | 0 V | 24 V |
-| DI4 | Stop | NC | 24 V | Open / 0 V |
-| DI5 | Safety feedback | NC | 24 V | Open / 0 V |
+| Waveshare terminal / GPIO | Schematic function |
+| --- | --- |
+| DI1 / GPIO4 | Emergency stop indication |
+| DI2 / GPIO5 | Reset |
+| DI3 / GPIO6 | Start |
+| DI4 / GPIO7 | Stop |
+| DI5 / GPIO8 | Safety feedback |
 
-These values describe the field-side signals, **not guaranteed ESP32 GPIO logic levels**: verify optocoupler polarity, physical pins and configuration on the actual Waveshare board. Emergency stop and safety faults must latch; Stop requests controlled deceleration where the drive remains healthy. Reset does not automatically restart the machine. The current button handler debounces Start on press and Reset on release. Physical START/RESET are required, not remote actions.
+The Waveshare board documentation maps DI1-DI8 in order to GPIO4-GPIO11. The schematic's DI order is reflected in `MachinePins.h`. Current polarity settings reflect the reported observation that 24 V at DI corresponds to GPIO low: E-stop pressed, GPIO high; Reset/Start pressed, GPIO low; Stop and safety feedback healthy, GPIO low. These settings are provisional until individually verified through physical commissioning; `SAFETY_IO_COMMISSIONED` remains disabled. DI6 and DI7 are not assigned in the schematic and their optional VFD-fault/contactor features remain disabled. Emergency stop and safety faults must latch; Stop requests controlled deceleration where the drive remains healthy. Reset does not automatically restart the machine. Physical START/RESET are required, not remote actions.
 
-**The ESP32 ISR and K2 command are not safety-rated functions.** The independent electrical safety circuit must remove hazardous actuation regardless of MCU execution, Ethernet, RTOS or Modbus. In particular, do not mistake an OFF1 controlled stop for a safety-rated emergency stop.
+On schematic sheet 11, DO1 drives relay 11K3; its contact supplies the VFD In1 Enable signal shown on sheet 3. This is the operational VFD-enable relay, not the independent emergency-stop safety relay. DO2 and DO3 connect to indicators 10SH5 and 10SH6; their colors remain unconfirmed. DO4 is the yellow indicator, as confirmed by the operator; it remains unassigned to firmware status behavior. Waveshare specifies opto-isolated Darlington outputs with up to 500 mA sink current. Thus DOx is a current-sinking output, not a +24 V source; the actual current path must be compatible with the field device and the board's COM/DGND connections. Your report of +24 V at COM is consistent with a field supply, but does not by itself confirm the load-return wiring. Verify the board terminal diagram and relay/device coil connections before commissioning; software image acknowledgement is not output/contact feedback.
+
+**The ESP32 ISR and VFD-enable relay command are not safety-rated functions.** The independent electrical safety circuit must remove hazardous actuation regardless of MCU execution, Ethernet, RTOS or Modbus. In particular, do not mistake an OFF1 controlled stop for a safety-rated emergency stop.
 
 ## Compile-time feedback-controller selection
 
@@ -95,7 +99,7 @@ The planned 16-channel ABP2 pressure-tap acquisition remains gated pending verif
 
 The native [PySide6 HMI](../HMI/README.md) operates on Raspberry Pi or Windows with a local FastAPI backend. Its pages are Overview, Raw Data, Cp Analysis, Measurements, Storage and Settings (General/Calibration). The browser-based operator UI has been removed.
 
-The ESP32 communicates via Ethernet TCP using line-oriented text commands and key/value status telemetry. It reports, among other fields, machine state and fault, individual input conditions, Pitot measurement and age, V20 frequency/faults, calibration metadata, controller timing/jitter, missed deadlines, Modbus errors and connection state. The Pi can request mode, setpoint, frequency, filter and calibration operations when allowed; physical safety and start/reset interlocks remain authoritative. Connection loss requests a stop and clears pending commands.
+The dedicated Pi link uses static IPv4: ESP32 `192.168.50.2/24`, Raspberry Pi `192.168.50.1/24`, with no gateway or DHCP. The ESP32 TCP listener binds `0.0.0.0:5000`; the Pi initiates the connection. The line-oriented command protocol refreshes the application heartbeat only when a valid `PING` is received. Telemetry includes `ethernet_link`, `ipv4_configured`, `pi_tcp_connected`, `pi_heartbeat_received`, and `pi_heartbeat_fresh`; the legacy `pi_connected` field continues to mean heartbeat-dependent controller health. A TCP socket or configured IP alone is not an application-level online indication. The HMI should require a live TCP session and fresh heartbeat/status before reporting the controller online. The ESP32 reports, among other fields, machine state and fault, individual input conditions, Pitot measurement and age, V20 frequency/faults, calibration metadata, controller timing/jitter, missed deadlines, Modbus errors and connection state. The Pi can request mode, setpoint, frequency, filter and calibration operations when allowed; physical safety and start/reset interlocks remain authoritative. Connection loss requests a stop and clears pending commands.
 
 ## Build and tests
 
@@ -120,7 +124,7 @@ These tests use mocked hardware; they include V20 asynchronous responses, OFF1/s
 2. With the motor independently inhibited, confirm boot and startup barrier, default-safe outputs, DI transitions, physical Start/Stop/Reset and FAULT/reset behavior.
 3. Verify Pitot calibration, valid/stale sensor detection, networking and loss-of-communication response.
 4. Configure and verify the Siemens V20 registers, motor nameplate parameters, Modbus status/frequency scaling, watchdog and OFF1 behavior.
-5. Perform controlled MANUAL tests at low frequency, confirming K2 handling, ramp profiles, current, direction, fan coast-down and safe stopping.
+5. Perform controlled MANUAL tests at low frequency, confirming VFD-enable relay handling, ramp profiles, current, direction, fan coast-down and safe stopping.
 6. Collect frequency-versus-airspeed data, validate the stored calibration and motor/fan dynamics, then evaluate AUTO in simulation and separate guarded physical tests before changing commissioning flags.
 7. Commission the ABP2 pressure-tap channels and Cp measurement plumbing only after their hardware and calibration are verified.
 

@@ -9,7 +9,9 @@ FRAME = ("STATUS state=FAULT fault=EMERGENCY_STOP estop_pressed=1 "
          "reset_required=1 sensor_ok=1 motor_ok=0 pv=11.2 sp=15.0 "
          "pressure_pa=75.1 temperature_c=22.4 sim=0 running=0 "
          "relay=0 commissioned=0 actual_hz=0 out=0 filter_hz=1.0 "
-         "mode=MANUAL manual_hz=50 applied_hz=12.5")
+         "mode=MANUAL manual_hz=50 applied_hz=12.5 ethernet=1 "
+         "ethernet_link=1 ipv4_configured=1 pi_tcp_connected=1 "
+         "pi_heartbeat_received=1 pi_heartbeat_fresh=1")
 
 
 class ParserTests(unittest.TestCase):
@@ -74,7 +76,7 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
         self.server = await asyncio.start_server(handler, "127.0.0.1", 0)
         self.client = ESP32Client("127.0.0.1", self.server.sockets[0].getsockname()[1], status_timeout=0.25)
         self.task = asyncio.create_task(self.client.run(self._frame, lambda *_: None))
-        for _ in range(100):
+        for _ in range(300):
             if self.client.fresh:
                 break
             await asyncio.sleep(0.01)
@@ -91,6 +93,12 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
         await self.server.wait_closed()
 
     async def test_commands_and_no_remote_start(self):
+        snapshot = self.client.snapshot()
+        self.assertEqual(snapshot["connection_status"], "ONLINE")
+        self.assertTrue(snapshot["tcp_connected"])
+        self.assertEqual(snapshot["ethernet_link"], 1)
+        self.assertEqual(snapshot["ipv4_configured"], 1)
+        self.assertEqual(snapshot["pi_heartbeat_fresh"], 1)
         self.assertEqual(await self.client.command("MODE AUTO"), "OK QUEUED")
         for command in ("MODE MANUAL", "FREQ 0", "FREQ 50", "FREQ 40", "STOP", "PID 1 0 0", "FILTER 1"):
             self.assertEqual(await self.client.command(command), "OK QUEUED")
@@ -105,5 +113,71 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
         self.send_status = False
         await asyncio.sleep(0.5)
         self.assertEqual(self.client.snapshot()["state"], "UNKNOWN")
+        self.assertIn(self.client.snapshot()["connection_status"],
+                      {"TCP_CONNECTED_NO_FRESH_STATUS", "OFFLINE"})
         with self.assertRaises(ConnectionError):
             await self.client.command("STOP")
+
+    async def test_network_health_classification(self):
+        cases = (
+            ({"ethernet_link": 0}, "ETHERNET_DISCONNECTED"),
+            ({"ipv4_configured": 0}, "CONNECTED_NO_IP"),
+            ({"pi_tcp_connected": 0}, "APPLICATION_DISCONNECTED"),
+            ({"pi_heartbeat_received": 0}, "HEARTBEAT_NOT_RECEIVED"),
+            ({"pi_heartbeat_fresh": 0}, "HEARTBEAT_TIMEOUT"),
+        )
+        for update, expected in cases:
+            self.client._latest = {**parse_status(FRAME), **update}
+            self.assertEqual(self.client.snapshot()["connection_status"], expected)
+
+
+class ReconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reconnects_after_server_closes_connection(self):
+        connections = 0
+
+        async def handler(reader, writer):
+            nonlocal connections
+            connections += 1
+            if connections == 1:
+                writer.write((FRAME + "\n").encode())
+                await writer.drain()
+                await asyncio.sleep(0.05)
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
+                return
+            try:
+                while True:
+                    writer.write((FRAME + "\n").encode())
+                    await writer.drain()
+                    await asyncio.sleep(0.03)
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
+
+        server = await asyncio.start_server(handler, "127.0.0.1", 0)
+        client = ESP32Client("127.0.0.1", server.sockets[0].getsockname()[1],
+                             status_timeout=0.25)
+        task = asyncio.create_task(client.run(lambda _: asyncio.sleep(0),
+                                              lambda *_: None))
+        try:
+            for _ in range(250):
+                if connections >= 2 and client.fresh:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertGreaterEqual(connections, 2)
+            self.assertTrue(client.fresh)
+            self.assertEqual(client.snapshot()["connection_status"], "ONLINE")
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+            server.close()
+            await server.wait_closed()

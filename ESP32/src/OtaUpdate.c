@@ -166,6 +166,7 @@ void OtaUpdateTask(void *argument) {
         close(fd);
     }
 #else
+    ota_task_alive = false;
     vTaskDelete(NULL);
 #endif
 }
@@ -179,6 +180,7 @@ void OtaMarkValidTask(void *argument) {
     esp_ota_img_states_t state;
     if(!running || esp_ota_get_state_partition(running,&state)!=ESP_OK ||
        state!=ESP_OTA_IMG_PENDING_VERIFY) {
+        ota_valid_task_alive=false;
         vTaskDelete(NULL);return;
     }
     vTaskDelay(pdMS_TO_TICKS(12000));
@@ -190,5 +192,6 @@ void OtaMarkValidTask(void *argument) {
         ESP_ERROR_CHECK(esp_ota_mark_app_valid_cancel_rollback());
     else
         (void)esp_ota_mark_app_invalid_rollback_and_reboot();
+    ota_valid_task_alive=false;
     vTaskDelete(NULL);
 }

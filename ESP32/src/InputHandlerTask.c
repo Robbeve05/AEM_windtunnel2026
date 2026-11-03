@@ -1,6 +1,6 @@
 /*
  * InputHandlerTask.c
- * Physical input validation and operational K2 output management.
+ * Physical input validation and operational VFD-enable relay management.
  *
  * Author: R.E. van Eekelen
  */
@@ -92,7 +92,7 @@ static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
 ///////////////////////////////////////////////////////////////////////////////
 // void InputHandlerTask(void *argument)
 /*
- * Owns button validation and K2 output updates. Publishes notifications only
+ * Owns button validation and VFD-enable relay updates. Publishes notifications only
  * after the matching sequence and timestamp are visible in safety_status.
  */
 void InputHandlerTask(void *argument)
@@ -123,10 +123,12 @@ void InputHandlerTask(void *argument)
         {
             /* Only a successful first output initialization pass publishes readiness. */
             initialized = true;
-            if (s.outputs_ok)
+            if (s.outputs_ok) {
+                ESP_LOGI("InputHandler", "Input/output task initialized; initial output write successful");
                 xEventGroupSetBits(handle_ThreadEventGroup, EVT_INPUT_TASK_READY);
-            else
+            } else {
                 ESP_LOGE("InputHandler", "Output initialization failed; startup remains inhibited");
+            }
         }
         ESP_ERROR_CHECK(esp_task_wdt_reset());
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(10));

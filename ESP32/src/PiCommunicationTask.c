@@ -16,24 +16,26 @@
 #include "StatusOutput.h"
 #include "DigitalOutputs.h"
 #include "FanCalibration.h"
+#include "Ethernet.h"
 #include <math.h>
 #include "lwip/sockets.h"
 #include <errno.h>
 #include <unistd.h>
 #include "freertos/task.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Local interfaces and connection state
 
-void Ethernet_Init(void);
 static int client = -1;
 static void disconnect_client(void)
 {
     if (client >= 0)
     {
+        ESP_LOGW("PiCommunication", "TCP client disconnected");
         shutdown(client, SHUT_RDWR);
         close(client);
         client = -1;
@@ -146,7 +148,9 @@ static void process(const char *line)
 void PiCommunicationTask(void *argument)
 {
     (void)argument;
+    ESP_LOGI("PiCommunication", "Fan calibration/NVS initialization begin");
     FanCalibration_Init();
+    ESP_LOGI("PiCommunication", "Fan calibration/NVS initialization returned");
     Ethernet_Init();
     int server = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     ESP_ERROR_CHECK(server >= 0 ? ESP_OK : ESP_FAIL);
@@ -158,6 +162,7 @@ void PiCommunicationTask(void *argument)
     ESP_ERROR_CHECK(bind(server, (struct sockaddr *)&address, sizeof(address)) == 0 ? ESP_OK
                                                                                     : ESP_FAIL);
     ESP_ERROR_CHECK(listen(server, 1) == 0 ? ESP_OK : ESP_FAIL);
+    ESP_LOGI("PiCommunication", "TCP listener ready on port %d", PI_TCP_PORT);
     char line[96];
     size_t used = 0;
     bool overflow = false;
@@ -179,6 +184,7 @@ void PiCommunicationTask(void *argument)
             setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
             used = 0;
             overflow = false;
+            ESP_LOGI("PiCommunication", "TCP client connected");
             xQueueReset(commands);
             xEventGroupSetBits(events, STOP_REQUEST);
         }
@@ -220,6 +226,14 @@ void PiCommunicationTask(void *argument)
             Telemetry t;
             if (xQueuePeek(telemetry, &t, 0) == pdTRUE)
             {
+                PiHeartbeat heartbeat = {0};
+                const bool heartbeat_received =
+                    xQueuePeek(pi_heartbeat, &heartbeat, 0) == pdTRUE && heartbeat.connected;
+                const bool heartbeat_fresh =
+                    heartbeat_received &&
+                    (TickType_t)(now - heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS);
+                const bool ethernet_link = Ethernet_LinkUp();
+                const bool ipv4_configured = Ethernet_HasIp();
                 Sample sample = {0};
                 MotorStatus motor = {0};
                 xQueuePeek(sensors, &sample, 0);
@@ -234,7 +248,9 @@ void PiCommunicationTask(void *argument)
                     "drive_status=%u drive_fault=%d"
                     " control_hz=%.2f execution_us=%lu max_jitter_us=%lu missed_deadlines=%lu "
                     "overruns=%lu"
-                    " sensor_errors=%lu modbus_errors=%lu modbus_timeouts=%lu ethernet=1 "
+                    " sensor_errors=%lu modbus_errors=%lu modbus_timeouts=%lu ethernet=%d "
+                    "ethernet_link=%d ipv4_configured=%d pi_tcp_connected=1 "
+                    "pi_heartbeat_received=%d pi_heartbeat_fresh=%d "
                     "stack_control=%lu stack_ethernet=%u"
                     " taps_valid=%u filter_hz=%.2f sample_seq=%lu"
                     " state=%s fault=%s last_fault=%s estop=%d relay=%d reset_required=%d stop=%d "
@@ -257,7 +273,9 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.execution_us, (unsigned long)t.max_jitter_us,
                     (unsigned long)t.missed_deadlines, (unsigned long)t.overruns,
                     (unsigned long)sample.errors, (unsigned long)motor.errors,
-                    (unsigned long)motor.timeouts, (unsigned long)t.stack_free,
+                    (unsigned long)motor.timeouts, ethernet_link, ethernet_link,
+                    ipv4_configured, heartbeat_received, heartbeat_fresh,
+                    (unsigned long)t.stack_free,
                     (unsigned)uxTaskGetStackHighWaterMark(NULL), sample.taps_valid,
                     SensorLib_FilterHz(), (unsigned long)sample.sequence,
                     StateMachine_Name(t.state), FaultReason_Name(t.fault),

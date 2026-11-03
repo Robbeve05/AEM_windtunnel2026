@@ -8,6 +8,8 @@ bool SafetyIO_Stop(void);
 void SafetyIO_Acknowledge(void);
 bool SafetyIO_Inhibited(void);
 bool SafetyIO_Simulate(const char *name, bool active);
+/* Converts a sampled GPIO level using its configured active level; false means invalid input. */
+bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Task-context button notification interface

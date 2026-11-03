@@ -561,6 +561,9 @@ class HMIWindow(QMainWindow):
         self.health_labels = {}
         for key, label in (
             ("host", "Host / Raspberry Pi"), ("connection", "ESP32 Ethernet"),
+            ("ethernet_link", "Ethernet link"), ("ipv4", "IPv4 address"),
+            ("tcp", "TCP application"), ("heartbeat", "Pi heartbeat"),
+            ("heartbeat_received", "Heartbeat received"),
             ("pitot", "Pitot sensor"), ("pressure_sensors", "Cp pressure taps"),
             ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
         ):
@@ -1774,7 +1777,11 @@ class HMIWindow(QMainWindow):
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
-        self.hardware_mode_badge.setText("ESP32 CONNECTED" if live else "ESP32 ETHERNET")
+        connection_status = (data.get("system") or {}).get("connection")
+        self.hardware_mode_badge.setText(
+            "ESP32 ONLINE" if connection_status == "ONLINE" else
+            "ESP32 OFFLINE" if connection_status == "OFFLINE" else "ESP32 ETHERNET"
+        )
         self.mode_tag.setText("● LIVE HARDWARE" if live else "WAITING FOR ESP32")
         enabled = self.config.get("flow_metrics_enabled", True)
         self.stability_unit.setVisible(enabled)

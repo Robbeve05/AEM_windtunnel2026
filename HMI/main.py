@@ -112,12 +112,30 @@ class Controller:
             warnings = ['Simulation mode active']
         elif self.esp32_mode:
             frame = self.esp32.snapshot()
-            system = {'host':'OK', 'connection':'ESP32 ETHERNET',
+            link = frame.get('ethernet_link')
+            ipv4 = frame.get('ipv4_configured')
+            heartbeat_received = frame.get('pi_heartbeat_received')
+            heartbeat_fresh = frame.get('pi_heartbeat_fresh')
+            system = {'host':'OK',
+                      'connection':frame.get('connection_status', 'OFFLINE'),
+                      'ethernet_link':('UP' if link == 1 else 'DOWN' if link == 0 else 'UNKNOWN'),
+                      'ipv4':('CONFIGURED' if ipv4 == 1 else 'NO IP' if ipv4 == 0 else 'UNKNOWN'),
+                      'tcp':('CONNECTED' if frame.get('tcp_connected') else 'DISCONNECTED'),
+                      'heartbeat':('FRESH' if heartbeat_fresh == 1 else
+                                   'TIMEOUT' if heartbeat_fresh == 0 else 'UNKNOWN'),
+                      'heartbeat_received':('YES' if heartbeat_received == 1 else
+                                            'NO' if heartbeat_received == 0 else 'UNKNOWN'),
                       'pitot':'OK' if self.sensor_fresh() else 'NO DATA',
                       'pressure_sensors':'ONLINE' if frame.get('taps_valid') else 'NOT COMMISSIONED',
                       'vfd':'OK' if frame.get('motor_ok') else 'UNAVAILABLE',
                       'logger':self.measurements.state, 'storage':'LOCAL'}
-            warnings = [] if self.esp32.fresh else ['ESP32 status UNKNOWN - fan may still be rotating.']
+            connection_status = frame.get('connection_status', 'OFFLINE')
+            if not self.esp32.fresh:
+                warnings = ['ESP32 STATUS stale or unavailable - machine state UNKNOWN; fan may still be rotating.']
+            elif connection_status != 'ONLINE':
+                warnings = [f"ESP32 application health: {connection_status}; controller is not ONLINE."]
+            else:
+                warnings = []
             if frame.get('estop_pressed') is True or frame.get('estop_pressed') == 1:
                 warnings.append('EMERGENCY STOP PRESSED - fan may continue to coast.')
             elif frame.get('fault') == 'EMERGENCY_STOP':

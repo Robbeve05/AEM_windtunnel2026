@@ -23,6 +23,7 @@ typedef struct {
     uint32_t execution_us,max_jitter_us,missed_deadlines,overruns,stack_free;
     uint32_t crc_errors,exceptions,late_replies,exception_code;
     uint32_t service_us,service_max_us,rtt_median_us,rtt_p95_us,rtt_max_us,request_id,transitions;
+    bool control_ready,control_clock_started,modbus_initialized;
 } Telemetry;
 extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat;
 extern EventGroupHandle_t events;

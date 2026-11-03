@@ -11,8 +11,12 @@ void SensorTask(void *argument) {
     (void)argument;
     bool ready = SensorLib_Init();
     Sample taps = {0};
-    if (ready) xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
-    else ESP_LOGE("SensorTask", "Sensor initialization failed; startup inhibited");
+    if (ready) {
+        ESP_LOGI("SensorTask", "Sensor subsystem initialized; waiting for control-clock samples");
+        xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
+    } else {
+        ESP_LOGE("SensorTask", "Sensor initialization failed; startup inhibited");
+    }
     for (;;) {
         if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS)) || !ready) continue;
         Sample sample = {0};

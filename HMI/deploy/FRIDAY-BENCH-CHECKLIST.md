@@ -26,7 +26,7 @@ bash HMI/deploy/update-pi.sh
 The update preserves measurements and migrates legacy configuration to ESP32 Ethernet.
 A clean installation can use `HMI/deploy/setup-pi-from-github.sh`, but **it moves/backs up existing checkout and HMI paths**, so use the update route on an existing Pi.
 
-Set `esp32_host` in `~/HMI/config/config.json` to the actual reachable ESP32 IP. The firmware uses DHCP by default; **192.168.50.10 is only a placeholder**. TCP port is 5000. Restart:
+Set `esp32_host=192.168.50.2` in `~/AEM_windtunnel2026/HMI/config/config.json`. The dedicated link is Pi `192.168.50.1/24` to ESP32 `192.168.50.2/24`, static, without a gateway or DHCP. The Pi initiates TCP port 5000. Restart:
 ```sh
 systemctl --user restart windtunnel-hmi.service
 journalctl --user -u windtunnel-hmi.service -n 70 --no-pager

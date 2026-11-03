@@ -9,6 +9,27 @@
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool emergency_latch, relay_latch, stop_latch;
 static volatile uint32_t unsafe_generation;
+static bool valid_active_level(int level)
+{
+    return level == 0 || level == 1;
+}
+
+#if !SIMULATION_MODE
+static int input_level(const SafetySnapshot *snapshot, unsigned gpio)
+{
+    return (int)((snapshot->raw_levels >> (gpio - 4u)) & 1u);
+}
+#endif
+
+bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active)
+{
+    if (!active || (raw_level != 0 && raw_level != 1) ||
+        !valid_active_level(active_level))
+        return false;
+    *active = raw_level == active_level;
+    return true;
+}
+
 #if SIMULATION_MODE
 static SafetySnapshot simulated = {
     .valid = true, .commissioned = true, .relay_ok = true, .stop_ok = true, .outputs_ok = true};
@@ -17,19 +38,19 @@ static void IRAM_ATTR input_isr(void *arg)
 {
     (void)arg;
     portENTER_CRITICAL_ISR(&lock);
-    if (ESTOP_PRESSED_ACTIVE_LEVEL >= 0 &&
+    if (valid_active_level(ESTOP_PRESSED_ACTIVE_LEVEL) &&
         gpio_get_level(ESTOP_PRESSED_GPIO) == ESTOP_PRESSED_ACTIVE_LEVEL)
     {
         emergency_latch = true;
         unsafe_generation++;
     }
-    if (SAFETY_RELAY_OK_ACTIVE_LEVEL >= 0 &&
+    if (valid_active_level(SAFETY_RELAY_OK_ACTIVE_LEVEL) &&
         gpio_get_level(SAFETY_RELAY_OK_GPIO) != SAFETY_RELAY_OK_ACTIVE_LEVEL)
     {
         relay_latch = true;
         unsafe_generation++;
     }
-    if (STOP_BUTTON_OK_ACTIVE_LEVEL >= 0 &&
+    if (valid_active_level(STOP_BUTTON_OK_ACTIVE_LEVEL) &&
         gpio_get_level(STOP_BUTTON_OK_GPIO) != STOP_BUTTON_OK_ACTIVE_LEVEL)
         stop_latch = true;
     portEXIT_CRITICAL_ISR(&lock);
@@ -63,27 +84,37 @@ SafetySnapshot SafetyIO_Read(void)
 #else
     for (int i = 0; i < 8; i++)
         s.raw_levels |= (uint32_t)gpio_get_level(i + 4) << i;
-    s.valid = SAFETY_RELAY_OK_ACTIVE_LEVEL >= 0 && ESTOP_PRESSED_ACTIVE_LEVEL >= 0 &&
-              STOP_BUTTON_OK_ACTIVE_LEVEL >= 0 && START_BUTTON_ACTIVE_LEVEL >= 0 &&
-              RESET_BUTTON_ACTIVE_LEVEL >= 0;
+    s.valid = valid_active_level(SAFETY_RELAY_OK_ACTIVE_LEVEL) &&
+              valid_active_level(ESTOP_PRESSED_ACTIVE_LEVEL) &&
+              valid_active_level(STOP_BUTTON_OK_ACTIVE_LEVEL) &&
+              valid_active_level(START_BUTTON_ACTIVE_LEVEL) &&
+              valid_active_level(RESET_BUTTON_ACTIVE_LEVEL);
     s.commissioned = SAFETY_IO_COMMISSIONED;
-    s.estop_pressed = ESTOP_PRESSED_ACTIVE_LEVEL >= 0 &&
-                      gpio_get_level(ESTOP_PRESSED_GPIO) == ESTOP_PRESSED_ACTIVE_LEVEL;
-    s.relay_ok = SAFETY_RELAY_OK_ACTIVE_LEVEL >= 0 &&
-                 gpio_get_level(SAFETY_RELAY_OK_GPIO) == SAFETY_RELAY_OK_ACTIVE_LEVEL;
-    s.stop_ok = STOP_BUTTON_OK_ACTIVE_LEVEL >= 0 &&
-                gpio_get_level(STOP_BUTTON_OK_GPIO) == STOP_BUTTON_OK_ACTIVE_LEVEL;
-    s.start_pressed = START_BUTTON_ACTIVE_LEVEL >= 0 &&
-                      gpio_get_level(START_BUTTON_GPIO) == START_BUTTON_ACTIVE_LEVEL;
-    s.reset_pressed = RESET_BUTTON_ACTIVE_LEVEL >= 0 &&
-                      gpio_get_level(RESET_BUTTON_GPIO) == RESET_BUTTON_ACTIVE_LEVEL;
+    bool interpreted = false;
+    if (SafetyIO_InterpretLevel(input_level(&s, ESTOP_PRESSED_GPIO),
+                                ESTOP_PRESSED_ACTIVE_LEVEL, &interpreted))
+        s.estop_pressed = interpreted;
+    if (SafetyIO_InterpretLevel(input_level(&s, SAFETY_RELAY_OK_GPIO),
+                                SAFETY_RELAY_OK_ACTIVE_LEVEL, &interpreted))
+        s.relay_ok = interpreted;
+    if (SafetyIO_InterpretLevel(input_level(&s, STOP_BUTTON_OK_GPIO),
+                                STOP_BUTTON_OK_ACTIVE_LEVEL, &interpreted))
+        s.stop_ok = interpreted;
+    if (SafetyIO_InterpretLevel(input_level(&s, START_BUTTON_GPIO),
+                                START_BUTTON_ACTIVE_LEVEL, &interpreted))
+        s.start_pressed = interpreted;
+    if (SafetyIO_InterpretLevel(input_level(&s, RESET_BUTTON_GPIO),
+                                RESET_BUTTON_ACTIVE_LEVEL, &interpreted))
+        s.reset_pressed = interpreted;
     s.vfd_fault_available = VFD_FAULT_DI_FITTED;
-    s.vfd_fault =
-        s.vfd_fault_available && (VFD_FAULT_DI_ACTIVE_LEVEL < 0 ||
-                                  gpio_get_level(VFD_FAULT_DI_GPIO) == VFD_FAULT_DI_ACTIVE_LEVEL);
+    s.vfd_fault = s.vfd_fault_available &&
+                  (!SafetyIO_InterpretLevel(input_level(&s, VFD_FAULT_DI_GPIO),
+                                            VFD_FAULT_DI_ACTIVE_LEVEL, &interpreted) ||
+                   interpreted);
     s.contactor_available = CONTACTOR_FEEDBACK_FITTED;
-    s.contactor_ok = CONTACTOR_OK_ACTIVE_LEVEL >= 0 &&
-                     gpio_get_level(CONTACTOR_FEEDBACK_GPIO) == CONTACTOR_OK_ACTIVE_LEVEL;
+    s.contactor_ok = SafetyIO_InterpretLevel(input_level(&s, CONTACTOR_FEEDBACK_GPIO),
+                                             CONTACTOR_OK_ACTIVE_LEVEL, &interpreted) &&
+                     interpreted;
 #endif
     s.tick_ms = (uint32_t)(esp_timer_get_time() / 1000);
     portENTER_CRITICAL(&lock);

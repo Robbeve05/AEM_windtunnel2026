@@ -348,33 +348,28 @@
 // setting its level. Commissioning flags are grouped in section 13.
 
 #ifndef SAFETY_RELAY_OK_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating healthy safety relay feedback; wrong polarity
-// misinterprets relay state.
-#define SAFETY_RELAY_OK_ACTIVE_LEVEL (-1)
+// [Logic level, safety-critical] Provisional observed active-low healthy safety feedback.
+#define SAFETY_RELAY_OK_ACTIVE_LEVEL 0
 #endif
 
 #ifndef ESTOP_PRESSED_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating a pressed emergency stop; wrong polarity
-// reverses its software indication.
-#define ESTOP_PRESSED_ACTIVE_LEVEL (-1)
+// [Logic level, safety-critical] NC E-stop signal loss indicates pressed (GPIO high).
+#define ESTOP_PRESSED_ACTIVE_LEVEL 1
 #endif
 
 #ifndef STOP_BUTTON_OK_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating the stop circuit is healthy; wrong polarity
-// reverses the stop permissive.
-#define STOP_BUTTON_OK_ACTIVE_LEVEL (-1)
+// [Logic level, safety-critical] Provisional observed active-low healthy stop circuit.
+#define STOP_BUTTON_OK_ACTIVE_LEVEL 0
 #endif
 
 #ifndef START_BUTTON_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating physical START; wrong polarity misinterprets
-// button activation.
-#define START_BUTTON_ACTIVE_LEVEL (-1)
+// [Logic level, safety-critical] Provisional observed active-low physical START.
+#define START_BUTTON_ACTIVE_LEVEL 0
 #endif
 
 #ifndef RESET_BUTTON_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating physical RESET; wrong polarity misinterprets
-// reset requests.
-#define RESET_BUTTON_ACTIVE_LEVEL (-1)
+// [Logic level, safety-critical] Provisional observed active-low physical RESET.
+#define RESET_BUTTON_ACTIVE_LEVEL 0
 #endif
 
 #ifndef VFD_FAULT_DI_ACTIVE_LEVEL
@@ -392,12 +387,12 @@
 ///////////////////////////////////////////////////////////////////////////////
 // 12. OUTPUT CONFIGURATION
 ///////////////////////////////////////////////////////////////////////////////
-// Operational K2 permissive output polarity; physical DO bit is in MachinePins.h.
+// Operational VFD-enable relay output polarity; physical DO bit is in MachinePins.h.
 // Software GPIO control is not a certified emergency-stop function.
 
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
-// [Logic level, safety-critical] 1 drives EXIO1 high for DO1/K2; 0 inverts it. Physically
-// verify; inhibited until commissioning.
+// [Logic level, safety-critical] 1 requests the DO1/11K3 VFD-enable relay; 0 inverts it.
+// Physically verify; inhibited until commissioning.
 #define VFD_ENABLE_ACTIVE_LEVEL 1
 #endif
 
@@ -486,33 +481,30 @@
 // Addressing for the wired HMI link; match static settings to the local network.
 
 #ifndef ETH_STATIC_IP_ENABLED
-// [Adjustable flag] 0 uses dynamic addressing; 1 applies the static address settings below.
-#define ETH_STATIC_IP_ENABLED 0
+// [Network configuration] The isolated Raspberry Pi Ethernet link uses static addressing.
+#define ETH_STATIC_IP_ENABLED 1
 #endif
 
 #ifndef ETH_STATIC_IP
-// [IPv4 address, adjustable] Static ESP32 address; changing moves the HMI endpoint when static
-// mode is enabled.
-#define ETH_STATIC_IP "192.168.50.10"
+// [IPv4 address] ESP32 address on the isolated Raspberry Pi Ethernet link.
+#define ETH_STATIC_IP "192.168.50.2"
 #endif
 
 #ifndef ETH_STATIC_MASK
-// [IPv4 mask, adjustable] Static subnet mask; changing changes which destinations are
-// considered local.
+// [IPv4 mask] Subnet for the isolated Raspberry Pi Ethernet link.
 #define ETH_STATIC_MASK "255.255.255.0"
 #endif
 
 #ifndef ETH_STATIC_GATEWAY
-// [IPv4 address, adjustable] Static default gateway; changing changes routing outside the local
-// subnet.
-#define ETH_STATIC_GATEWAY "192.168.50.1"
+// [IPv4 address] No gateway is needed on the isolated Raspberry Pi Ethernet link.
+#define ETH_STATIC_GATEWAY "0.0.0.0"
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // 16. STATUS LED CONFIGURATION
 ///////////////////////////////////////////////////////////////////////////////
 // External lamps use proposed wiring and remain disabled until verified.
-// Physical lamp DO bits and onboard RGB pin remain in MachinePins.h.
+// External indicator assignments are descriptive only; status remains on onboard RGB.
 
 #ifndef EXTERNAL_STATUS_LEDS_ENABLED
 // [Commissioning feature flag] 0 disables external lamps; set 1 only after physically verifying
@@ -605,7 +597,7 @@
 #endif
 
 #if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL < 0 || ESTOP_PRESSED_ACTIVE_LEVEL < 0 || STOP_BUTTON_OK_ACTIVE_LEVEL < 0 || START_BUTTON_ACTIVE_LEVEL < 0 || RESET_BUTTON_ACTIVE_LEVEL < 0 || VFD_ENABLE_DO_BIT < 0 || VFD_ENABLE_DO_BIT > 7 || VFD_ENABLE_ACTIVE_LEVEL < 0)
-#error Commission all input levels and the non-safety K2 output before enabling hardware
+#error Commission all input levels and the non-safety VFD-enable relay before enabling hardware
 #endif
 
 #if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL > 1 || ESTOP_PRESSED_ACTIVE_LEVEL > 1 || STOP_BUTTON_OK_ACTIVE_LEVEL > 1 || START_BUTTON_ACTIVE_LEVEL > 1 || RESET_BUTTON_ACTIVE_LEVEL > 1 || VFD_ENABLE_ACTIVE_LEVEL > 1)
