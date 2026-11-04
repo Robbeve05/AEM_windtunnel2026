@@ -44,15 +44,6 @@ _Static_assert(V20_REFERENCE_HZ == 50.0f && MANUAL_MAX_HZ <= 50.0f, "50 Hz comma
 #endif
 
 typedef enum {
-    OP_NONE = 0,
-    OP_BOOT_STOP,
-    OP_READ_WATCHDOG,
-    OP_READ_REFERENCE,
-    OP_READ_STATUS,
-    OP_MOTOR_COMMAND
-} Operation;
-
-typedef enum {
     PH_IDLE = 0,
     PH_WAIT_RESPONSE,
     PH_RECOVERY
@@ -65,17 +56,22 @@ typedef struct {
     bool latched_fault;
     bool status_valid;
     bool drive_ready;
+    bool drive_fault_free;
+    bool reference_valid, reference_config_valid, watchdog_valid;
+    bool watchdog_config_valid, watchdog_config_known, diagnostics_complete;
     bool pending_stop;
     bool recheck_pending;
     bool last_run_command;
     bool demand_run;
-    Operation bootstrap_next;
-    Operation active_operation;
+    V20Operation bootstrap_next;
+    V20Operation active_operation;
     Phase phase;
-    uint16_t status_word;
+    uint16_t status_word, reference_value, watchdog_register_value;
     float actual_hz;
-    uint32_t errors;
-    uint32_t timeouts;
+    uint32_t errors, timeouts, exception_code, last_error_count;
+    uint16_t last_error_register, last_error_expected, last_error_actual;
+    V20CommError last_error;
+    V20Operation last_operation;
     int64_t last_rx_success_us;
     int64_t last_status_us;
     int64_t last_command_us;
@@ -146,24 +142,128 @@ static size_t build_command(uint8_t *dst, uint16_t stw, uint16_t hsw)
     return seal_frame(dst, 11);
 }
 
-static bool status_word_healthy(uint16_t word)
+const char *V20Modbus_ErrorName(V20CommError error)
 {
-    return (word & 0x0201u) == 0x0201u && (word & 0x0048u) == 0;
+    static const char *names[] = {
+        "NONE", "UART_INIT_FAILED", "UART_TX_FAILED", "UART_RX_FAILED", "TIMEOUT",
+        "CRC_ERROR", "INVALID_FRAME", "MODBUS_EXCEPTION", "UNEXPECTED_REGISTER_VALUE",
+        "STALE_RESPONSE"};
+    return (unsigned)error < sizeof(names) / sizeof(names[0]) ? names[error] : "UNKNOWN";
 }
 
-/* Enter a software lockout; hardware safety is independent of this action. */
-static void latch_communication_fault(int64_t now_us, bool timeout)
+const char *V20Modbus_OperationName(V20Operation operation)
+{
+    static const char *names[] = {
+        "NONE", "READ_STATUS", "READ_REFERENCE", "READ_WATCHDOG", "WRITE_CONTROL"};
+    return (unsigned)operation < sizeof(names) / sizeof(names[0]) ? names[operation] : "UNKNOWN";
+}
+
+static uint16_t operation_register(V20Operation operation)
+{
+    switch (operation) {
+    case V20_OP_READ_STATUS: return (uint16_t)(40001u + V20_PDU_ZSW_HIW);
+    case V20_OP_READ_REFERENCE: return (uint16_t)(40001u + V20_PDU_REF_FREQ);
+    case V20_OP_READ_WATCHDOG: return 40001u;
+    case V20_OP_WRITE_CONTROL: return (uint16_t)(40001u + V20_PDU_STW_HSW);
+    default: return 0;
+    }
+}
+
+static void advance_bootstrap(V20Operation completed_operation)
+{
+    if (d.diagnostics_complete) return;
+    switch (completed_operation) {
+    case V20_OP_READ_STATUS:
+        d.bootstrap_next = V20_OP_READ_REFERENCE;
+        break;
+    case V20_OP_READ_REFERENCE:
+        d.bootstrap_next = V20_OP_READ_WATCHDOG;
+        break;
+    case V20_OP_READ_WATCHDOG:
+        d.bootstrap_next = V20_OP_NONE;
+        d.diagnostics_complete = true;
+        break;
+    default:
+        break;
+    }
+}
+
+static void record_error(V20CommError error, uint16_t actual, uint32_t exception_code)
+{
+    d.last_error = error;
+    d.last_operation = d.active_operation;
+    d.last_error_register = operation_register(d.active_operation);
+    d.last_error_expected = 0;
+    if (d.active_operation == V20_OP_READ_REFERENCE)
+        d.last_error_expected = V20_EXPECTED_REFERENCE_CENTIHZ;
+#if V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED
+    else if (d.active_operation == V20_OP_READ_WATCHDOG)
+        d.last_error_expected = V20_EXPECTED_WATCHDOG_REGISTER_VALUE;
+#endif
+    d.last_error_actual = actual;
+    d.exception_code = exception_code;
+    d.last_error_count = d.errors;
+}
+
+static uint16_t expected_pdu_address(V20Operation operation)
+{
+    switch (operation) {
+    case V20_OP_READ_STATUS: return V20_PDU_ZSW_HIW;
+    case V20_OP_READ_REFERENCE: return V20_PDU_REF_FREQ;
+    case V20_OP_READ_WATCHDOG: return V20_PDU_WATCHDOG;
+    case V20_OP_WRITE_CONTROL: return V20_PDU_STW_HSW;
+    default: return 0;
+    }
+}
+
+/* Preserve the current read in bootstrap mode so recovery can retry without writes. */
+static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual,
+                             uint32_t exception_code)
 {
     d.errors++;
-    if (timeout) d.timeouts++;
+    if (error == V20_COMM_TIMEOUT)
+        d.timeouts++;
+    record_error(error, actual, exception_code);
     d.armed = false;
-    d.latched_fault = true;
-    d.drive_ready = false;
-    d.pending_stop = true;
-    d.configured = false;
+    d.demand_run = false;
+    if (!d.diagnostics_complete) {
+        d.bootstrap_next = d.active_operation;
+    } else {
+        d.latched_fault = true;
+        d.pending_stop = true;
+    }
     d.phase = PH_RECOVERY;
+    d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
     d.rx_used = 0;
-    d.active_operation = OP_NONE;
+    d.active_operation = V20_OP_NONE;
+}
+
+static void accept_exception(int64_t now_us, uint32_t exception_code)
+{
+    d.errors++;
+    d.last_rx_success_us = now_us;
+    d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
+    d.phase = PH_IDLE;
+    record_error(V20_COMM_MODBUS_EXCEPTION, 0, exception_code);
+    if (d.active_operation == V20_OP_READ_REFERENCE) {
+        d.reference_valid = false;
+        d.reference_config_valid = false;
+        d.configured = false;
+    } else if (d.active_operation == V20_OP_READ_STATUS) {
+        d.status_valid = false;
+    } else if (d.active_operation == V20_OP_READ_WATCHDOG) {
+        d.watchdog_valid = false;
+        d.watchdog_config_known = V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED;
+        d.watchdog_config_valid = false;
+    } else if (d.active_operation == V20_OP_WRITE_CONTROL) {
+        d.armed = false;
+        d.demand_run = false;
+        d.latched_fault = true;
+        d.pending_stop = true;
+    }
+
+    advance_bootstrap(d.active_operation);
+    d.active_operation = V20_OP_NONE;
     d.bus_quiet_until_us = now_us + (int64_t)V20_RESPONSE_TIMEOUT_MS * 2 * US_PER_MS;
 }
 
@@ -172,13 +272,13 @@ static void latch_communication_fault(int64_t now_us, bool timeout)
  * frame to leave the UART, while the control loop only handles completed RX.
  * Only this module accesses the UART; no second task may share the port.
  */
-static bool send_operation(Operation operation, bool run, float percent, int64_t now_us)
+static bool send_operation(V20Operation operation, bool run, float percent, int64_t now_us)
 {
     if (d.phase != PH_IDLE || now_us < d.bus_quiet_until_us) return false;
 
     size_t size = 0;
     d.active_operation = operation;
-    if (operation == OP_BOOT_STOP || operation == OP_MOTOR_COMMAND) {
+    if (operation == V20_OP_WRITE_CONTROL) {
         uint16_t stw = run ? V20_WORD_RUN : V20_WORD_OFF1;
         uint16_t hsw = run ? (uint16_t)lroundf(percent * 16384.0f / 100.0f) : 0;
         size = build_command(d.tx, stw, hsw);
@@ -188,9 +288,8 @@ static bool send_operation(Operation operation, bool run, float percent, int64_t
         d.active_count = 2;
         d.rx_expected = 8;
     } else {
-        const uint16_t address = operation == OP_READ_WATCHDOG ? V20_PDU_WATCHDOG :
-            operation == OP_READ_REFERENCE ? V20_PDU_REF_FREQ : V20_PDU_ZSW_HIW;
-        const uint16_t count = operation == OP_READ_STATUS ? 2 : 1;
+        const uint16_t address = expected_pdu_address(operation);
+        const uint16_t count = operation == V20_OP_READ_STATUS ? 2 : 1;
         size = build_read(d.tx, address, count);
         d.active_address = address;
         d.active_count = count;
@@ -204,7 +303,7 @@ static bool send_operation(Operation operation, bool run, float percent, int64_t
     /* Flush *before* a new transaction, never in the middle of a reply. */
     if (uart_flush_input(MODBUS_UART_PORT) != ESP_OK ||
         uart_write_bytes(MODBUS_UART_PORT, (const char *)d.tx, size) != (int)size) {
-        latch_communication_fault(now_us, false);
+        fail_transaction(V20_COMM_UART_TX_FAILED, now_us, 0, 0);
         return false;
     }
 #endif
@@ -214,22 +313,31 @@ static bool send_operation(Operation operation, bool run, float percent, int64_t
     return true;
 }
 
-static bool verify_reply(void)
+static V20CommError verify_reply(uint32_t *exception_code)
 {
     const uint8_t *reply = d.rx;
     const size_t size = d.rx_used;
+    *exception_code = 0;
     if (size != d.rx_expected || size < 5 || reply[0] != MODBUS_SLAVE_ADDRESS)
-        return false;
+        return V20_COMM_INVALID_FRAME;
     const uint16_t crc = V20Modbus_Crc16(reply, size - 2);
     if (reply[size - 2] != (uint8_t)crc || reply[size - 1] != (uint8_t)(crc >> 8))
-        return false;
-    if (reply[1] == (d.tx[1] | 0x80u)) return false; /* Modbus exception. */
-    if (reply[1] != d.tx[1]) return false;
+        return V20_COMM_CRC_ERROR;
+    if (reply[1] == (d.tx[1] | 0x80u)) {
+        if (size != 5)
+            return V20_COMM_INVALID_FRAME;
+        *exception_code = reply[2];
+        return V20_COMM_MODBUS_EXCEPTION;
+    }
+    if (reply[1] != d.tx[1])
+        return V20_COMM_INVALID_FRAME;
     if (reply[1] == V20_FC_WRITE_MULTI) {
         return get_word(&reply[2]) == d.active_address &&
-            get_word(&reply[4]) == d.active_count;
+                       get_word(&reply[4]) == d.active_count
+                   ? V20_COMM_NONE
+                   : V20_COMM_INVALID_FRAME;
     }
-    return reply[2] == 2u * d.active_count;
+    return reply[2] == 2u * d.active_count ? V20_COMM_NONE : V20_COMM_INVALID_FRAME;
 }
 
 static void accept_reply(int64_t now_us)
@@ -239,41 +347,40 @@ static void accept_reply(int64_t now_us)
     d.phase = PH_IDLE;
 
     switch (d.active_operation) {
-    case OP_BOOT_STOP:
-        d.last_run_command = false;
-        d.pending_stop = false;
-        d.bootstrap_next = OP_READ_WATCHDOG;
-        break;
-    case OP_READ_WATCHDOG:
-        if (get_word(&d.rx[3]) != V20_EXPECTED_WATCHDOG_MS) {
-            latch_communication_fault(now_us, false);
-            return;
-        }
-        d.bootstrap_next = OP_READ_REFERENCE;
-        break;
-    case OP_READ_REFERENCE:
-        if (get_word(&d.rx[3]) != V20_EXPECTED_REFERENCE_CENTIHZ) {
-            latch_communication_fault(now_us, false);
-            return;
-        }
-        d.configured = true;
-        d.bootstrap_next = OP_NONE;
-        break;
-    case OP_READ_STATUS: {
+    case V20_OP_READ_STATUS: {
         d.status_word = get_word(&d.rx[3]);
         const uint16_t raw = get_word(&d.rx[5]);
         const int32_t signed_raw = raw < 32768u ? (int32_t)raw : (int32_t)raw - 65536;
         d.actual_hz = (float)signed_raw * V20_REFERENCE_HZ / 16384.0f;
-        d.drive_ready = status_word_healthy(d.status_word);
+        d.drive_fault_free = (d.status_word & 0x0008u) == 0;
+        d.drive_ready = (d.status_word & 0x0201u) == 0x0201u &&
+                        (d.status_word & 0x0048u) == 0;
         d.status_valid = true;
         d.last_status_us = now_us;
-        if ((d.status_word & 0x0008u) != 0) {
-            latch_communication_fault(now_us, false);
-            return;
-        }
         break;
     }
-    case OP_MOTOR_COMMAND:
+    case V20_OP_READ_REFERENCE:
+        d.reference_value = get_word(&d.rx[3]);
+        d.reference_valid = true;
+        d.reference_config_valid = d.reference_value == V20_EXPECTED_REFERENCE_CENTIHZ;
+        d.configured = d.reference_config_valid;
+        if (!d.reference_config_valid)
+            record_error(V20_COMM_UNEXPECTED_REGISTER_VALUE, d.reference_value, 0);
+        break;
+    case V20_OP_READ_WATCHDOG:
+        d.watchdog_register_value = get_word(&d.rx[3]);
+        d.watchdog_valid = true;
+        d.watchdog_config_known = V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED;
+#if V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED
+        d.watchdog_config_valid =
+            d.watchdog_register_value == V20_EXPECTED_WATCHDOG_REGISTER_VALUE;
+        if (!d.watchdog_config_valid)
+            record_error(V20_COMM_UNEXPECTED_REGISTER_VALUE, d.watchdog_register_value, 0);
+#else
+        d.watchdog_config_valid = false;
+#endif
+        break;
+    case V20_OP_WRITE_CONTROL:
         d.last_run_command = d.active_stw == V20_WORD_RUN;
         if (!d.last_run_command) d.pending_stop = false;
         d.last_command_us = now_us;
@@ -281,7 +388,8 @@ static void accept_reply(int64_t now_us)
     default:
         break;
     }
-    d.active_operation = OP_NONE;
+    advance_bootstrap(d.active_operation);
+    d.active_operation = V20_OP_NONE;
 }
 
 #if SIMULATION_MODE
@@ -306,10 +414,10 @@ static void simulate_response(int64_t now_us)
         }
         d.rx_used = 8;
     } else {
-        const uint16_t value = d.active_operation == OP_READ_WATCHDOG ?
-            V20_EXPECTED_WATCHDOG_MS : V20_EXPECTED_REFERENCE_CENTIHZ;
+            const uint16_t value = d.active_operation == V20_OP_READ_WATCHDOG ?
+                (uint16_t)V20_EXPECTED_WATCHDOG_PARAMETER_MS : V20_EXPECTED_REFERENCE_CENTIHZ;
         d.rx[2] = (uint8_t)(2 * d.active_count);
-        if (d.active_operation == OP_READ_STATUS) {
+            if (d.active_operation == V20_OP_READ_STATUS) {
             put_word(&d.rx[3], 0x0201u);
             put_word(&d.rx[5], (uint16_t)lroundf(d.actual_hz * 16384.0f / V20_REFERENCE_HZ));
         } else put_word(&d.rx[3], value);
@@ -327,10 +435,13 @@ static void receive_pending(int64_t now_us)
     uint8_t bytes[V20_MAX_FRAME];
     /* timeout=0: read immediately available bytes only. */
     const int n = uart_read_bytes(MODBUS_UART_PORT, bytes, sizeof(bytes), 0);
-    if (n < 0) { latch_communication_fault(now_us, false); return; }
+    if (n < 0) {
+        fail_transaction(V20_COMM_UART_RX_FAILED, now_us, 0, 0);
+        return;
+    }
     if (n > 0) {
         if (d.rx_used + (size_t)n > sizeof(d.rx)) {
-            latch_communication_fault(now_us, false);
+            fail_transaction(V20_COMM_INVALID_FRAME, now_us, 0, 0);
             return;
         }
         memcpy(d.rx + d.rx_used, bytes, (size_t)n);
@@ -343,29 +454,43 @@ static void receive_pending(int64_t now_us)
             d.rx_expected = 5;
         }
         if (d.rx_used >= d.rx_expected) {
-            if (!verify_reply()) latch_communication_fault(now_us, false);
-            else accept_reply(now_us);
+            uint32_t exception_code = 0;
+            V20CommError error = verify_reply(&exception_code);
+            if (error == V20_COMM_NONE)
+                accept_reply(now_us);
+            else if (error == V20_COMM_MODBUS_EXCEPTION)
+                accept_exception(now_us, exception_code);
+            else
+                fail_transaction(error, now_us, 0, exception_code);
             return;
         }
     }
     if (now_us - d.tx_started_us >= (int64_t)V20_RESPONSE_TIMEOUT_MS * US_PER_MS)
-        latch_communication_fault(now_us, true);
+        fail_transaction(V20_COMM_TIMEOUT, now_us, 0, 0);
 }
 
 static void restart_commissioning(void)
 {
     d.latched_fault = false;
     d.armed = false;
-    d.configured = false;
     d.status_valid = false;
     d.drive_ready = false;
-    d.pending_stop = true;
+    d.drive_fault_free = false;
+    d.reference_valid = false;
+    d.reference_config_valid = false;
+    d.configured = false;
+    d.watchdog_valid = false;
+    d.watchdog_config_valid = false;
+    d.watchdog_config_known = false;
+    d.diagnostics_complete = false;
+    d.demand_run = false;
     d.last_run_command = false;
-    d.bootstrap_next = OP_BOOT_STOP;
+    d.bootstrap_next = V20_OP_READ_STATUS;
     d.recheck_pending = false;
-    d.active_operation = OP_NONE;
+    d.active_operation = V20_OP_NONE;
     d.rx_used = 0;
     d.phase = PH_IDLE;
+    d.last_command_us = esp_timer_get_time();
 }
 
 bool V20Modbus_Init(void)
@@ -388,6 +513,7 @@ bool V20Modbus_Init(void)
         uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER,
                             0, NULL, 0) != ESP_OK ||
         uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK) {
+        record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
         return false;
     }
     d.uart_ok = true;
@@ -399,14 +525,16 @@ bool V20Modbus_Init(void)
 
 bool V20Modbus_Arm(void)
 {
-    const int64_t now_us = esp_timer_get_time();
-    const bool good = d.uart_ok && d.configured && !d.latched_fault &&
-        !d.recheck_pending && d.status_valid && d.drive_ready &&
-        now_us - d.last_status_us <= (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
 #if !SIMULATION_MODE && !V20_RUN_COMMISSIONED
-    (void)good;
     return false;
 #else
+    const int64_t now_us = esp_timer_get_time();
+    const bool good = d.uart_ok && d.diagnostics_complete &&
+        d.reference_config_valid &&
+        (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid) &&
+        !d.latched_fault && !d.recheck_pending &&
+        d.status_valid && d.drive_fault_free && d.drive_ready &&
+        now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
     if (!good) return false;
     d.armed = true;
     return true;
@@ -415,8 +543,10 @@ bool V20Modbus_Arm(void)
 
 void V20Modbus_Disarm(void)
 {
+    const bool stop_required = d.pending_stop || d.demand_run || d.last_run_command;
     d.armed = false;
-    d.pending_stop = true;
+    d.demand_run = false;
+    d.pending_stop = stop_required;
 }
 
 void V20Modbus_RequestRecheck(void)
@@ -458,26 +588,45 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
 #endif
         restart_commissioning();
     }
+    if (d.last_rx_success_us > 0 &&
+        now_us - d.last_rx_success_us >= (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS &&
+        d.last_error != V20_COMM_STALE_RESPONSE) {
+        d.errors++;
+        record_error(V20_COMM_STALE_RESPONSE, 0, 0);
+        d.armed = false;
+        d.latched_fault = d.diagnostics_complete;
+    }
     if (d.latched_fault || now_us < d.bus_quiet_until_us) return;
-    if (d.bootstrap_next != OP_NONE) {
+    if (d.bootstrap_next != V20_OP_NONE) {
         (void)send_operation(d.bootstrap_next, false, 0, now_us);
         return;
     }
-    if (!d.configured) return;
-    if (d.pending_stop || (!d.demand_run && d.last_run_command)) {
-        (void)send_operation(OP_MOTOR_COMMAND, false, 0, now_us);
+    if (!d.diagnostics_complete)
+        return;
+    const bool operation_commissioned = (SIMULATION_MODE || V20_RUN_COMMISSIONED) &&
+        d.reference_config_valid &&
+        (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid);
+    if (!operation_commissioned) {
+        if (!d.status_valid ||
+            now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
+            (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
     }
-    if (now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS ||
-        !d.status_valid) {
-        (void)send_operation(OP_READ_STATUS, false, 0, now_us);
+    if (!d.configured) return;
+    if (!d.status_valid ||
+        now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS) {
+        (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
+        return;
+    }
+    if (d.pending_stop || (!d.demand_run && d.last_run_command)) {
+        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
         return;
     }
     if (d.demand_run) {
         if (now_us - d.last_command_us >= (int64_t)V20_COMMAND_PERIOD_MS * US_PER_MS)
-            (void)send_operation(OP_MOTOR_COMMAND, true, request->output, now_us);
+            (void)send_operation(V20_OP_WRITE_CONTROL, true, request->output, now_us);
     } else if (now_us - d.last_command_us >= (int64_t)V20_STOP_HEARTBEAT_MS * US_PER_MS) {
-        (void)send_operation(OP_MOTOR_COMMAND, false, 0, now_us);
+        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
     }
 }
 
@@ -487,24 +636,52 @@ void V20Modbus_GetStatus(MotorStatus *status)
     const int64_t now_us = esp_timer_get_time();
     const bool recent = d.status_valid && d.last_status_us > 0 &&
         now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
-    const bool healthy = d.configured && recent && d.drive_ready &&
+    const bool communication_recent = d.last_rx_success_us > 0 &&
+        now_us - d.last_rx_success_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
+    const bool communication_ok = d.uart_ok && communication_recent &&
         !d.latched_fault && !d.recheck_pending;
+    const bool healthy = communication_ok && d.drive_fault_free &&
+                         d.reference_config_valid && !d.latched_fault;
+    const uint64_t age_us = d.last_rx_success_us > 0 ? (uint64_t)(now_us - d.last_rx_success_us)
+                                                    : UINT32_MAX * (uint64_t)US_PER_MS;
     *status = (MotorStatus){
-#if SIMULATION_MODE || V20_RUN_COMMISSIONED
-        .ready = healthy,
-#else
-        .ready = false,
-#endif
+        .ready = d.diagnostics_complete && d.reference_config_valid &&
+                 (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid) &&
+                 recent && d.drive_ready && !d.latched_fault,
         .ok = healthy,
         .initialized = d.uart_ok,
-        .response_received = d.status_valid && recent,
-        .status_healthy = d.drive_ready,
-        .communication_ok = d.uart_ok && d.configured && recent &&
-                            !d.latched_fault && !d.recheck_pending,
+        .response_received = communication_recent,
+        .status_healthy = d.drive_fault_free && recent,
+        .communication_ok = communication_ok,
+        .drive_fault_free = d.drive_fault_free && recent,
+        .operational_ready = d.drive_ready && recent && d.reference_config_valid &&
+                             (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
+                              d.watchdog_config_valid),
+        .run_authorized = d.armed && d.demand_run,
+        .diagnostics_complete = d.diagnostics_complete,
+        .status_valid = d.status_valid && recent,
+        .reference_valid = d.reference_valid,
+        .reference_config_valid = d.reference_config_valid,
+        .watchdog_valid = d.watchdog_valid,
+        .watchdog_config_known = d.watchdog_config_known,
+        .watchdog_config_valid = d.watchdog_config_valid,
         .actual_hz = d.actual_hz,
         .status = d.status_word,
+        .reference_value = d.reference_value,
+        .watchdog_register_value = d.watchdog_register_value,
+        .watchdog_parameter_expected_value = V20_EXPECTED_WATCHDOG_PARAMETER_MS,
+        .last_error_register = d.last_error_register,
+        .last_error_expected = d.last_error_expected,
+        .last_error_actual = d.last_error_actual,
         .errors = d.errors,
         .timeouts = d.timeouts,
+        .last_success_age_ms = d.last_rx_success_us > 0
+                                   ? (uint32_t)(age_us / US_PER_MS)
+                                   : UINT32_MAX,
+        .exception_code = d.exception_code,
+        .last_error_count = d.last_error_count,
+        .last_error = (uint8_t)d.last_error,
+        .last_operation = (uint8_t)d.last_operation,
         .tick = recent ? xTaskGetTickCount() : 0
     };
 }

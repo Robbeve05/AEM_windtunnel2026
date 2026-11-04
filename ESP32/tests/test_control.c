@@ -29,7 +29,13 @@ static unsigned watchdog_resets, arms, disarms, timer_starts;
 static bool stop_confirmed;
 static TaskHandle_t notified[4];
 static unsigned notification_count;
-static MotorStatus drive = {.ready = true, .ok = true, .status = 0x0201};
+static MotorStatus drive = {
+    .ready = true, .ok = true, .initialized = true, .response_received = true,
+    .status_healthy = true, .communication_ok = true, .drive_fault_free = true,
+    .operational_ready = true, .diagnostics_complete = true, .status_valid = true,
+    .reference_valid = true, .reference_config_valid = true, .status = 0x0201,
+    .reference_value = 5000
+};
 int64_t esp_timer_get_time(void)
 {
     return fake_us;

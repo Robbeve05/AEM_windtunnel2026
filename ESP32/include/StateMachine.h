@@ -15,9 +15,10 @@ typedef struct {
 typedef struct {
     uint32_t now_ms;
     SafetySnapshot safety;
-    bool sensor_ok, drive_ready, drive_ok, drive_fault, pi_ok, stop, start, reset;
+    bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
     bool drive_communication_ok, v20_response_received, v20_status_healthy;
     bool v20_modbus_initialized, v20_run_commissioned;
+    bool v20_diagnostics_complete, v20_configuration_valid;
     bool stop_confirmed;
     FaultReason_t urgent_fault, timing_fault;
 } MachineInputs;
@@ -41,7 +42,10 @@ typedef enum {
     WAIT_BLOCK_V20_RUN_LOCK = 1u << 15,
     WAIT_BLOCK_PI = 1u << 16,
     WAIT_BLOCK_RESET_SEQUENCE = 1u << 17,
-    WAIT_BLOCK_RESET_FEEDBACK_PENDING = 1u << 18
+    WAIT_BLOCK_RESET_FEEDBACK_PENDING = 1u << 18,
+    WAIT_BLOCK_DRIVE_FAULT = 1u << 19,
+    WAIT_BLOCK_V20_CONFIGURATION = 1u << 20,
+    WAIT_BLOCK_V20_OPERATION_INHIBITED = 1u << 21
 } WaitBlockingReason;
 
 typedef struct {

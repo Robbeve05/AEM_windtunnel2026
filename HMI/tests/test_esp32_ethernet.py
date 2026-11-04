@@ -55,6 +55,12 @@ class ParserTests(unittest.TestCase):
             + " last_fault=NONE diag_blockers=163840 diag_v20_status_word=513"
             " diag_modbus_errors=2 diag_modbus_timeouts=1 diag_v20_ready=0"
             " diag_drive_communication_ok=1 diag_v20_run_commissioned=0"
+            " diag_v20_diagnostics_complete=1 diag_drive_fault_free=1"
+            " diag_v20_reference_value=5000 diag_v20_reference_valid=1"
+            " diag_v20_watchdog_register_value=1000"
+            " diag_v20_watchdog_parameter_expected_value=500"
+            " diag_v20_watchdog_config_known=0 diag_v20_last_error=0"
+            " diag_v20_last_operation=0"
         )
         self.assertIsNotNone(frame)
         self.assertEqual(frame["diag_v20_status_word"], 513)
@@ -62,8 +68,26 @@ class ParserTests(unittest.TestCase):
         self.assertIn("V20 RUN commissioning lock active", waiting)
         self.assertIn("Physical RESET sequence not accepted", waiting)
         self.assertIn("V20 status word: 0x0201", details)
-        self.assertIn("V20 ready (software gate applied): FAIL", details)
+        self.assertIn("V20 operational status bits ready: FAIL", details)
         self.assertIn("Drive communication healthy: OK", details)
+        self.assertIn(
+            "Watchdog register: 1000 (P2014 expected 500 ms; register mapping unverified)",
+            details,
+        )
+
+    def test_init_diagnostic_failures_are_reported_without_waiting_for_fault_state(self):
+        frame = parse_status(
+            FRAME.replace("state=FAULT", "state=INIT")
+            + " init_deadline_exceeded=1 diag_modbus_initialized=1"
+            " diag_drive_communication_ok=0 diag_modbus_response_received=0"
+            " diag_drive_fault_free=0 diag_v20_diagnostics_complete=0"
+            " diag_v20_last_error=4 diag_v20_last_operation=1"
+        )
+        waiting, _ = wait_diagnostics(frame)
+        self.assertIn("Initialization deadline exceeded; controller remains safely in INIT", waiting)
+        self.assertIn("No recent valid Modbus response", waiting)
+        self.assertIn("V20 status-word response missing", waiting)
+        self.assertIn("Read-only V20 diagnostics incomplete", waiting)
 
     def test_legacy_frame_remains_supported(self):
         frame = parse_status(FRAME)

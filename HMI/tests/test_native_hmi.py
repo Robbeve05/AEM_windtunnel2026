@@ -99,6 +99,7 @@ class NativeHMITests(unittest.TestCase):
                     "diag_v20_status_word": 513, "diag_modbus_errors": 2,
                     "diag_modbus_timeouts": 1, "diag_v20_run_commissioned": 0,
                     "diag_drive_communication_ok": 1, "diag_v20_ready": 0,
+                    "diag_drive_fault_free": 1, "diag_v20_diagnostics_complete": 1,
                 },
             }, None)
             self.assertIn("V20 RUN commissioning lock active", window.waiting_for_text.text())

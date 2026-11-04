@@ -238,7 +238,7 @@ void PiCommunicationTask(void *argument)
                 MotorStatus motor = {0};
                 xQueuePeek(sensors, &sample, 0);
                 xQueuePeek(motor_status, &motor, 0);
-                char buffer[3072];
+                char buffer[4096];
                 int length = snprintf(
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s "
@@ -334,6 +334,16 @@ void PiCommunicationTask(void *argument)
                         " diag_v20_status_word=%u diag_v20_status_healthy=%d diag_v20_ready=%d"
                         " diag_drive_communication_ok=%d diag_modbus_errors=%lu"
                         " diag_modbus_timeouts=%lu diag_v20_run_commissioned=%d"
+                        " diag_drive_fault_free=%d diag_operational_ready=%d diag_run_authorized=%d"
+                        " diag_v20_diagnostics_complete=%d diag_v20_reference_valid=%d"
+                        " diag_v20_reference_config_valid=%d diag_v20_reference_value=%u"
+                        " diag_v20_watchdog_valid=%d diag_v20_watchdog_config_known=%d"
+                        " diag_v20_watchdog_config_valid=%d diag_v20_watchdog_register_value=%u"
+                        " diag_v20_watchdog_parameter_expected_value=%u"
+                        " diag_v20_last_error=%u diag_v20_last_operation=%u"
+                        " diag_v20_last_error_register=%u diag_v20_last_error_expected=%u"
+                        " diag_v20_last_error_actual=%u diag_v20_exception_code=%lu"
+                        " diag_v20_last_success_age_ms=%lu init_deadline_exceeded=%d"
                         " diag_pitot_communication_ok=%d diag_sensor_data_valid=%d"
                         " diag_sensor_data_fresh=%d diag_sensor_ok=%d"
                         " diag_ethernet_link=%d diag_pi_heartbeat_received=%d"
@@ -348,6 +358,17 @@ void PiCommunicationTask(void *argument)
                         diag->v20_status_healthy, diag->v20_ready,
                         diag->drive_communication_ok, (unsigned long)diag->modbus_errors,
                         (unsigned long)diag->modbus_timeouts, diag->v20_run_commissioned,
+                        diag->drive_fault_free, diag->operational_ready, diag->run_authorized,
+                        diag->diagnostics_complete, diag->reference_valid,
+                        diag->reference_config_valid, diag->reference_value,
+                        diag->watchdog_valid, diag->watchdog_config_known,
+                        diag->watchdog_config_valid, diag->watchdog_register_value,
+                        diag->watchdog_parameter_expected_value, diag->modbus_last_error,
+                        diag->modbus_last_operation, diag->modbus_last_error_register,
+                        diag->modbus_last_error_expected, diag->modbus_last_error_actual,
+                        (unsigned long)diag->modbus_exception_code,
+                        (unsigned long)diag->modbus_last_success_age_ms,
+                        t.init_deadline_exceeded,
                         diag->pitot_communication_ok, diag->sensor_data_valid,
                         diag->sensor_data_fresh, diag->sensor_ok, ethernet_link,
                         heartbeat_received, heartbeat_fresh, diag->pi_ok);
@@ -374,7 +395,15 @@ void PiCommunicationTask(void *argument)
                         " digital_outputs_initialized=%d digital_outputs_healthy=%d"
                         " modbus_initialized=%d modbus_response=%d v20_status=0x%04x"
                         " v20_status_healthy=%d v20_ready=%d drive_comm_ok=%d"
-                        " v20_run_commissioned=%d modbus_errors=%lu modbus_timeouts=%lu"
+                        " drive_fault_free=%d operational_ready=%d run_authorized=%d"
+                        " v20_run_commissioned=%d diagnostics_complete=%d"
+                        " reference_valid=%d reference_config_valid=%d reference_value=%u"
+                        " watchdog_valid=%d watchdog_config_known=%d watchdog_config_valid=%d"
+                        " watchdog_register=%u watchdog_parameter_expected_ms=%u"
+                        " last_error=%u last_operation=%u last_error_register=%u"
+                        " last_error_expected=%u last_error_actual=%u exception_code=%lu"
+                        " last_response_age_ms=%lu init_deadline_exceeded=%d"
+                        " modbus_errors=%lu modbus_timeouts=%lu"
                         " pitot_comm=%d sensor_valid=%d sensor_fresh=%d sensor_ok=%d"
                         " ethernet=%d pi_heartbeat_received=%d pi_heartbeat_fresh=%d pi_ok=%d",
                         (unsigned long)diag->blocking_reasons, StateMachine_Name(t.state),
@@ -385,7 +414,19 @@ void PiCommunicationTask(void *argument)
                         outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
                         diag->modbus_response_received, diag->v20_status_word,
                         diag->v20_status_healthy, diag->v20_ready, diag->drive_communication_ok,
-                        diag->v20_run_commissioned, (unsigned long)diag->modbus_errors,
+                        diag->drive_fault_free, diag->operational_ready, diag->run_authorized,
+                        diag->v20_run_commissioned, diag->diagnostics_complete,
+                        diag->reference_valid, diag->reference_config_valid,
+                        diag->reference_value, diag->watchdog_valid,
+                        diag->watchdog_config_known, diag->watchdog_config_valid,
+                        diag->watchdog_register_value, diag->watchdog_parameter_expected_value,
+                        diag->modbus_last_error, diag->modbus_last_operation,
+                        diag->modbus_last_error_register, diag->modbus_last_error_expected,
+                        diag->modbus_last_error_actual,
+                        (unsigned long)diag->modbus_exception_code,
+                        (unsigned long)diag->modbus_last_success_age_ms,
+                        t.init_deadline_exceeded,
+                        (unsigned long)diag->modbus_errors,
                         (unsigned long)diag->modbus_timeouts, diag->pitot_communication_ok,
                         diag->sensor_data_valid, diag->sensor_data_fresh, diag->sensor_ok,
                         ethernet_link, heartbeat_received, heartbeat_fresh, diag->pi_ok);

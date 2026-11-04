@@ -4,6 +4,7 @@
 #include "Ethernet.h"
 #include "StatusOutput.h"
 #include "SafetyIO.h"
+#include "V20Modbus.h"
 #include "TaskData.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -134,6 +135,47 @@ static void LogApplicationStatus(void)
                  (unsigned long)state.timing_fault_service_us,
                  (unsigned long)state.timing_fault_missed_ticks, CONTROL_PERIOD_US,
                  V20_SERVICE_BUDGET_US, CONTROL_CLOCK_MISSED_TICKS_ALLOWED);
+        const ReadyDiagnostics *diag = &state.ready_diag;
+        ESP_LOGI("V20Diag", "system=%s uart=%s slave=%u baud=%u framing=8E1 comm=%s "
+                            "response=%s status_valid=%s status=0x%04x fault_free=%s "
+                            "OFF2_active=%s OFF3_active=%s switch_on_inhibited=%s "
+                            "operational_ready=%s run_authorized=%s diagnostics=%s",
+                 StateMachine_Name(state.state), diag->modbus_initialized ? "YES" : "NO",
+                 MODBUS_SLAVE_ADDRESS, MODBUS_BAUD,
+                 diag->drive_communication_ok ? "OK" : "NO",
+                 diag->drive_communication_ok ? "YES" : "NO",
+                 diag->modbus_response_received ? "YES" : "NO",
+                 diag->v20_status_word, diag->drive_fault_free ? "YES" : "NO",
+                 (diag->v20_status_word & (1u << 4)) ? "NO" : "YES",
+                 (diag->v20_status_word & (1u << 5)) ? "NO" : "YES",
+                 (diag->v20_status_word & (1u << 6)) ? "YES" : "NO",
+                 diag->operational_ready ? "YES" : "NO",
+                 diag->run_authorized ? "YES" : "NO",
+                 diag->diagnostics_complete ? "COMPLETE" : "INCOMPLETE");
+        ESP_LOGI("V20Diag", "reference valid=%d raw=%u expected=%u config_valid=%d; "
+                            "watchdog register valid=%d value=%u P2014_expected_ms=%u "
+                            "mapping_confirmed=%d config_valid=%d; last_error=%s operation=%s "
+                            "register=%u expected=%u actual=%u exception=%lu response_age_ms=%lu",
+                 diag->reference_valid, diag->reference_value,
+                 (unsigned)V20_EXPECTED_REFERENCE_CENTIHZ, diag->reference_config_valid,
+                 diag->watchdog_valid, diag->watchdog_register_value,
+                 diag->watchdog_parameter_expected_value, diag->watchdog_config_known,
+                 diag->watchdog_config_valid,
+                 V20Modbus_ErrorName((V20CommError)diag->modbus_last_error),
+                 V20Modbus_OperationName((V20Operation)diag->modbus_last_operation),
+                 diag->modbus_last_error_register, diag->modbus_last_error_expected,
+                 diag->modbus_last_error_actual, (unsigned long)diag->modbus_exception_code,
+                 (unsigned long)diag->modbus_last_success_age_ms);
+        if (state.init_deadline_exceeded)
+            ESP_LOGW("INIT", "deadline exceeded; staying safely in INIT: sensor=%s "
+                             "V20_status=%s communication=%s drive_fault_free=%s "
+                             "diagnostics=%s safety_outputs=%s",
+                     state.sensor_ok ? "OK" : "MISSING",
+                     diag->modbus_response_received ? "RECEIVED" : "MISSING",
+                     diag->drive_communication_ok ? "OK" : "MISSING",
+                     diag->drive_fault_free ? "YES" : "NO",
+                     diag->diagnostics_complete ? "COMPLETE" : "INCOMPLETE",
+                     diag->safety_outputs_healthy ? "OK" : "MISSING");
     } else {
         ESP_LOGW("Diag", "machine state unavailable; ControlTask has not published telemetry");
     }

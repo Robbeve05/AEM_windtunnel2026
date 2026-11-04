@@ -18,11 +18,14 @@ static MachineInputs ready_inputs(void)
         .sensor_ok = true,
         .drive_ready = true,
         .drive_ok = true,
+        .drive_fault_free = true,
         .drive_communication_ok = true,
         .v20_response_received = true,
         .v20_status_healthy = true,
         .v20_modbus_initialized = true,
         .v20_run_commissioned = true,
+        .v20_diagnostics_complete = true,
+        .v20_configuration_valid = true,
         .pi_ok = true,
     };
 }
@@ -82,16 +85,19 @@ int main(void)
     inputs = ready_inputs();
     inputs.v20_status_healthy = false;
     inputs.drive_ready = false;
-    check_reason(inputs, WAIT_BLOCK_V20_STATUS);
+    inputs.drive_fault_free = false;
+    check_reason(inputs, WAIT_BLOCK_DRIVE_FAULT);
     inputs = ready_inputs();
-    inputs.drive_ok = false;
+    inputs.drive_communication_ok = false;
     check_reason(inputs, WAIT_BLOCK_DRIVE_COMMUNICATION);
     inputs = ready_inputs();
     inputs.drive_ready = false;
-    check_reason(inputs, WAIT_BLOCK_V20_NOT_READY);
+    check_reason(inputs, WAIT_BLOCK_V20_OPERATION_INHIBITED);
+    inputs = ready_inputs();
+    inputs.v20_configuration_valid = false;
+    check_reason(inputs, WAIT_BLOCK_V20_CONFIGURATION);
     inputs = ready_inputs();
     inputs.v20_run_commissioned = false;
-    inputs.drive_ready = false;
     check_reason(inputs, WAIT_BLOCK_V20_RUN_LOCK);
     inputs = ready_inputs();
     inputs.pi_ok = false;
@@ -128,10 +134,32 @@ int main(void)
     assert(inputs.drive_communication_ok && inputs.v20_status_healthy);
     assert((locked & WAIT_BLOCK_V20_RUN_LOCK) && !(locked & WAIT_BLOCK_DRIVE_COMMUNICATION) &&
            !(locked & WAIT_BLOCK_MODBUS_NOT_INITIALIZED) &&
-           !(locked & WAIT_BLOCK_MODBUS_NO_RESPONSE) && !(locked & WAIT_BLOCK_V20_STATUS));
+           !(locked & WAIT_BLOCK_MODBUS_NO_RESPONSE) &&
+           (locked & WAIT_BLOCK_V20_OPERATION_INHIBITED));
 
     machine.state = STATE_READY;
     assert(StateMachine_GetBlockingReasons(&machine, &inputs) == 0);
+
+    MachineInputs inhibited = ready_inputs();
+    inhibited.safety.commissioned = false;
+    inhibited.drive_ready = false;
+    inhibited.v20_run_commissioned = false;
+    inhibited.v20_configuration_valid = false;
+    machine = (StateMachine){.state = STATE_INIT, .boot_ms = 0};
+    StateMachine_Step(&machine, &inhibited);
+    assert(machine.state == STATE_WAIT && machine.fault == FAULT_NONE);
+    const uint32_t init_blockers = StateMachine_GetBlockingReasons(&machine, &inhibited);
+    assert((init_blockers & WAIT_BLOCK_SAFETY_NOT_COMMISSIONED) &&
+           (init_blockers & WAIT_BLOCK_V20_RUN_LOCK) &&
+           (init_blockers & WAIT_BLOCK_V20_CONFIGURATION) &&
+           (init_blockers & WAIT_BLOCK_V20_OPERATION_INHIBITED));
+
+    machine = (StateMachine){.state = STATE_INIT, .boot_ms = 0};
+    inhibited.v20_response_received = false;
+    inhibited.v20_diagnostics_complete = false;
+    inhibited.now_ms = INIT_TIMEOUT_MS;
+    StateMachine_Step(&machine, &inhibited);
+    assert(machine.state == STATE_INIT && machine.fault == FAULT_NONE);
     puts("PASS WAIT readiness blocker diagnostics and unchanged READY transition");
     return 0;
 }

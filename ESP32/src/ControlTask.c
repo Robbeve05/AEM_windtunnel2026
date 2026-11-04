@@ -338,7 +338,7 @@ static void Control_ReadInputs(ControlContext *ctx)
     ctx->status.measurement = ctx->sample.value;
     ctx->status.sensor_ok = ctx->sample.valid && (TickType_t)(ctx->now_tick - ctx->sample.tick) <
                                                      pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
-    ctx->status.motor_ok = ctx->motor.ready && ctx->motor.ok;
+    ctx->status.motor_ok = ctx->motor.operational_ready && ctx->motor.ok;
     ctx->status.pi_ok =
         !PI_HEARTBEAT_REQUIRED ||
         (ctx->heartbeat.connected &&
@@ -450,14 +450,19 @@ static void Control_CheckSafety(ControlContext *ctx)
     ctx->inputs = (MachineInputs){.now_ms = ctx->now_ms,
                                   .safety = ctx->safety,
                                   .sensor_ok = ctx->status.sensor_ok,
-                                  .drive_ready = ctx->motor.ready,
+                                  .drive_ready = ctx->motor.operational_ready,
                                   .drive_ok = ctx->motor.ok,
+                                  .drive_fault_free = ctx->motor.drive_fault_free,
                                   .drive_fault = (ctx->motor.status & 0x0008u) != 0,
                                   .drive_communication_ok = ctx->motor.communication_ok,
-                                  .v20_response_received = ctx->motor.response_received,
+                                  .v20_response_received = ctx->motor.status_valid,
                                   .v20_status_healthy = ctx->motor.status_healthy,
                                   .v20_modbus_initialized = ctx->motor.initialized,
                                   .v20_run_commissioned = V20_RUN_COMMISSIONED,
+                                  .v20_diagnostics_complete = ctx->motor.diagnostics_complete,
+                                  .v20_configuration_valid = ctx->motor.reference_config_valid &&
+                                      (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
+                                       ctx->motor.watchdog_config_valid),
                                   .pi_ok = ctx->status.pi_ok,
                                   .stop = ctx->stop,
                                   .start = ctx->start,
@@ -713,6 +718,9 @@ static void Control_PublishStatus(ControlContext *ctx)
 {
     ctx->status.control_ready = ctx->tasks_ready;
     ctx->status.control_clock_started = ctx->control_clock_started;
+    ctx->status.init_deadline_exceeded =
+        ctx->machine.state == STATE_INIT &&
+        (uint32_t)(ctx->now_ms - ctx->machine.boot_ms) >= INIT_TIMEOUT_MS;
     ctx->status.control_cycle_count = ctx->control_cycle_count;
     ctx->status.timing_fault_execution_us = ctx->timing_stats.fault_execution_us;
     ctx->status.timing_fault_service_us = ctx->timing_stats.fault_service_us;
@@ -742,12 +750,31 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->safety_relay_ok = ctx->safety.relay_ok;
     diag->safety_outputs_healthy = ctx->safety.outputs_ok;
     diag->modbus_initialized = ctx->motor.initialized;
-    diag->modbus_response_received = ctx->motor.response_received;
+    diag->modbus_response_received = ctx->motor.status_valid;
     diag->v20_status_healthy = ctx->motor.status_healthy;
     diag->v20_status_word = ctx->motor.status;
     diag->v20_ready = ctx->motor.ready;
     diag->drive_communication_ok = ctx->motor.communication_ok;
     diag->v20_run_commissioned = V20_RUN_COMMISSIONED;
+    diag->drive_fault_free = ctx->motor.drive_fault_free;
+    diag->operational_ready = ctx->motor.operational_ready;
+    diag->run_authorized = ctx->motor.run_authorized;
+    diag->diagnostics_complete = ctx->motor.diagnostics_complete;
+    diag->reference_valid = ctx->motor.reference_valid;
+    diag->reference_config_valid = ctx->motor.reference_config_valid;
+    diag->watchdog_valid = ctx->motor.watchdog_valid;
+    diag->watchdog_config_known = ctx->motor.watchdog_config_known;
+    diag->watchdog_config_valid = ctx->motor.watchdog_config_valid;
+    diag->reference_value = ctx->motor.reference_value;
+    diag->watchdog_register_value = ctx->motor.watchdog_register_value;
+    diag->watchdog_parameter_expected_value = ctx->motor.watchdog_parameter_expected_value;
+    diag->modbus_last_error = ctx->motor.last_error;
+    diag->modbus_last_operation = ctx->motor.last_operation;
+    diag->modbus_last_error_register = ctx->motor.last_error_register;
+    diag->modbus_last_error_expected = ctx->motor.last_error_expected;
+    diag->modbus_last_error_actual = ctx->motor.last_error_actual;
+    diag->modbus_exception_code = ctx->motor.exception_code;
+    diag->modbus_last_success_age_ms = ctx->motor.last_success_age_ms;
     diag->modbus_errors = ctx->motor.errors;
     diag->modbus_timeouts = ctx->motor.timeouts;
     diag->pitot_communication_ok = SensorLib_PitotCommunicationOk();
@@ -791,8 +818,9 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
         V20Modbus_Disarm();
     }
     if (!ctx->v20_initialized ||
-        (!ctx->motor.ok && (ctx->machine.state == STATE_RUNNING ||
-                            ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
+        ((!ctx->motor.ok || !ctx->motor.operational_ready) &&
+         (ctx->machine.state == STATE_RUNNING ||
+          ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
     {
         StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
         V20Modbus_Disarm();

@@ -104,9 +104,19 @@
 #define V20_STOP_HEARTBEAT_MS 150
 #endif
 
-#ifndef V20_EXPECTED_WATCHDOG_MS
-// [ms, safety-critical] Expected V20 watchdog register value; mismatch fails drive verification.
-#define V20_EXPECTED_WATCHDOG_MS 500
+#ifndef V20_EXPECTED_WATCHDOG_PARAMETER_MS
+// [ms, safety-critical] Expected P2014[0] parameter value; this is not assumed to be holding
+// register 40001.
+#define V20_EXPECTED_WATCHDOG_PARAMETER_MS 500u
+#endif
+
+#ifndef V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED
+// [boolean, safety-critical] Set only after verifying holding register 40001 maps to P2014[0].
+#define V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED 0
+#endif
+
+#if V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED && !defined(V20_EXPECTED_WATCHDOG_REGISTER_VALUE)
+#error "Define V20_EXPECTED_WATCHDOG_REGISTER_VALUE only after confirming register 40001 mapping"
 #endif
 
 #ifndef V20_EXPECTED_REFERENCE_CENTIHZ

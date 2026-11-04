@@ -91,15 +91,16 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
         reasons |= WAIT_BLOCK_MODBUS_NOT_INITIALIZED;
     if (!i->v20_response_received)
         reasons |= WAIT_BLOCK_MODBUS_NO_RESPONSE;
-    if (i->v20_response_received && !i->v20_status_healthy)
-        reasons |= WAIT_BLOCK_V20_STATUS;
-    if (!i->drive_ok && i->v20_response_received && i->v20_status_healthy)
+    if (i->v20_response_received && !i->drive_fault_free)
+        reasons |= WAIT_BLOCK_DRIVE_FAULT;
+    if (!i->drive_communication_ok)
         reasons |= WAIT_BLOCK_DRIVE_COMMUNICATION;
-    if (!i->drive_ready && i->v20_status_healthy &&
-        (SIMULATION_MODE || i->v20_run_commissioned))
-        reasons |= WAIT_BLOCK_V20_NOT_READY;
+    if (!i->v20_configuration_valid)
+        reasons |= WAIT_BLOCK_V20_CONFIGURATION;
+    if (i->drive_fault_free && !i->drive_ready)
+        reasons |= WAIT_BLOCK_V20_OPERATION_INHIBITED;
 #if !SIMULATION_MODE
-    if (!i->v20_run_commissioned && i->v20_status_healthy)
+    if (!i->v20_run_commissioned)
         reasons |= WAIT_BLOCK_V20_RUN_LOCK;
 #endif
     if (!i->pi_ok)
@@ -161,7 +162,9 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     m->permissive = false;
     bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
     bool healthy = safety_healthy(i);
-    bool process = i->sensor_ok && i->drive_ready && i->drive_ok && i->pi_ok;
+    bool process = i->sensor_ok && i->drive_ready && i->drive_ok && i->pi_ok &&
+                   i->v20_configuration_valid &&
+                   (SIMULATION_MODE || i->v20_run_commissioned);
     /* Emergency has priority over the first latched non-emergency cause. */
     if (i->safety.estop_pressed)
     {
@@ -217,10 +220,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        if (fresh && i->sensor_ok && i->drive_ready && i->drive_ok && i->safety.outputs_ok)
+        if (fresh && i->sensor_ok && i->v20_diagnostics_complete &&
+            i->v20_response_received && i->drive_communication_ok &&
+            i->drive_fault_free && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
-        else if (i->now_ms - m->boot_ms >= INIT_TIMEOUT_MS)
-            StateMachine_Fault(m, FAULT_INTERNAL, i->now_ms);
         break;
     case STATE_FAULT:
         if (m->reset_pending && healthy && process && i->safety.stop_ok &&

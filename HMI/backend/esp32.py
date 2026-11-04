@@ -24,6 +24,16 @@ INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outp
         "diag_modbus_initialized", "diag_modbus_response_received", "diag_v20_status_word",
         "diag_v20_status_healthy", "diag_v20_ready", "diag_drive_communication_ok",
         "diag_modbus_errors", "diag_modbus_timeouts", "diag_v20_run_commissioned",
+        "diag_drive_fault_free", "diag_operational_ready", "diag_run_authorized",
+        "diag_v20_diagnostics_complete", "diag_v20_reference_valid",
+        "diag_v20_reference_config_valid", "diag_v20_reference_value",
+        "diag_v20_watchdog_valid", "diag_v20_watchdog_config_known",
+        "diag_v20_watchdog_config_valid", "diag_v20_watchdog_register_value",
+        "diag_v20_watchdog_parameter_expected_value", "diag_v20_last_error",
+        "diag_v20_last_operation", "diag_v20_last_error_register",
+        "diag_v20_last_error_expected", "diag_v20_last_error_actual",
+        "diag_v20_exception_code", "diag_v20_last_success_age_ms",
+        "init_deadline_exceeded",
         "diag_pitot_communication_ok", "diag_sensor_data_valid", "diag_sensor_data_fresh",
         "diag_sensor_ok", "diag_ethernet_link", "diag_pi_heartbeat_received",
         "diag_pi_heartbeat_fresh", "diag_pi_ok"}
@@ -48,7 +58,17 @@ WAIT_BLOCKERS = (
     (1 << 16, "Raspberry Pi heartbeat not healthy"),
     (1 << 17, "Physical RESET sequence not accepted"),
     (1 << 18, "Reset feedback check pending"),
+    (1 << 19, "V20 status reports an active drive fault"),
+    (1 << 20, "V20 configuration does not match expected values"),
+    (1 << 21, "V20 is communicating but operationally inhibited"),
 )
+
+V20_COMM_ERRORS = (
+    "NONE", "UART_INIT_FAILED", "UART_TX_FAILED", "UART_RX_FAILED", "TIMEOUT",
+    "CRC_ERROR", "INVALID_FRAME", "MODBUS_EXCEPTION", "UNEXPECTED_REGISTER_VALUE",
+    "STALE_RESPONSE",
+)
+V20_OPERATIONS = ("NONE", "READ_STATUS", "READ_REFERENCE", "READ_WATCHDOG", "WRITE_CONTROL")
 
 DIAGNOSTIC_SIGNALS = (
     ("diag_estop_released", "E-stop released"),
@@ -65,10 +85,19 @@ DIAGNOSTIC_SIGNALS = (
     ("diag_digital_outputs_healthy", "Digital outputs healthy"),
     ("diag_modbus_initialized", "Modbus initialized"),
     ("diag_modbus_response_received", "Recent V20 response received"),
-    ("diag_v20_status_healthy", "V20 status word healthy"),
-    ("diag_v20_ready", "V20 ready (software gate applied)"),
+    ("diag_v20_status_healthy", "V20 status response is fault-free"),
+    ("diag_drive_fault_free", "V20 reports no active drive fault"),
+    ("diag_v20_ready", "V20 operational status bits ready"),
+    ("diag_operational_ready", "V20 operational readiness"),
     ("diag_drive_communication_ok", "Drive communication healthy"),
     ("diag_v20_run_commissioned", "V20 RUN commissioned"),
+    ("diag_v20_diagnostics_complete", "Read-only V20 diagnostics complete"),
+    ("diag_v20_reference_valid", "Reference register read"),
+    ("diag_v20_reference_config_valid", "Reference frequency matches expected"),
+    ("diag_v20_watchdog_valid", "Watchdog register read"),
+    ("diag_v20_watchdog_config_known", "Watchdog register mapping confirmed"),
+    ("diag_v20_watchdog_config_valid", "Watchdog configuration matches expected"),
+    ("diag_run_authorized", "Motor RUN currently authorized"),
     ("diag_pitot_communication_ok", "Pitot communication healthy"),
     ("diag_sensor_data_valid", "Sensor data valid"),
     ("diag_sensor_data_fresh", "Sensor data fresh"),
@@ -90,6 +119,15 @@ def wait_diagnostics(drive):
         else "V20 status word: unavailable",
         f"Modbus errors/timeouts: {drive.get('diag_modbus_errors', 'unavailable')}/"
         f"{drive.get('diag_modbus_timeouts', 'unavailable')}",
+        f"V20 communication error/operation: "
+        f"{_enum_name(drive.get('diag_v20_last_error'), V20_COMM_ERRORS)}/"
+        f"{_enum_name(drive.get('diag_v20_last_operation'), V20_OPERATIONS)}",
+        f"Reference register: {drive.get('diag_v20_reference_value', 'unavailable')} "
+        f"(expected 5000 centi-Hz)",
+        f"Watchdog register: {drive.get('diag_v20_watchdog_register_value', 'unavailable')} "
+        f"(P2014 expected {drive.get('diag_v20_watchdog_parameter_expected_value', 'unavailable')} ms; "
+        f"register mapping "
+        f"{'confirmed' if drive.get('diag_v20_watchdog_config_known') == 1 else 'unverified'})",
     ]
     for key, label in DIAGNOSTIC_SIGNALS:
         value = drive.get(key)
@@ -102,7 +140,24 @@ def wait_diagnostics(drive):
             waiting_for.append(f"Unknown blocker flags: 0x{unknown:08X}")
     elif drive.get("state") == "WAIT":
         waiting_for.append("Detailed WAIT diagnostics unavailable (update ESP32 firmware)")
+    if drive.get("state") == "INIT":
+        if drive.get("init_deadline_exceeded") == 1:
+            waiting_for.append("Initialization deadline exceeded; controller remains safely in INIT")
+        if drive.get("diag_modbus_initialized") == 0:
+            waiting_for.append("V20 UART initialization failed")
+        if drive.get("diag_drive_communication_ok") == 0:
+            waiting_for.append("No recent valid Modbus response")
+        if drive.get("diag_modbus_response_received") == 0:
+            waiting_for.append("V20 status-word response missing")
+        if drive.get("diag_drive_fault_free") == 0:
+            waiting_for.append("V20 fault status is active or unavailable")
+        if drive.get("diag_v20_diagnostics_complete") == 0:
+            waiting_for.append("Read-only V20 diagnostics incomplete")
     return waiting_for, details
+
+
+def _enum_name(value, choices):
+    return choices[value] if isinstance(value, int) and 0 <= value < len(choices) else "unavailable"
 
 def parse_status(line):
     if not line.startswith("STATUS ") or len(line) > 4096:

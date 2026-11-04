@@ -13,6 +13,27 @@
 #include <stddef.h>
 #include "TaskData.h"
 
+typedef enum {
+    V20_COMM_NONE,
+    V20_COMM_UART_INIT_FAILED,
+    V20_COMM_UART_TX_FAILED,
+    V20_COMM_UART_RX_FAILED,
+    V20_COMM_TIMEOUT,
+    V20_COMM_CRC_ERROR,
+    V20_COMM_INVALID_FRAME,
+    V20_COMM_MODBUS_EXCEPTION,
+    V20_COMM_UNEXPECTED_REGISTER_VALUE,
+    V20_COMM_STALE_RESPONSE
+} V20CommError;
+
+typedef enum {
+    V20_OP_NONE,
+    V20_OP_READ_STATUS,
+    V20_OP_READ_REFERENCE,
+    V20_OP_READ_WATCHDOG,
+    V20_OP_WRITE_CONTROL
+} V20Operation;
+
 /* Initialise UART once. Does not transmit a RUN command. */
 bool V20Modbus_Init(void);
 
@@ -45,6 +66,8 @@ void V20Modbus_RequestRecheck(void);
 
 /* Standard Modbus RTU CRC16 (public to facilitate host-side tests). */
 uint16_t V20Modbus_Crc16(const uint8_t *data, size_t length);
+const char *V20Modbus_ErrorName(V20CommError error);
+const char *V20Modbus_OperationName(V20Operation operation);
 
 /* True only after OFF1 was acknowledged and a subsequent fresh speed report
  * confirms the drive below the threshold. No safety-rated standstill claim. */

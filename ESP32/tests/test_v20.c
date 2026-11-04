@@ -20,7 +20,7 @@
 typedef struct
 {
     uint16_t stw, hsw, status, watchdog, reference, actual;
-    unsigned commands, run_commands, reads, init_calls;
+    unsigned commands, run_commands, reads, good_status_responses, init_calls;
     int init_failure, damage;
     bool fail_flush, fail_write, fail_read;
     unsigned chunk;
@@ -116,6 +116,8 @@ int uart_write_bytes(int port, const void *data, size_t length)
     if (tx[1] == 16)
     {
         assert(length == 13 && word(tx + 2) == 99 && word(tx + 4) == 2 && tx[6] == 4);
+        assert(fake.reads >= 3); /* Read-only status/reference/watchdog bootstrap comes first. */
+        assert(fake.good_status_responses > 0);
         fake.stw = word(tx + 7);
         fake.hsw = word(tx + 9);
         fake.commands++;
@@ -178,6 +180,8 @@ int uart_write_bytes(int port, const void *data, size_t length)
         if (damage == 8)
             size--;
     }
+    if (tx[1] == 3 && word(tx + 2) == 109 && damage == 0)
+        fake.good_status_responses++;
     fake.rx_size = size;
     fake.rx_offset = 0;
     return (int)length;
@@ -230,7 +234,7 @@ static void pump(MotorRequest *r, unsigned count)
 
 static void reset_mock(void)
 {
-    fake = (Fake){.reference = 5000, .watchdog = 500, .status = 0x0201};
+    fake = (Fake){.reference = 5000, .watchdog = 1000, .status = 0x0201};
     now_us = 1000000;
 }
 
@@ -239,11 +243,16 @@ static void boot(void)
     reset_mock();
     assert(V20Modbus_Init());
     assert(!V20Modbus_Arm());   /* No status or commissioning verification yet. */
-    assert(fake.commands == 0); /* Init never blocks on a telegram. */
+    V20Modbus_Disarm();
+    assert(fake.commands == 0 && fake.reads == 0); /* No eager control-word write. */
     MotorRequest r = request(false, 0);
     pump(&r, 12);
-    assert(status().ok && fake.stw == 0x047e && fake.hsw == 0);
-    assert(fake.watchdog == 500 && fake.reference == 5000 && fake.run_commands == 0);
+    assert(status().communication_ok && status().ok);
+    assert(status().ready && status().operational_ready && !status().run_authorized);
+    assert(fake.run_commands == 0 && fake.commands == 0);
+    assert(status().watchdog_valid && status().watchdog_register_value == 1000 &&
+           status().watchdog_parameter_expected_value == 500 &&
+           !status().watchdog_config_known && fake.reference == 5000);
 }
 
 #if V20_RUN_COMMISSIONED
@@ -399,9 +408,9 @@ static void test_status(void)
         MotorRequest r = request(false, 0);
         fake.status = bad[i];
         pump(&r, 30);
-        assert(!status().ready && !status().ok && !V20Modbus_Arm());
+        assert(!status().ready && !status().operational_ready && !V20Modbus_Arm());
         if (bad[i] & 8)
-            assert(status().errors > 0);
+            assert(!status().drive_fault_free && status().communication_ok);
         fake.status = 0x0201;
         V20Modbus_RequestRecheck();
         pump(&r, 60);
@@ -419,6 +428,56 @@ static void test_status(void)
     puts("PASS unhealthy drive status, signed speed and fragmented replies");
 }
 #endif
+
+static void test_inhibited_status_is_communication_healthy(void)
+{
+    reset_mock();
+    fake.status = 0xEB40;
+    assert(V20Modbus_Init());
+    V20Modbus_Disarm();
+    MotorRequest r = request(false, 0);
+    pump(&r, 12);
+    MotorStatus current = status();
+    assert(current.communication_ok && current.response_received && current.status_valid);
+    assert(current.drive_fault_free && !current.operational_ready && !current.ready);
+    assert(current.status == 0xEB40 && current.actual_hz == 0);
+    assert(!V20Modbus_Arm() && fake.run_commands == 0);
+    assert(fake.commands == 0);
+}
+
+static void test_initial_status_exception_stays_read_only(void)
+{
+    reset_mock();
+    fake.damage = 3;
+    assert(V20Modbus_Init());
+    V20Modbus_Disarm();
+    MotorRequest r = request(false, 0);
+    pump(&r, 24);
+    MotorStatus current = status();
+    assert(current.diagnostics_complete && current.status_valid);
+    assert(current.last_error == V20_COMM_MODBUS_EXCEPTION);
+    assert(fake.good_status_responses > 0);
+#if !V20_RUN_COMMISSIONED
+    assert(fake.commands == 0);
+#endif
+}
+
+static void test_initial_status_timeout_retries_read_only(void)
+{
+    reset_mock();
+    fake.damage = 1;
+    assert(V20Modbus_Init());
+    V20Modbus_Disarm();
+    MotorRequest r = request(false, 0);
+    pump(&r, 40);
+    MotorStatus current = status();
+    assert(current.diagnostics_complete && current.status_valid);
+    assert(current.errors > 0 && current.timeouts > 0);
+    assert(fake.good_status_responses > 0);
+#if !V20_RUN_COMMISSIONED
+    assert(fake.commands == 0);
+#endif
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Test entry point
@@ -448,21 +507,43 @@ int main(void)
         assert(V20Modbus_Init()); /* UART initialization, not drive health. */
         MotorRequest r = request(false, 0);
         pump(&r, 30);
-        assert(!status().ready && !status().ok && status().errors > 0);
-        assert(!V20Modbus_Arm() && fake.run_commands == 0);
+        MotorStatus diagnostic = status();
+        assert(diagnostic.communication_ok && diagnostic.errors == 0);
+        if (mismatch == 0)
+        {
+            assert(!diagnostic.reference_config_valid);
+            assert(diagnostic.last_error == V20_COMM_UNEXPECTED_REGISTER_VALUE);
+            assert(diagnostic.last_error_register == 40016);
+            assert(diagnostic.last_error_expected == 5000);
+            assert(diagnostic.last_error_actual == 6000);
+        }
+        else
+            assert(diagnostic.watchdog_valid && !diagnostic.watchdog_config_known &&
+                   diagnostic.last_error != V20_COMM_UNEXPECTED_REGISTER_VALUE);
+        if (mismatch == 0)
+            assert(!V20Modbus_Arm());
+        else
+            assert(V20Modbus_Arm() == (V20_RUN_COMMISSIONED != 0));
+        assert(fake.run_commands == 0);
     }
-    puts("PASS UART initialization errors, CRC and read-only commissioning mismatches");
+    puts("PASS UART initialization errors, CRC and read-only configuration diagnostics");
 #if V20_RUN_COMMISSIONED
+    test_inhibited_status_is_communication_healthy();
+    test_initial_status_exception_stays_read_only();
+    test_initial_status_timeout_retries_read_only();
     test_run_stop();
     test_errors();
     test_interlocks();
     test_status();
 #else
     boot();
-    assert(!status().ready && !V20Modbus_Arm());
+    assert(status().ready && !status().run_authorized && !V20Modbus_Arm());
+    test_inhibited_status_is_communication_healthy();
+    test_initial_status_exception_stays_read_only();
+    test_initial_status_timeout_retries_read_only();
     MotorRequest r = request(true, 100);
     pump(&r, 60);
-    assert(fake.run_commands == 0 && fake.stw == 0x047e);
+    assert(fake.run_commands == 0 && fake.commands == 0);
     puts("PASS default uncommissioned firmware cannot arm or transmit RUN");
 #endif
     return 0;

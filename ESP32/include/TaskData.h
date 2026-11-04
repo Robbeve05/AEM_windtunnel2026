@@ -12,9 +12,16 @@ typedef struct { float value,pressure_pa,temperature_c,taps[16]; uint16_t taps_v
 typedef struct { float output; TickType_t tick; bool run,permissive,coast; uint32_t epoch; } MotorRequest;
 typedef struct {
     bool ready, ok, initialized, response_received, status_healthy, communication_ok;
+    bool drive_fault_free, operational_ready, run_authorized;
+    bool diagnostics_complete, status_valid, reference_valid, reference_config_valid;
+    bool watchdog_valid, watchdog_config_known, watchdog_config_valid;
     float actual_hz;
-    uint16_t status;
-    uint32_t errors, timeouts;
+    uint16_t status, reference_value, watchdog_register_value;
+    uint16_t watchdog_parameter_expected_value;
+    uint16_t last_error_register, last_error_expected, last_error_actual;
+    uint32_t errors, timeouts, last_success_age_ms;
+    uint32_t exception_code, last_error_count;
+    uint8_t last_error, last_operation;
     TickType_t tick;
 } MotorStatus;
 typedef struct { bool connected; TickType_t tick; } PiHeartbeat;
@@ -27,6 +34,13 @@ typedef struct {
     bool safety_outputs_healthy, digital_outputs_initialized, digital_outputs_healthy;
     bool modbus_initialized, modbus_response_received, v20_status_healthy, v20_ready;
     bool drive_communication_ok, v20_run_commissioned;
+    bool drive_fault_free, operational_ready, run_authorized, diagnostics_complete;
+    bool reference_valid, reference_config_valid, watchdog_valid, watchdog_config_known;
+    bool watchdog_config_valid;
+    uint16_t reference_value, watchdog_register_value, watchdog_parameter_expected_value;
+    uint8_t modbus_last_error, modbus_last_operation;
+    uint16_t modbus_last_error_register, modbus_last_error_expected, modbus_last_error_actual;
+    uint32_t modbus_exception_code, modbus_last_success_age_ms;
     bool pitot_communication_ok, sensor_data_valid, sensor_data_fresh, sensor_ok;
     bool ethernet_link, pi_heartbeat_received, pi_heartbeat_fresh, pi_ok;
 } ReadyDiagnostics;
@@ -44,7 +58,7 @@ typedef struct {
     uint32_t crc_errors,exceptions,late_replies,exception_code;
     uint32_t service_us,service_max_us,rtt_median_us,rtt_p95_us,rtt_max_us,request_id,transitions;
     uint32_t control_cycle_count;
-    bool control_ready,control_clock_started,modbus_initialized;
+    bool control_ready,control_clock_started,modbus_initialized,init_deadline_exceeded;
     ReadyDiagnostics ready_diag;
 } Telemetry;
 extern QueueHandle_t commands,sensors,motor_requests,motor_status,telemetry,safety_status,pi_heartbeat;

@@ -464,7 +464,7 @@ class HMIWindow(QMainWindow):
         self.tunnel_state_detail.setObjectName("safetyNote")
         self.tunnel_state_detail.setWordWrap(True)
         self.tunnel_state_detail.setMinimumHeight(35)
-        self.waiting_for_heading = QLabel("Waiting for:")
+        self.waiting_for_heading = QLabel("Controller diagnostics:")
         self.waiting_for_heading.setObjectName("smallLabel")
         self.waiting_for_text = QLabel("Detailed WAIT diagnostics unavailable.")
         self.waiting_for_text.setObjectName("safetyNote")
@@ -1737,7 +1737,7 @@ class HMIWindow(QMainWindow):
         machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
         estop_pressed = drive.get("estop_pressed") == 1
         waiting_for, diagnostic_details = wait_diagnostics(drive)
-        waiting = not stale and not is_sim and machine_state == "WAIT"
+        waiting = not stale and not is_sim and machine_state in {"INIT", "WAIT"}
         self.waiting_for_heading.setVisible(waiting)
         self.waiting_for_text.setVisible(waiting)
         self.waiting_for_text.setText(
