@@ -9,21 +9,32 @@
 #include <stddef.h>
 #define OUTPUT_BIT(n) (1u << (n))
 #define CHECK_BIT(n) _Static_assert((n)>=0 && (n)<=7, "Output index must be 0..7")
-CHECK_BIT(VFD_ENABLE_DO_BIT); CHECK_BIT(INDICATOR_10SH5_DO_BIT);
-CHECK_BIT(INDICATOR_10SH6_DO_BIT); CHECK_BIT(YELLOW_INDICATOR_DO_BIT);
+CHECK_BIT(VFD_ENABLE_DO_BIT); CHECK_BIT(RED_INDICATOR_DO_BIT);
+CHECK_BIT(GREEN_INDICATOR_DO_BIT); CHECK_BIT(YELLOW_INDICATOR_DO_BIT);
 CHECK_BIT(SPARE_DO5_BIT); CHECK_BIT(SPARE_DO6_BIT);
 CHECK_BIT(SPARE_DO7_BIT); CHECK_BIT(SPARE_DO8_BIT);
-_Static_assert((OUTPUT_BIT(VFD_ENABLE_DO_BIT)|OUTPUT_BIT(INDICATOR_10SH5_DO_BIT)|
-    OUTPUT_BIT(INDICATOR_10SH6_DO_BIT)|OUTPUT_BIT(YELLOW_INDICATOR_DO_BIT)|OUTPUT_BIT(SPARE_DO5_BIT)|
+_Static_assert((OUTPUT_BIT(VFD_ENABLE_DO_BIT)|OUTPUT_BIT(RED_INDICATOR_DO_BIT)|
+    OUTPUT_BIT(GREEN_INDICATOR_DO_BIT)|OUTPUT_BIT(YELLOW_INDICATOR_DO_BIT)|OUTPUT_BIT(SPARE_DO5_BIT)|
     OUTPUT_BIT(SPARE_DO6_BIT)|OUTPUT_BIT(SPARE_DO7_BIT)|OUTPUT_BIT(SPARE_DO8_BIT))==0xffu,
     "All eight output assignments must be unique");
+_Static_assert(BOARD_DO_ACTIVE_LEVEL==0 || BOARD_DO_ACTIVE_LEVEL==1, "Invalid board output polarity");
 _Static_assert(VFD_ENABLE_ACTIVE_LEVEL==0 || VFD_ENABLE_ACTIVE_LEVEL==1, "Invalid VFD relay polarity");
 static portMUX_TYPE state_lock=portMUX_INITIALIZER_UNLOCKED;
 static SemaphoreHandle_t writer_lock;
 static DigitalOutputStatus state;
+static StatusIndicator status_indicators;
+static void set_output(uint8_t *image, unsigned bit, bool active, int active_level) {
+    const uint8_t mask=OUTPUT_BIT(bit);
+    const bool high=active ? active_level!=0 : active_level==0;
+    if(high) *image|=mask;
+    else *image&=(uint8_t)~mask;
+}
 static uint8_t compose(void) {
-    uint8_t image=0; // Only the DO1 VFD-enable relay has an assigned firmware function.
-    if(state.vfd_requested==(VFD_ENABLE_ACTIVE_LEVEL!=0)) image|=OUTPUT_BIT(VFD_ENABLE_DO_BIT);
+    uint8_t image=BOARD_DO_ACTIVE_LEVEL ? 0x00u : 0xffu;
+    set_output(&image, RED_INDICATOR_DO_BIT, status_indicators.red, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, GREEN_INDICATOR_DO_BIT, status_indicators.green, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, YELLOW_INDICATOR_DO_BIT, status_indicators.amber, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, VFD_ENABLE_DO_BIT, state.vfd_requested, VFD_ENABLE_ACTIVE_LEVEL);
     return image;
 }
 static bool write_image(uint8_t image) {
@@ -57,7 +68,7 @@ bool DigitalOutputs_Init(void) {
     if(!ok) ESP_LOGE("DigitalOutputs","Inactive image/direction initialization failed; motor inhibited");
     return ok;
 }
-bool DigitalOutputs_Set(bool enabled) {
+bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators) {
     // Only VFD-enable relay writers take this mutex. FreeRTOS priority inheritance applies.
     if(!writer_lock || xSemaphoreTake(writer_lock,portMAX_DELAY)!=pdTRUE) return false;
     portENTER_CRITICAL(&state_lock);
@@ -67,6 +78,7 @@ bool DigitalOutputs_Set(bool enabled) {
     const bool authorized=enabled && SAFETY_IO_COMMISSIONED && !SafetyIO_Inhibited();
     portENTER_CRITICAL(&state_lock);
     state.vfd_requested=authorized;
+    status_indicators=indicators;
     const uint8_t image=compose();
     state.requested_image=image;
     portEXIT_CRITICAL(&state_lock);

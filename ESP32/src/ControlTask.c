@@ -40,6 +40,7 @@
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
 #include "SafetyIO.h"
+#include "PressureSensors.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Local definitions
@@ -82,6 +83,7 @@ typedef struct
     bool v20_initialized;
     bool control_clock_started;
     uint32_t cycles;
+    uint32_t control_cycle_count;
     int64_t window_start_us;
 
     /* Per-cycle values shared by the ordered processing stages. */
@@ -441,6 +443,11 @@ static void Control_CheckSafety(ControlContext *ctx)
                                   .drive_ready = ctx->motor.ready,
                                   .drive_ok = ctx->motor.ok,
                                   .drive_fault = (ctx->motor.status & 0x0008u) != 0,
+                                  .drive_communication_ok = ctx->motor.communication_ok,
+                                  .v20_response_received = ctx->motor.response_received,
+                                  .v20_status_healthy = ctx->motor.status_healthy,
+                                  .v20_modbus_initialized = ctx->motor.initialized,
+                                  .v20_run_commissioned = V20_RUN_COMMISSIONED,
                                   .pi_ok = ctx->status.pi_ok,
                                   .stop = ctx->stop,
                                   .start = ctx->start,
@@ -672,16 +679,44 @@ static void Control_PublishStatus(ControlContext *ctx)
 {
     ctx->status.control_ready = ctx->tasks_ready;
     ctx->status.control_clock_started = ctx->control_clock_started;
+    ctx->status.control_cycle_count = ctx->control_cycle_count;
     ctx->status.modbus_initialized = ctx->v20_initialized;
     ctx->status.state = ctx->machine.state;
     ctx->status.fault = ctx->machine.fault;
     ctx->status.last_fault = ctx->machine.last_fault;
     ctx->status.running = ctx->machine.state == STATE_RUNNING;
-    ctx->status.reset_required =
-        ctx->machine.state == STATE_FAULT || ctx->machine.state == STATE_WAIT;
+    ctx->status.reset_required = ctx->machine.state == STATE_FAULT;
     ctx->status.reason = ctx->machine.fault == FAULT_NONE ? StateMachine_Name(ctx->machine.state)
                                                           : FaultReason_Name(ctx->machine.fault);
     ctx->status.transitions = ctx->machine.transition_count;
+    ReadyDiagnostics *diag = &ctx->status.ready_diag;
+    diag->safety_inputs_valid = ctx->safety.valid;
+    diag->safety_inputs_fresh =
+        ctx->safety.valid &&
+        (TickType_t)(ctx->now_tick - ctx->safety.tick_ms) < pdMS_TO_TICKS(INPUT_TIMEOUT_MS);
+    diag->estop_released = !ctx->safety.estop_pressed;
+    diag->stop_ok = ctx->safety.stop_ok;
+    diag->reset_detected = ctx->safety.reset_sequence != 0;
+    diag->reset_accepted = ctx->machine.reset_accepted;
+    diag->reset_pending = ctx->machine.reset_pending;
+    diag->safety_commissioned = ctx->safety.commissioned;
+    diag->safety_relay_ok = ctx->safety.relay_ok;
+    diag->safety_outputs_healthy = ctx->safety.outputs_ok;
+    diag->modbus_initialized = ctx->motor.initialized;
+    diag->modbus_response_received = ctx->motor.response_received;
+    diag->v20_status_healthy = ctx->motor.status_healthy;
+    diag->v20_status_word = ctx->motor.status;
+    diag->v20_ready = ctx->motor.ready;
+    diag->drive_communication_ok = ctx->motor.communication_ok;
+    diag->v20_run_commissioned = V20_RUN_COMMISSIONED;
+    diag->modbus_errors = ctx->motor.errors;
+    diag->modbus_timeouts = ctx->motor.timeouts;
+    diag->pitot_communication_ok = SensorLib_PitotCommunicationOk();
+    diag->sensor_data_valid = ctx->sample.valid;
+    diag->sensor_data_fresh = ctx->status.sensor_ok;
+    diag->sensor_ok = ctx->status.sensor_ok;
+    diag->pi_ok = ctx->status.pi_ok;
+    diag->blocking_reasons = StateMachine_GetBlockingReasons(&ctx->machine, &ctx->inputs);
     if (!ctx->status.running)
         ctx->status.output = 0.0f;
 
@@ -748,6 +783,8 @@ static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
     ctx->status.max_jitter_us = ctx->timing_stats.max_jitter_us;
     ctx->status.missed_deadlines = ctx->timing_stats.missed_deadlines;
     ctx->cycles++;
+    if (notifications > 0)
+        ctx->control_cycle_count++;
     if (ctx->started_us - ctx->window_start_us >= 1000000)
     {
         ctx->status.control_hz =

@@ -148,9 +148,6 @@ static void process(const char *line)
 void PiCommunicationTask(void *argument)
 {
     (void)argument;
-    ESP_LOGI("PiCommunication", "Fan calibration/NVS initialization begin");
-    FanCalibration_Init();
-    ESP_LOGI("PiCommunication", "Fan calibration/NVS initialization returned");
     Ethernet_Init();
     int server = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     ESP_ERROR_CHECK(server >= 0 ? ESP_OK : ESP_FAIL);
@@ -167,6 +164,9 @@ void PiCommunicationTask(void *argument)
     size_t used = 0;
     bool overflow = false;
     TickType_t sent = xTaskGetTickCount();
+    SystemState_t diagnostic_state = STATE_INIT;
+    uint32_t previous_blockers = UINT32_MAX;
+    TickType_t last_wait_log = 0;
     xEventGroupSetBits(handle_ThreadEventGroup, EVT_PI_TASK_READY);
     for (;;)
     {
@@ -238,7 +238,7 @@ void PiCommunicationTask(void *argument)
                 MotorStatus motor = {0};
                 xQueuePeek(sensors, &sample, 0);
                 xQueuePeek(motor_status, &motor, 0);
-                char buffer[2304];
+                char buffer[3072];
                 int length = snprintf(
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s "
@@ -320,6 +320,37 @@ void PiCommunicationTask(void *argument)
                         outputs.initialized && outputs.confirmed_valid,
                         (unsigned long)outputs.write_errors,outputs.requested_image,
                         outputs.confirmed_image,outputs.confirmed_valid,EXTERNAL_STATUS_LEDS_ENABLED);
+                const ReadyDiagnostics *diag = &t.ready_diag;
+                if (length > 0 && length < (int)sizeof(buffer) - 768)
+                    length += snprintf(
+                        buffer + length, sizeof(buffer) - length,
+                        " diag_blockers=%lu diag_estop_released=%d diag_stop_ok=%d"
+                        " diag_reset_detected=%d diag_reset_accepted=%d diag_reset_pending=%d"
+                        " diag_safety_inputs_valid=%d diag_safety_inputs_fresh=%d"
+                        " diag_safety_commissioned=%d diag_safety_relay_ok=%d"
+                        " diag_safety_outputs_healthy=%d"
+                        " diag_digital_outputs_initialized=%d diag_digital_outputs_healthy=%d"
+                        " diag_modbus_initialized=%d diag_modbus_response_received=%d"
+                        " diag_v20_status_word=%u diag_v20_status_healthy=%d diag_v20_ready=%d"
+                        " diag_drive_communication_ok=%d diag_modbus_errors=%lu"
+                        " diag_modbus_timeouts=%lu diag_v20_run_commissioned=%d"
+                        " diag_pitot_communication_ok=%d diag_sensor_data_valid=%d"
+                        " diag_sensor_data_fresh=%d diag_sensor_ok=%d"
+                        " diag_ethernet_link=%d diag_pi_heartbeat_received=%d"
+                        " diag_pi_heartbeat_fresh=%d diag_pi_ok=%d",
+                        (unsigned long)diag->blocking_reasons, diag->estop_released, diag->stop_ok,
+                        diag->reset_detected, diag->reset_accepted, diag->reset_pending,
+                        diag->safety_inputs_valid, diag->safety_inputs_fresh,
+                        diag->safety_commissioned, diag->safety_relay_ok,
+                        diag->safety_outputs_healthy, outputs.initialized,
+                        outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
+                        diag->modbus_response_received, diag->v20_status_word,
+                        diag->v20_status_healthy, diag->v20_ready,
+                        diag->drive_communication_ok, (unsigned long)diag->modbus_errors,
+                        (unsigned long)diag->modbus_timeouts, diag->v20_run_commissioned,
+                        diag->pitot_communication_ok, diag->sensor_data_valid,
+                        diag->sensor_data_fresh, diag->sensor_ok, ethernet_link,
+                        heartbeat_received, heartbeat_fresh, diag->pi_ok);
                 for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 32;
                      tap++)
                     length += snprintf(buffer + length, sizeof(buffer) - length, " p%d=%.3f", tap,
@@ -330,6 +361,38 @@ void PiCommunicationTask(void *argument)
                     buffer[length] = 0;
                 }
                 reply(buffer);
+                if (t.state == STATE_WAIT &&
+                    (diagnostic_state != STATE_WAIT || previous_blockers != diag->blocking_reasons ||
+                     (TickType_t)(now - last_wait_log) >=
+                         pdMS_TO_TICKS(WAIT_DIAGNOSTICS_INTERVAL_MS)))
+                {
+                    ESP_LOGI(
+                        "WaitDiag",
+                        "WAIT READY blocked=0x%08lx state=%s fault=%s reset_pending=%d"
+                        " reset_accepted=%d estop_released=%d stop_ok=%d safety_valid=%d"
+                        " safety_fresh=%d safety_commissioned=%d relay_ok=%d safety_outputs_ok=%d"
+                        " digital_outputs_initialized=%d digital_outputs_healthy=%d"
+                        " modbus_initialized=%d modbus_response=%d v20_status=0x%04x"
+                        " v20_status_healthy=%d v20_ready=%d drive_comm_ok=%d"
+                        " v20_run_commissioned=%d modbus_errors=%lu modbus_timeouts=%lu"
+                        " pitot_comm=%d sensor_valid=%d sensor_fresh=%d sensor_ok=%d"
+                        " ethernet=%d pi_heartbeat_received=%d pi_heartbeat_fresh=%d pi_ok=%d",
+                        (unsigned long)diag->blocking_reasons, StateMachine_Name(t.state),
+                        FaultReason_Name(t.last_fault), diag->reset_pending, diag->reset_accepted,
+                        diag->estop_released, diag->stop_ok, diag->safety_inputs_valid,
+                        diag->safety_inputs_fresh, diag->safety_commissioned,
+                        diag->safety_relay_ok, diag->safety_outputs_healthy, outputs.initialized,
+                        outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
+                        diag->modbus_response_received, diag->v20_status_word,
+                        diag->v20_status_healthy, diag->v20_ready, diag->drive_communication_ok,
+                        diag->v20_run_commissioned, (unsigned long)diag->modbus_errors,
+                        (unsigned long)diag->modbus_timeouts, diag->pitot_communication_ok,
+                        diag->sensor_data_valid, diag->sensor_data_fresh, diag->sensor_ok,
+                        ethernet_link, heartbeat_received, heartbeat_fresh, diag->pi_ok);
+                    last_wait_log = now;
+                }
+                diagnostic_state = t.state;
+                previous_blockers = diag->blocking_reasons;
             }
             sent = now;
         }

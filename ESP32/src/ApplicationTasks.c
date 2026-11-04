@@ -9,6 +9,7 @@
 
 #include "ApplicationTasks.h"
 #include "AppConfig.h"
+#include "FanCalibration.h"
 #include "OtaUpdate.h"
 void HeartbeatTask(void *argument);
 #include "SafetyIO.h"
@@ -115,7 +116,7 @@ static void CreateTasks(void)
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     ESP_LOGI("Startup", "Created ControlTask");
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 6144, NULL, 2,
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 8192, NULL, 2,
                                             &pi_task_handle, 0) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
@@ -147,6 +148,7 @@ static void CreateTasks(void)
 void StartApplicationTasks(void)
 {
     InitHardware();
+    (void)FanCalibration_Init();
     ESP_LOGI("Startup", "Hardware initialization returned; creating queues");
     CreateQueues();
     ESP_LOGI("Startup", "Queues created; creating event groups");

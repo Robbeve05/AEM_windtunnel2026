@@ -496,6 +496,11 @@ void V20Modbus_GetStatus(MotorStatus *status)
         .ready = false,
 #endif
         .ok = healthy,
+        .initialized = d.uart_ok,
+        .response_received = d.status_valid && recent,
+        .status_healthy = d.drive_ready,
+        .communication_ok = d.uart_ok && d.configured && recent &&
+                            !d.latched_fault && !d.recheck_pending,
         .actual_hz = d.actual_hz,
         .status = d.status_word,
         .errors = d.errors,

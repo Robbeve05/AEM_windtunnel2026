@@ -3,7 +3,7 @@ import math
 import re
 import sys
 import time
-from backend.esp32 import status_indication
+from backend.esp32 import status_indication, wait_diagnostics
 from backend.models import Config
 from datetime import datetime
 from pathlib import Path
@@ -464,6 +464,21 @@ class HMIWindow(QMainWindow):
         self.tunnel_state_detail.setObjectName("safetyNote")
         self.tunnel_state_detail.setWordWrap(True)
         self.tunnel_state_detail.setMinimumHeight(35)
+        self.waiting_for_heading = QLabel("Waiting for:")
+        self.waiting_for_heading.setObjectName("smallLabel")
+        self.waiting_for_text = QLabel("Detailed WAIT diagnostics unavailable.")
+        self.waiting_for_text.setObjectName("safetyNote")
+        self.waiting_for_text.setWordWrap(True)
+        self.waiting_for_heading.setVisible(False)
+        self.waiting_for_text.setVisible(False)
+        self.diagnostics_toggle = QCheckBox("System Diagnostics")
+        self.diagnostics_toggle.setChecked(False)
+        self.diagnostics_text = QPlainTextEdit()
+        self.diagnostics_text.setReadOnly(True)
+        self.diagnostics_text.setMaximumHeight(190)
+        self.diagnostics_text.setPlaceholderText("Awaiting ESP32 readiness diagnostics.")
+        self.diagnostics_text.setVisible(False)
+        self.diagnostics_toggle.toggled.connect(self.diagnostics_text.setVisible)
         # A simple text editor is more reliable than QDoubleSpinBox in the
         # styled dark Windows sidebar; units are in the label above.
         self.setpoint_spin = OperatorNumericInput(40.0, "m/s")
@@ -495,6 +510,10 @@ class HMIWindow(QMainWindow):
         self.timing_status_text.setObjectName("hint")
         self.timing_status_text.setWordWrap(True)
         control_layout.addWidget(self.tunnel_state_detail)
+        control_layout.addWidget(self.waiting_for_heading)
+        control_layout.addWidget(self.waiting_for_text)
+        control_layout.addWidget(self.diagnostics_toggle)
+        control_layout.addWidget(self.diagnostics_text)
         mode_label = QLabel("CONTROL MODE")
         mode_label.setObjectName("smallLabel")
         control_layout.addWidget(mode_label)
@@ -1717,6 +1736,15 @@ class HMIWindow(QMainWindow):
         machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
         machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
         estop_pressed = drive.get("estop_pressed") == 1
+        waiting_for, diagnostic_details = wait_diagnostics(drive)
+        waiting = not stale and not is_sim and machine_state == "WAIT"
+        self.waiting_for_heading.setVisible(waiting)
+        self.waiting_for_text.setVisible(waiting)
+        self.waiting_for_text.setText(
+            "\n".join(f"- {reason}" for reason in waiting_for)
+            if waiting_for else "No blocking conditions reported."
+        )
+        self.diagnostics_text.setPlainText("\n".join(diagnostic_details))
         self._update_signal_from_status(drive, is_sim, stale,
                                         machine_state, machine_fault, estop_pressed)
         if stale:

@@ -6,6 +6,7 @@
  */
 #include "StateMachine.h"
 #include "AppConfig.h"
+#include <stddef.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // State and fault names
@@ -56,6 +57,58 @@ static void transition(StateMachine *m, SystemState_t s, uint32_t now)
 void StateMachine_Init(StateMachine *m, uint32_t now)
 {
     *m = (StateMachine){.state = STATE_INIT, .entered_ms = now, .boot_ms = now};
+}
+
+uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInputs *i)
+{
+    if (m == NULL || i == NULL || m->state != STATE_WAIT)
+        return 0;
+
+    uint32_t reasons = 0;
+    const bool safety_fresh =
+        i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
+    if (i->safety.estop_pressed)
+        reasons |= WAIT_BLOCK_ESTOP_PRESSED;
+    if (!i->safety.stop_ok)
+        reasons |= WAIT_BLOCK_STOP_INPUT;
+    if (!i->safety.valid)
+        reasons |= WAIT_BLOCK_SAFETY_INPUT_INVALID;
+    else if (!safety_fresh)
+        reasons |= WAIT_BLOCK_SAFETY_INPUT_STALE;
+    if (!i->safety.commissioned)
+        reasons |= WAIT_BLOCK_SAFETY_NOT_COMMISSIONED;
+    if (!i->safety.relay_ok)
+        reasons |= WAIT_BLOCK_SAFETY_RELAY;
+    if (!i->safety.outputs_ok)
+        reasons |= WAIT_BLOCK_SAFETY_OUTPUTS;
+    if (i->safety.vfd_fault_available && i->safety.vfd_fault)
+        reasons |= WAIT_BLOCK_VFD_FAULT;
+    if (i->safety.contactor_available && !i->safety.contactor_ok)
+        reasons |= WAIT_BLOCK_CONTACTOR;
+    if (!i->sensor_ok)
+        reasons |= WAIT_BLOCK_SENSOR;
+    if (!i->v20_modbus_initialized)
+        reasons |= WAIT_BLOCK_MODBUS_NOT_INITIALIZED;
+    if (!i->v20_response_received)
+        reasons |= WAIT_BLOCK_MODBUS_NO_RESPONSE;
+    if (i->v20_response_received && !i->v20_status_healthy)
+        reasons |= WAIT_BLOCK_V20_STATUS;
+    if (!i->drive_ok && i->v20_response_received && i->v20_status_healthy)
+        reasons |= WAIT_BLOCK_DRIVE_COMMUNICATION;
+    if (!i->drive_ready && i->v20_status_healthy &&
+        (SIMULATION_MODE || i->v20_run_commissioned))
+        reasons |= WAIT_BLOCK_V20_NOT_READY;
+#if !SIMULATION_MODE
+    if (!i->v20_run_commissioned && i->v20_status_healthy)
+        reasons |= WAIT_BLOCK_V20_RUN_LOCK;
+#endif
+    if (!i->pi_ok)
+        reasons |= WAIT_BLOCK_PI;
+    if (!m->reset_accepted && !m->reset_pending)
+        reasons |= WAIT_BLOCK_RESET_SEQUENCE;
+    if (m->reset_pending)
+        reasons |= WAIT_BLOCK_RESET_FEEDBACK_PENDING;
+    return reasons;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -150,6 +203,16 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     if (m->reset_pending && (int32_t)(i->now_ms - m->reset_until_ms) > 0)
         m->reset_pending = false;
+    if (m->state == STATE_FAULT && m->fault == FAULT_EMERGENCY_STOP && m->reset_pending &&
+        fresh && i->safety.outputs_ok && i->safety.relay_ok && i->safety.stop_ok &&
+        !i->safety.estop_pressed && !i->safety.reset_pressed &&
+        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE)
+    {
+        m->fault = FAULT_NONE;
+        m->reset_pending = false;
+        m->reset_accepted = false;
+        transition(m, STATE_WAIT, i->now_ms);
+    }
     switch (m->state)
     {
     case STATE_INIT:

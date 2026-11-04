@@ -1,7 +1,7 @@
 """ESP32 TCP integration tests. Author: R.E. van Eekelen."""
 import asyncio
 import unittest
-from backend.esp32 import ESP32Client, parse_status, status_indication
+from backend.esp32 import ESP32Client, parse_status, status_indication, wait_diagnostics
 from backend.models import ManualFrequency
 from pydantic import ValidationError
 
@@ -48,6 +48,29 @@ class ParserTests(unittest.TestCase):
                     FRAME + " state=READY", FRAME.replace("mode=MANUAL", "mode=BAD"),
                     FRAME.replace("manual_hz=50", "manual_hz=nan")):
             self.assertIsNone(parse_status(bad))
+
+    def test_wait_diagnostics_protocol_and_multiple_blockers(self):
+        frame = parse_status(
+            FRAME.replace("state=FAULT", "state=WAIT")
+            + " last_fault=NONE diag_blockers=163840 diag_v20_status_word=513"
+            " diag_modbus_errors=2 diag_modbus_timeouts=1 diag_v20_ready=0"
+            " diag_drive_communication_ok=1 diag_v20_run_commissioned=0"
+        )
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame["diag_v20_status_word"], 513)
+        waiting, details = wait_diagnostics(frame)
+        self.assertIn("V20 RUN commissioning lock active", waiting)
+        self.assertIn("Physical RESET sequence not accepted", waiting)
+        self.assertIn("V20 status word: 0x0201", details)
+        self.assertIn("V20 ready (software gate applied): FAIL", details)
+        self.assertIn("Drive communication healthy: OK", details)
+
+    def test_legacy_frame_remains_supported(self):
+        frame = parse_status(FRAME)
+        self.assertIsNotNone(frame)
+        waiting, details = wait_diagnostics(frame)
+        self.assertEqual(waiting, [])
+        self.assertIn("V20 status word: unavailable", details)
 
 
 class TCPTests(unittest.IsolatedAsyncioTestCase):

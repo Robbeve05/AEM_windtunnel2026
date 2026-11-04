@@ -13,9 +13,9 @@
 // DIGITAL OUTPUTS - zero-based expander bits, NOT ESP32 GPIOs
 // DO1 drives relay 11K3; its contact supplies the VFD In1 Enable signal.
 #define VFD_ENABLE_DO_BIT 0
-// DO2/DO3 schematic indicator colors remain unidentified. DO4 is yellow.
-#define INDICATOR_10SH5_DO_BIT 1
-#define INDICATOR_10SH6_DO_BIT 2
+// Installed lamp test: DO2 is green and DO3 is red; DO4 is yellow.
+#define GREEN_INDICATOR_DO_BIT 1
+#define RED_INDICATOR_DO_BIT 2
 #define YELLOW_INDICATOR_DO_BIT 3
 #define SPARE_DO5_BIT 4
 #define SPARE_DO6_BIT 5

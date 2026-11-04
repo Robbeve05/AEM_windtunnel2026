@@ -390,10 +390,16 @@
 // Operational VFD-enable relay output polarity; physical DO bit is in MachinePins.h.
 // Software GPIO control is not a certified emergency-stop function.
 
+#ifndef BOARD_DO_ACTIVE_LEVEL
+// [Logic level, hardware-specific] The board's DO indicators and stack lights were
+// observed on with an expander image of 0x00; keep its outputs inactive at logic high.
+#define BOARD_DO_ACTIVE_LEVEL 0
+#endif
+
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
-// [Logic level, safety-critical] 1 requests the DO1/11K3 VFD-enable relay; 0 inverts it.
-// Physically verify; inhibited until commissioning.
-#define VFD_ENABLE_ACTIVE_LEVEL 1
+// [Logic level, safety-critical] Expander level that activates the DO1/11K3 relay.
+// Defaults to the board output polarity; inhibited until commissioning.
+#define VFD_ENABLE_ACTIVE_LEVEL BOARD_DO_ACTIVE_LEVEL
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -430,6 +436,9 @@
 
 // [ms, safety-critical] Maximum input snapshot age; increasing delays stale-input fault detection.
 #define INPUT_TIMEOUT_MS 100u
+
+// [ms, adjustable] WAIT diagnostics are emitted on entry/change and at this interval.
+#define WAIT_DIAGNOSTICS_INTERVAL_MS 2000u
 
 // [ms, adjustable] Required stable button time; increasing rejects longer glitches but delays
 // button response.

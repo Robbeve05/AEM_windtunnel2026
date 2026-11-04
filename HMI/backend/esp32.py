@@ -16,7 +16,93 @@ INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outp
         "ethernet", "ethernet_link", "ipv4_configured", "pi_tcp_connected",
         "pi_heartbeat_received", "pi_heartbeat_fresh",
         "sample_seq", "sensor_errors", "modbus_errors", "modbus_timeouts", "control_period_us",
-        "execution_us", "missed_deadlines", "overruns"}
+        "execution_us", "missed_deadlines", "overruns", "diag_blockers",
+        "diag_estop_released", "diag_stop_ok", "diag_reset_detected", "diag_reset_accepted",
+        "diag_reset_pending", "diag_safety_inputs_valid", "diag_safety_inputs_fresh",
+        "diag_safety_commissioned", "diag_safety_relay_ok", "diag_safety_outputs_healthy",
+        "diag_digital_outputs_initialized", "diag_digital_outputs_healthy",
+        "diag_modbus_initialized", "diag_modbus_response_received", "diag_v20_status_word",
+        "diag_v20_status_healthy", "diag_v20_ready", "diag_drive_communication_ok",
+        "diag_modbus_errors", "diag_modbus_timeouts", "diag_v20_run_commissioned",
+        "diag_pitot_communication_ok", "diag_sensor_data_valid", "diag_sensor_data_fresh",
+        "diag_sensor_ok", "diag_ethernet_link", "diag_pi_heartbeat_received",
+        "diag_pi_heartbeat_fresh", "diag_pi_ok"}
+
+WAIT_BLOCKERS = (
+    (1 << 0, "E-stop pressed"),
+    (1 << 1, "Stop input unhealthy"),
+    (1 << 2, "Safety input data invalid"),
+    (1 << 3, "Safety input data stale"),
+    (1 << 4, "Safety I/O not commissioned"),
+    (1 << 5, "Safety relay feedback unhealthy"),
+    (1 << 6, "Safety outputs unhealthy"),
+    (1 << 7, "VFD fault input active"),
+    (1 << 8, "Contactor feedback unhealthy"),
+    (1 << 9, "Pitot sensor data invalid or stale"),
+    (1 << 10, "Modbus not initialized"),
+    (1 << 11, "No recent V20 status response"),
+    (1 << 12, "V20 status word not healthy"),
+    (1 << 13, "V20 communication/drive status unhealthy"),
+    (1 << 14, "V20 ready signal unavailable"),
+    (1 << 15, "V20 RUN commissioning lock active"),
+    (1 << 16, "Raspberry Pi heartbeat not healthy"),
+    (1 << 17, "Physical RESET sequence not accepted"),
+    (1 << 18, "Reset feedback check pending"),
+)
+
+DIAGNOSTIC_SIGNALS = (
+    ("diag_estop_released", "E-stop released"),
+    ("diag_stop_ok", "Stop input healthy"),
+    ("diag_reset_detected", "Reset button sequence detected"),
+    ("diag_reset_accepted", "Reset sequence accepted"),
+    ("diag_reset_pending", "Reset feedback pending"),
+    ("diag_safety_inputs_valid", "Safety input data valid"),
+    ("diag_safety_inputs_fresh", "Safety input data fresh"),
+    ("diag_safety_commissioned", "Safety I/O commissioned"),
+    ("diag_safety_relay_ok", "Safety relay feedback"),
+    ("diag_safety_outputs_healthy", "Safety outputs healthy"),
+    ("diag_digital_outputs_initialized", "Digital outputs initialized"),
+    ("diag_digital_outputs_healthy", "Digital outputs healthy"),
+    ("diag_modbus_initialized", "Modbus initialized"),
+    ("diag_modbus_response_received", "Recent V20 response received"),
+    ("diag_v20_status_healthy", "V20 status word healthy"),
+    ("diag_v20_ready", "V20 ready (software gate applied)"),
+    ("diag_drive_communication_ok", "Drive communication healthy"),
+    ("diag_v20_run_commissioned", "V20 RUN commissioned"),
+    ("diag_pitot_communication_ok", "Pitot communication healthy"),
+    ("diag_sensor_data_valid", "Sensor data valid"),
+    ("diag_sensor_data_fresh", "Sensor data fresh"),
+    ("diag_sensor_ok", "Overall sensor_ok"),
+    ("diag_ethernet_link", "Ethernet link"),
+    ("diag_pi_heartbeat_received", "Pi heartbeat received"),
+    ("diag_pi_heartbeat_fresh", "Pi heartbeat fresh"),
+    ("diag_pi_ok", "Overall pi_ok"),
+)
+
+
+def wait_diagnostics(drive):
+    """Return blockers and a readable signal list from the ESP32's diagnostic frame."""
+    waiting_for = []
+    details = [
+        f"State: {drive.get('state', 'UNKNOWN')} · last fault: {drive.get('last_fault', 'UNKNOWN')}",
+        f"V20 status word: 0x{drive['diag_v20_status_word']:04X}"
+        if isinstance(drive.get("diag_v20_status_word"), int)
+        else "V20 status word: unavailable",
+        f"Modbus errors/timeouts: {drive.get('diag_modbus_errors', 'unavailable')}/"
+        f"{drive.get('diag_modbus_timeouts', 'unavailable')}",
+    ]
+    for key, label in DIAGNOSTIC_SIGNALS:
+        value = drive.get(key)
+        details.append(f"{label}: {'OK' if value == 1 else 'FAIL' if value == 0 else 'unavailable'}")
+    blockers = drive.get("diag_blockers")
+    if isinstance(blockers, int):
+        waiting_for.extend(label for bit, label in WAIT_BLOCKERS if blockers & bit)
+        unknown = blockers & ~sum(bit for bit, _ in WAIT_BLOCKERS)
+        if unknown:
+            waiting_for.append(f"Unknown blocker flags: 0x{unknown:08X}")
+    elif drive.get("state") == "WAIT":
+        waiting_for.append("Detailed WAIT diagnostics unavailable (update ESP32 firmware)")
+    return waiting_for, details
 
 def parse_status(line):
     if not line.startswith("STATUS ") or len(line) > 4096:

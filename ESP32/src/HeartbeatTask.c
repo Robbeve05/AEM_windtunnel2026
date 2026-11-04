@@ -21,13 +21,27 @@ void HeartbeatTask(void *argument) {
                   esp_err_to_name(rgb_error));
     const rmt_transmit_config_t tx={.loop_count=0};
     TickType_t wake=xTaskGetTickCount();
+    uint32_t observed_control_cycles=0, last_control_progress_ms=0;
+    bool have_control_progress=false;
     for(;;){
         Telemetry state={0}; bool ok=xQueuePeek(telemetry,&state,0)==pdTRUE;
-        const StatusIndicator indication=StatusOutput_Get(&state,ok,
-            (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS));
+        const uint32_t now_ms=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
+        const StatusIndicator indication=StatusOutput_Get(&state,ok,now_ms);
+        if(ok && state.control_cycle_count!=observed_control_cycles) {
+            observed_control_cycles=state.control_cycle_count;
+            last_control_progress_ms=now_ms;
+            have_control_progress=true;
+        }
+        const bool control_clock_active=ok && state.control_ready &&
+            state.control_clock_started && have_control_progress &&
+            (uint32_t)(now_ms-last_control_progress_ms) <
+                CONTROL_CLOCK_TIMEOUT_MS+STATUS_LED_UPDATE_PERIOD_MS;
+        const bool control_clock_pulse=control_clock_active &&
+            (now_ms%STATUS_LED_BLINK_PERIOD_MS)<2*STATUS_LED_UPDATE_PERIOD_MS;
         // Additive RGB rendering: INIT has both amber and red requests.
         uint8_t grb[3]={indication.green||indication.amber ? 12:0,
-                        indication.red ? 25:indication.amber ? 12:0,0};
+                        indication.red ? 25:indication.amber ? 12:0,
+                        control_clock_pulse ? 18:0};
         if(rgb_ready) {
             (void)rmt_transmit(channel,encoder,grb,sizeof(grb),&tx);
             (void)rmt_tx_wait_all_done(channel,STATUS_RGB_TX_TIMEOUT_MS);

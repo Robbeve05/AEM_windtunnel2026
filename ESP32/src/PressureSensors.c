@@ -15,6 +15,7 @@
 static portMUX_TYPE config_lock = portMUX_INITIALIZER_UNLOCKED;
 static float filter_hz = PITOT_FILTER_HZ;
 static uint32_t error_count, sequence_count;
+static bool pitot_communication_ok;
 static float zero_pressure, filtered_pressure, pressure_pa, temperature_c;
 static double zero_sum;
 static uint32_t zero_samples, samples_in_window;
@@ -47,6 +48,7 @@ bool SensorLib_Init(void)
     zero_pressure = filtered_pressure = pressure_pa = temperature_c = 0.0f;
     previous_us = 0;
     sample_valid = false;
+    pitot_communication_ok = false;
 #if SIMULATION_MODE
     sim_velocity = 0.0f;
 #endif
@@ -95,9 +97,15 @@ bool SensorLib_PitotStep(Sample *out)
      * average. A prolonged absence makes the last queued sample stale and
      * ControlTask faults through SENSOR_TIMEOUT_MS. */
     if (!valid_read) {
+        portENTER_CRITICAL(&config_lock);
+        pitot_communication_ok = false;
+        portEXIT_CRITICAL(&config_lock);
         error_count++;
         return false;
     }
+    portENTER_CRITICAL(&config_lock);
+    pitot_communication_ok = true;
+    portEXIT_CRITICAL(&config_lock);
     window_pressure += p;
     window_temperature += temp;
     samples_in_window++;
@@ -125,6 +133,7 @@ bool SensorLib_PitotStep(Sample *out)
                 const float coefficient = 1.0f - expf(-6.283185307f * SensorLib_FilterHz() * dt);
                 filtered_pressure += coefficient * (p - filtered_pressure);
             }
+
             previous_us = now_us;
             pressure_pa = fabsf(filtered_pressure) < PITOT_DEADBAND_PA ? 0.0f : filtered_pressure;
             sample_valid = true;
@@ -147,6 +156,14 @@ bool SensorLib_PitotStep(Sample *out)
     out->tick = xTaskGetTickCount();
     out->valid = sample_valid && isfinite(out->value);
     return true;
+}
+
+bool SensorLib_PitotCommunicationOk(void)
+{
+    portENTER_CRITICAL(&config_lock);
+    const bool ok = pitot_communication_ok;
+    portEXIT_CRITICAL(&config_lock);
+    return ok;
 }
 
 /* Author: R.E. van Eekelen.

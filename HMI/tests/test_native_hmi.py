@@ -87,6 +87,29 @@ class NativeHMITests(unittest.TestCase):
             self.assertTrue(panel.cancel_button.isEnabled())
             window.close()
 
+    def test_wait_blockers_and_expandable_diagnostics(self):
+        with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window._on_status({
+                "simulation": False,
+                "esp32": {
+                    "state": "WAIT", "fault": "NONE", "last_fault": "NONE",
+                    "stale": False, "connected": True, "mode": "AUTO", "sp": 0.0,
+                    "reset_required": 0, "estop_pressed": 0, "diag_blockers": 163840,
+                    "diag_v20_status_word": 513, "diag_modbus_errors": 2,
+                    "diag_modbus_timeouts": 1, "diag_v20_run_commissioned": 0,
+                    "diag_drive_communication_ok": 1, "diag_v20_ready": 0,
+                },
+            }, None)
+            self.assertIn("V20 RUN commissioning lock active", window.waiting_for_text.text())
+            self.assertIn("Physical RESET sequence not accepted", window.waiting_for_text.text())
+            self.assertIn("V20 status word: 0x0201", window.diagnostics_text.toPlainText())
+            self.assertTrue(window.waiting_for_text.isVisibleTo(window))
+            self.assertTrue(window.diagnostics_text.isHidden())
+            window.diagnostics_toggle.setChecked(True)
+            self.assertFalse(window.diagnostics_text.isHidden())
+            window.close()
+
 
     def test_overview_visible_after_navigation_without_esp32(self):
         with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):

@@ -12,6 +12,7 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 $cases = @(
     @{ Name = "fan_calibration"; Sources = @("tests\test_fan_calibration.c"); Flags = "" },
     @{ Name = 'indicators'; Sources = @('tests\test_indicators.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
+    @{ Name = 'wait_diagnostics'; Sources = @('tests\test_wait_diagnostics.c', 'src\StateMachine.c'); Flags = '' },
     @{ Name = 'outputs_default'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS' },
     @{ Name = 'outputs_disabled'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1' },
     @{ Name = 'outputs_enabled'; Sources = @('tests\test_outputs.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=1 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1 /DEXTERNAL_STATUS_LEDS_ENABLED=1' },
@@ -25,8 +26,8 @@ $cases = @(
     @{ Name = 'curve'; Sources = @('tests\test_curve.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'v20'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },
     @{ Name = 'v20_inhibited'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=0' },
-    @{ Name = 'startup'; Sources = @('tests\test_startup.c'); Flags = '/DSIMULATION_MODE=1' },
-    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\RegelaarDesign.c', 'src\TorqueLoadControl.c', 'src\MotorModel.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' }
+    @{ Name = 'startup'; Sources = @('tests\test_startup.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1' },
+    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\RegelaarDesign.c', 'src\TorqueLoadControl.c', 'src\MotorModel.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' }
 )
 $lines = @('@echo off', ('call "' + $vcvars + '" >nul'), 'if errorlevel 1 exit /b 1',
            ('pushd "' + $output + '"'), 'if errorlevel 1 exit /b 1')

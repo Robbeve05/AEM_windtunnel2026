@@ -77,9 +77,10 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t period)
     *wake += period;
     fake_us = (int64_t)*wake * 1000;
 }
-bool DigitalOutputs_Set(bool enabled)
+bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators)
 {
     (void)enabled;
+    (void)indicators;
     return true;
 }
 EventBits_t xEventGroupSetBits(EventGroupHandle_t g, EventBits_t bits)
@@ -178,6 +179,10 @@ bool V20Modbus_StopConfirmed(int64_t t, float hz)
 void V20Modbus_GetStatus(MotorStatus *m)
 {
     *m = drive;
+}
+bool SensorLib_PitotCommunicationOk(void)
+{
+    return true;
 }
 void V20Modbus_Service(const MotorRequest *r, bool ok)
 {
@@ -312,6 +317,25 @@ int main(void)
     assert(c.machine.state == STATE_FAULT && c.machine.fault == FAULT_EMERGENCY_STOP);
     assert(SafetyIO_Simulate("ESTOP", false));
     SafetyIO_Acknowledge();
+    healthy_context(&c);
+    c.machine.state = STATE_FAULT;
+    c.machine.fault = FAULT_EMERGENCY_STOP;
+    Control_PublishStatus(&c);
+    assert(c.status.reset_required);
+    c.safety.commissioned = false;
+    c.status.sensor_ok = false;
+    c.motor.ready = c.motor.ok = false;
+    c.safety.reset_sequence = 1;
+    Control_ProcessCommands(&c, EVT_RESET_BUTTON);
+    Control_CheckSafety(&c);
+    Control_UpdateStateMachine(&c);
+    Control_ProcessCommands(&c, 0);
+    Control_CheckSafety(&c);
+    Control_UpdateStateMachine(&c);
+    assert(c.machine.state == STATE_WAIT && c.machine.fault == FAULT_NONE &&
+           !c.machine.permissive && arms == 1);
+    Control_PublishStatus(&c);
+    assert(!c.status.reset_required);
     puts("PASS physical RESET recovery without arm; unsafe emergency latch cannot clear");
 
     healthy_context(&c);

@@ -6,6 +6,8 @@ The only operator interface is the native Qt application (`desktop.py`). The loc
 
 Six pages: Overview, Raw Data, Cp Analysis, Measurements, Storage, Settings. Settings has two tabs: General and Calibration. Calibration uses the existing ESP32 MANUAL mode, physical START/STOP and the FastAPI calibration endpoints. It supports configuration of 10–50 Hz, 5 Hz steps and 5-second averaging, live stability/status, plot, history, CSV/JSON export, Save & Activate and Reset Fan Calibration. Calibration lookup/CRC/NVS and torque-PID execution remain in ESP32 firmware.
 
+On the Overview page, ESP32 `WAIT` telemetry lists only the reported conditions blocking `WAIT` → `READY`. Expand **System Diagnostics** to see all reported safety, reset, V20/Modbus, sensor and Pi signals, the V20 status word, and Modbus error/timeout counters. This display is read-only and requires firmware that sends the optional `diag_*` STATUS fields; older firmware remains compatible and reports diagnostics as unavailable.
+
 ## Local development
 
 On **Windows**, install `requirements-desktop.txt`, then use **`python start_windows.py`** instead of starting `desktop.py` alone. The launcher starts the matching local FastAPI backend if port 8000 is free, opens the native Qt HMI, and stops only the backend process it started when the HMI exits. If an incompatible/old server is already on port 8000 it refuses to launch rather than quietly showing a misleading `HMI ONLINE`.

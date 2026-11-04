@@ -186,8 +186,8 @@ static void LogApplicationStatus(void)
     DigitalOutputs_GetStatus(&outputs);
     const StatusIndicator indicator = StatusOutput_Get(&state, state_available,
         (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-    ESP_LOGI("Diag", "DO map: DO1/bit0=11K3_VFD_ENABLE DO2/bit1=10SH5_indicator "
-                     "DO3/bit2=10SH6_indicator DO4/bit3=yellow_indicator; DO2/DO3 colors unknown");
+    ESP_LOGI("Diag", "DO map: DO1/bit0=11K3_VFD_ENABLE DO2/bit1=green DO3/bit2=red "
+                     "DO4/bit3=yellow (verify DO2/DO3 lamp colors)");
     ESP_LOGI("Diag", "DO requested=0x%02x acknowledged=0x%02x ack_valid=%d initialized=%d "
                      "11K3_requested=%d write_errors=%lu (I2C ack is not contact feedback)",
              (unsigned)outputs.requested_image, (unsigned)outputs.confirmed_image,

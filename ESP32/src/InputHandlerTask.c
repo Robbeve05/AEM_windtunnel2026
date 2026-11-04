@@ -9,6 +9,7 @@
 #include "TaskData.h"
 #include "SafetyIO.h"
 #include "I2CBus.h"
+#include "StatusOutput.h"
 #include "esp_task_wdt.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -115,7 +116,10 @@ void InputHandlerTask(void *argument)
         xQueuePeek(motor_requests, &request, 0);
         bool fresh = xTaskGetTickCount() - request.tick < pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS);
         bool enable = fresh && request.permissive && !SafetyIO_Inhibited();
-        s.outputs_ok = DigitalOutputs_Set(enable);
+        Telemetry current = {0};
+        bool telemetry_available = xQueuePeek(telemetry, &current, 0) == pdTRUE;
+        StatusIndicator indicators = StatusOutput_Get(&current, telemetry_available, s.tick_ms);
+        s.outputs_ok = DigitalOutputs_Set(enable, indicators);
         xQueueOverwrite(safety_status, &s);
         SafetyIO_PublishButtonEvents(&s, &previous);
         previous = s;

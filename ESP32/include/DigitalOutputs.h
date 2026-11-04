@@ -2,11 +2,12 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "StatusIndicators.h"
 // Called once, before tasks, after the shared I2C bus is ready.
 bool DigitalOutputs_Init(void);
-// InputHandlerTask owns the VFD-enable relay authorization and flushing. Success means the latest
-// complete image was acknowledged by I2C, never proof of physical contact state.
-bool DigitalOutputs_Set(bool enabled);
+// InputHandlerTask owns output updates. Success acknowledges the image over I2C, not physical
+// lamp or relay state.
+bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators);
 typedef struct {
     bool initialized, vfd_requested, confirmed_valid;
     uint8_t requested_image, confirmed_image;

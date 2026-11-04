@@ -16,6 +16,7 @@ static EventBits_t groups[4];
 static unsigned queue_count, group_count, task_count, watchdog_calls;
 static unsigned hardware_stage;
 static bool output_ok = true, sensor_init_ok = true;
+static bool calibration_initialized;
 static jmp_buf task_finished;
 
 void SafetyIO_Init(void) { assert(hardware_stage == 0); hardware_stage = 1; }
@@ -37,9 +38,10 @@ BaseType_t xTaskCreatePinnedToCore(void (*task)(void*),const char *name,unsigned
                                  void *argument,unsigned priority,TaskHandle_t *handle,int core)
 {
     assert(queue_count == 7 && group_count == 4 && task_count < 7 && argument == NULL);
+    assert(calibration_initialized);
     assert(commands && sensors && motor_requests && motor_status && telemetry && safety_status && pi_heartbeat);
     assert(events && handle_ButtonEventGroup && handle_ThreadEventGroup && handle_SystemEventGroup);
-    const unsigned stacks[] = {3072,4096,6144,6144,3072,8192,3072}, priorities[] = {5,3,4,2,1,1,1};
+    const unsigned stacks[] = {3072,4096,6144,8192,3072,8192,3072}, priorities[] = {5,3,4,2,1,1,1};
     const int cores[] = {0,0,1,0,0,0,0};
     void (*tasks[])(void*) = {InputHandlerTask,SensorTask,ControlTask,PiCommunicationTask,HeartbeatTask,OtaUpdateTask,OtaMarkValidTask};
     const char *names[] = {"InputHandler","SensorTask","ControlTask","PiCommunication","Heartbeat","OTA","OTAValid"};
@@ -83,7 +85,7 @@ int xQueueOverwrite(QueueHandle_t q,const void *data)
 EventBits_t xEventGroupSetBits(EventGroupHandle_t group,EventBits_t bits) { return *group |= bits; }
 SafetySnapshot SafetyIO_Read(void) { return (SafetySnapshot){.tick_ms=100}; }
 bool SafetyIO_Inhibited(void) { return true; }
-bool DigitalOutputs_Set(bool enabled) { assert(!enabled); return output_ok; }
+bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators) { assert(!enabled); (void)indicators; return output_ok; }
 void SafetyIO_PublishButtonEvents(const SafetySnapshot *current,const SafetySnapshot *previous)
 {
     (void)previous;
@@ -92,6 +94,12 @@ void SafetyIO_PublishButtonEvents(const SafetySnapshot *current,const SafetySnap
     assert(published.tick_ms == current->tick_ms);
 }
 bool SensorLib_Init(void) { return sensor_init_ok; }
+bool FanCalibration_Init(void)
+{
+    assert(hardware_stage == 2 && task_count == 0);
+    calibration_initialized = true;
+    return false;
+}
 bool SensorLib_PitotStep(Sample *s) { *s=(Sample){.valid=false}; return true; }
 bool SensorLib_TapsStep(Sample *s) { (void)s; return false; }
 
