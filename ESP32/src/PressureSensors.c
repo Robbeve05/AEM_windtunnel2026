@@ -1,6 +1,6 @@
 /* Author: R.E. van Eekelen.
  * Pitot ASPD-4525 and taps are owned only by SensorTask (Core 0).
- * One bounded I2C transaction every 5 ms, 10-point batch average.
+ * One bounded I2C transaction every 10 ms, 5-point batch average.
  * Pressure tap acquisition is separately owned by SensorTask (Core 0).
  * Hardware I2C latency is NOT hard real-time: verify overruns on target.
  */
@@ -93,7 +93,7 @@ bool SensorLib_PitotStep(Sample *out)
         }
     }
 #endif
-    /* A single missed I2C slot must not restart the ten-valid-reading
+    /* A single missed I2C slot must not restart the averaging window
      * average. A prolonged absence makes the last queued sample stale and
      * ControlTask faults through SENSOR_TIMEOUT_MS. */
     if (!valid_read) {
@@ -112,7 +112,7 @@ bool SensorLib_PitotStep(Sample *out)
     if (samples_in_window < PITOT_AVERAGE_SAMPLES)
         return false;
 
-    /* One published sample per 10 control ticks (20 Hz for a 200 Hz loop). */
+    /* Five 100 Hz sensor slots per published 20 Hz average. */
     if (valid_read) {
         p = window_pressure / PITOT_AVERAGE_SAMPLES;
         temperature_c = window_temperature / PITOT_AVERAGE_SAMPLES;
@@ -167,7 +167,7 @@ bool SensorLib_PitotCommunicationOk(void)
 }
 
 /* Author: R.E. van Eekelen.
- * Incremental pressure-tap scan on Core 0, one I2C transaction per 5 ms
+ * Incremental pressure-tap scan on Core 0, one I2C transaction per 10 ms
  * phase. A conversion is triggered and read in later phases; the entire
  * sixteen-channel sweep never blocks the Core 1 control task.
  *

@@ -42,6 +42,24 @@ static unsigned raw_di_level(const SafetySnapshot *safety, bool available, unsig
     return available ? (unsigned)((safety->raw_levels >> (di - 1u)) & 1u) : 0u;
 }
 
+static void LogFaultEntry(const Telemetry *state)
+{
+    const ReadyDiagnostics *diag = &state->ready_diag;
+    ESP_LOGE("Fault", "Entered FAULT from %s: fault=%s last_fault=%s transitions=%lu",
+             StateMachine_Name(state->fault_from), FaultReason_Name(state->fault),
+             FaultReason_Name(state->last_fault), (unsigned long)state->transitions);
+    ESP_LOGE("Fault", "entry inputs: safety_valid=%d fresh=%d commissioned=%d relay_ok=%d "
+                     "outputs_ok=%d sensor_ok=%d V20 initialized=%d response=%d "
+                     "status_healthy=%d ready=%d drive_ok=%d comm_ok=%d status=0x%04x "
+                     "errors=%lu timeouts=%lu",
+             diag->safety_inputs_valid, diag->safety_inputs_fresh, diag->safety_commissioned,
+             diag->safety_relay_ok, diag->safety_outputs_healthy, diag->sensor_ok,
+             diag->modbus_initialized, diag->modbus_response_received, diag->v20_status_healthy,
+             diag->v20_ready, state->motor_ok, diag->drive_communication_ok,
+             diag->v20_status_word, (unsigned long)diag->modbus_errors,
+             (unsigned long)diag->modbus_timeouts);
+}
+
 static const char *interpreted_di(bool available, unsigned raw, int active_level,
                                   const char *active, const char *inactive)
 {
@@ -55,6 +73,8 @@ static const char *interpreted_di(bool available, unsigned raw, int active_level
 
 static void LogApplicationStatus(void)
 {
+    static uint32_t last_fault_transition;
+    static FaultReason_t last_logged_fault;
     const EventBits_t ready = handle_ThreadEventGroup
                                   ? xEventGroupGetBits(handle_ThreadEventGroup)
                                   : 0;
@@ -91,12 +111,29 @@ static void LogApplicationStatus(void)
                                        : UINT32_MAX;
 
     if (state_available) {
+        if (state.state == STATE_FAULT &&
+            (state.transitions != last_fault_transition || state.fault != last_logged_fault)) {
+            LogFaultEntry(&state);
+            last_fault_transition = state.transitions;
+            last_logged_fault = state.fault;
+        }
         ESP_LOGI("Diag", "machine state=%s fault=%s last_fault=%s running=%d transitions=%lu "
                          "control_hz=%.1f control_ready=%d clock_started=%d",
                  StateMachine_Name(state.state), FaultReason_Name(state.fault),
                  FaultReason_Name(state.last_fault), state.running,
                  (unsigned long)state.transitions, (double)state.control_hz,
                  state.control_ready, state.control_clock_started);
+        ESP_LOGI("Diag", "control timing execution_us=%lu service_us=%lu max_jitter_us=%lu "
+                         "missed_deadlines=%lu overruns=%lu fault_reason=%s fault_execution_us=%lu "
+                         "fault_service_us=%lu fault_missed_ticks=%lu limits: execution<%u us "
+                         "service<%u us clock_missed_allowed=%u",
+                 (unsigned long)state.execution_us, (unsigned long)state.service_us,
+                 (unsigned long)state.max_jitter_us, (unsigned long)state.missed_deadlines,
+                 (unsigned long)state.overruns, FaultReason_Name(state.timing_fault_reason),
+                 (unsigned long)state.timing_fault_execution_us,
+                 (unsigned long)state.timing_fault_service_us,
+                 (unsigned long)state.timing_fault_missed_ticks, CONTROL_PERIOD_US,
+                 V20_SERVICE_BUDGET_US, CONTROL_CLOCK_MISSED_TICKS_ALLOWED);
     } else {
         ESP_LOGW("Diag", "machine state unavailable; ControlTask has not published telemetry");
     }

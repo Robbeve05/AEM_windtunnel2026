@@ -35,10 +35,12 @@ typedef struct {
     OperatingMode mode;
     float manual_hz,applied_hz;
     bool running,sensor_ok,motor_ok,pi_ok,reset_required;
-    SystemState_t state; FaultReason_t fault,last_fault; SafetySnapshot safety;
+    SystemState_t state,fault_from; FaultReason_t fault,last_fault; SafetySnapshot safety;
     const char *reason;
     float control_hz,modbus_hz;
     uint32_t execution_us,max_jitter_us,missed_deadlines,overruns,stack_free;
+    uint32_t timing_fault_execution_us,timing_fault_service_us,timing_fault_missed_ticks;
+    FaultReason_t timing_fault_reason;
     uint32_t crc_errors,exceptions,late_replies,exception_code;
     uint32_t service_us,service_max_us,rtt_median_us,rtt_p95_us,rtt_max_us,request_id,transitions;
     uint32_t control_cycle_count;

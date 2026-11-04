@@ -41,7 +41,7 @@ Requests have bounded response handling, including frame timing and late-respons
 
 ## Current controller architecture
 
-The ESP32 uses an internal GPTimer and a **200 Hz / 5 ms** control cycle. V20 service is asynchronous; responses are not expected to complete inside each 5 ms control period.
+The ESP32 uses an internal GPTimer and a **100 Hz / 10 ms** control cycle. V20 service is asynchronous; responses are not expected to complete inside each 10 ms control period.
 
 - **MANUAL:** frequency setpoint through a separate fifth-order ramp.
 - **AUTO:** Pitot airspeed feedback, a fifth-order reference, one-mass torque PID and an approximate inverse motor model that generates V20 frequency.

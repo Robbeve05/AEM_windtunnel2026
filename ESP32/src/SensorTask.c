@@ -1,4 +1,4 @@
-/* Author: R.E. van Eekelen. All I2C stays on Core 0, 2.5ms after control.
+/* Author: R.E. van Eekelen. All I2C stays on Core 0, 5ms before control.
  * Missed slots are never replayed. Last successful pitot time is authoritative.
  */
 #include "ApplicationTasks.h"

@@ -26,25 +26,26 @@ bool I2CBus_TryWrite(uint8_t a,const uint8_t *p,size_t n) {
 int main(void) {
     assert(SensorLib_Init()); Sample s={0};
     for(unsigned n=0;n<210;n++) {
-        now+=5000;unsigned before=operations;
+        now+=2*SENSOR_PHASE_US;unsigned before=operations;
         bool published=SensorLib_PitotStep(&s);
         assert(operations==before+1);
-        assert(published==((n+1)%10==0));
-        if(published) assert(s.valid==(n>=200));
+        assert(published==((n+1)%PITOT_AVERAGE_SAMPLES==0));
+        if(published) assert(s.valid==(n>=200+PITOT_AVERAGE_SAMPLES-1));
     }
-    assert(s.valid && isfinite(s.value) && s.sequence==21 && s.tick==1050);
+    assert(s.valid && isfinite(s.value) &&
+           s.sequence==210/PITOT_AVERAGE_SAMPLES && s.tick==2100);
     TickType_t valid_time=s.tick;
     fail=true;
-    for(unsigned n=0;n<40;n++) {now+=5000;assert(!SensorLib_PitotStep(&s));}
+    for(unsigned n=0;n<40;n++) {now+=2*SENSOR_PHASE_US;assert(!SensorLib_PitotStep(&s));}
     assert(s.tick==valid_time && xTaskGetTickCount()-s.tick>SENSOR_TIMEOUT_MS);
     fail=false;Sample taps={0};
     for(unsigned n=0;n<112;n++) {
-        now+=5000;unsigned before=operations;
+        now+=2*SENSOR_PHASE_US;unsigned before=operations;
         (void)SensorLib_TapsStep(&taps);
         assert(operations<=before+1);
     }
     assert(taps.taps_valid==0xffff && taps.sequence==16);
     assert(isfinite(taps.taps[15]));
-    puts("PASS 5ms pitot slots, 10-point average, 200-sample calibration, timestamps, sensor timeout, incremental taps, one tap transaction per slot");
+    puts("PASS 10ms pitot slots, configured average, 200-sample calibration, timestamps, sensor timeout, incremental taps, one tap transaction per slot");
     return 0;
 }

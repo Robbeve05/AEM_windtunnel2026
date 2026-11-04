@@ -46,6 +46,7 @@ typedef enum {
 
 typedef struct {
     SystemState_t state;
+    SystemState_t fault_from;
     FaultReason_t fault, last_fault;
     uint32_t entered_ms, boot_ms, reset_until_ms, epoch, transition_count;
     bool reset_pending, reset_accepted, recovery_requested, permissive;

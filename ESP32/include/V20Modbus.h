@@ -17,7 +17,7 @@
 bool V20Modbus_Init(void);
 
 /*
- * Advance at most one part of an RTU transaction; call once per 5 ms loop.
+ * Advance at most one part of an RTU transaction; call once per 10 ms loop.
  * Does not wait for a Modbus response or delay the calling task.
  * safety_ok MUST come from validated physical safety/operational feedback.
  * The request comes from the existing one-element motor_requests queue.

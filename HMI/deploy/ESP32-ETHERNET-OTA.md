@@ -34,7 +34,7 @@ cat ~/windtunnel-firmware-staged/firmware.json
 ## Remaining engineering work for real OTA
 
 1. Add an ESP-IDF partition table with `otadata` and two application slots (`ota_0`, `ota_1`), sized to accommodate the actual application, and a rollback policy. Re-partitioning may require a one-time wired flash that erases existing flash content.
-2. Implement a dedicated, lower-priority OTA task on Core 0 using `esp_https_ota` / `esp_ota_ops`. It must not block or starve the Core 1 / 5 ms control task.
+2. Implement a dedicated, lower-priority OTA task on Core 0 using `esp_https_ota` / `esp_ota_ops`. It must not block or starve the Core 1 / 10 ms control task.
 3. Require a **physical, maintained and verified maintenance key input**, no RUNNING/STOP state, independent isolation of motor power/enable, physical standstill inspection, fresh safety feedback, and explicit operator action. Do not accept an HMI-only check as proof that the motor is safe.
 4. Serve the firmware through an authenticated, integrity-verified TLS channel with a pinned trust anchor or verified signed firmware. A standalone SHA-256 served alongside a binary is not authentication by itself.
 5. Perform app validation on first boot, automatic rollback after watchdog, reset, failed readiness self-test or other crash, and ensure default state after every update is INIT / inhibited / requires physical Reset + Start.

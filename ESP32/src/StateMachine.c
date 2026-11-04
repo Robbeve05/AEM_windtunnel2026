@@ -126,6 +126,7 @@ void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
         m->fault = f;
     if (m->state != STATE_FAULT)
     {
+        m->fault_from = m->state;
         m->reset_pending = false;
         m->reset_accepted = false;
     }

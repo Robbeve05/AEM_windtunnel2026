@@ -131,7 +131,7 @@ int gptimer_new_timer(const gptimer_config_t *c, gptimer_handle_t *t)
 int gptimer_set_alarm_action(gptimer_handle_t t, const gptimer_alarm_config_t *a)
 {
     (void)t;
-    assert(a->alarm_count == 2500); /* Two 2.5ms phases produce 200Hz control. */
+    assert(a->alarm_count == SENSOR_PHASE_US); /* Two 5ms phases produce 100Hz control. */
     return 0;
 }
 int gptimer_register_event_callbacks(gptimer_handle_t t, const gptimer_event_callbacks_t *c,
@@ -388,6 +388,10 @@ int main(void)
     assert(!c.tasks_ready && fake_us == 15000000 && c.machine.fault == FAULT_INTERNAL &&
            timer_starts == 0);
     assert(watchdog_resets >= 300);
+    Telemetry startup_fault;
+    xQueuePeek(telemetry, &startup_fault, 0);
+    assert(startup_fault.state == STATE_FAULT && startup_fault.fault == FAULT_INTERNAL &&
+           startup_fault.fault_from == STATE_INIT);
     xQueuePeek(motor_requests, &request, 0);
     assert(!request.run && !request.permissive && request.output == 0);
     puts("PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output");
@@ -449,16 +453,46 @@ int main(void)
     assert(Control_ReadButtonEvents() == 0);
     puts("PASS debounced START/RESET actions and one-shot STOP notification");
     ControlTiming timing = {0};
-    assert(ControlTiming_Tick(&timing, 5000, 1) == FAULT_NONE);
-    assert(ControlTiming_Tick(&timing, 10000, 1) == FAULT_NONE);
-    assert(ControlTiming_Tick(&timing, 15050, 1) == FAULT_NONE && timing.max_jitter_us == 50);
-    assert(ControlTiming_Tick(&timing, 30050, 3) == FAULT_CONTROL_OVERRUN &&
-           timing.missed_deadlines == 2);
-    assert(ControlTiming_Tick(&timing, 80050, 0) == FAULT_CLOCK_TIMEOUT &&
-           timing.missed_deadlines == 12);
-    assert(ControlTiming_Execution(&timing, 4999, 999));
-    assert(!ControlTiming_Execution(&timing, 5000, 999));
+    assert(ControlTiming_Tick(&timing, CONTROL_PERIOD_US, 1) == FAULT_NONE);
+    assert(ControlTiming_Tick(&timing, 2 * CONTROL_PERIOD_US, 1) == FAULT_NONE);
+    assert(ControlTiming_Tick(&timing, 3 * CONTROL_PERIOD_US + 50, 1) == FAULT_NONE &&
+           timing.max_jitter_us == 50);
+    assert(ControlTiming_Tick(&timing, 6 * CONTROL_PERIOD_US + 50, 3) == FAULT_CONTROL_OVERRUN &&
+           timing.missed_deadlines == 2 && timing.fault_reason == FAULT_CONTROL_OVERRUN &&
+           timing.fault_missed_ticks == 2);
+    assert(ControlTiming_Tick(&timing, 6 * CONTROL_PERIOD_US + 50 +
+                                  CONTROL_CLOCK_TIMEOUT_MS * 1000u, 0) == FAULT_CLOCK_TIMEOUT &&
+           timing.missed_deadlines == 2 + CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000) &&
+           timing.fault_reason == FAULT_CONTROL_OVERRUN);
+    assert(ControlTiming_Execution(&timing, CONTROL_PERIOD_US - 1, 999));
+    assert(!ControlTiming_Execution(&timing, CONTROL_PERIOD_US, 999));
+    ControlTiming execution_fault = {0};
+    assert(!ControlTiming_Execution(&execution_fault, CONTROL_PERIOD_US, 999) &&
+           execution_fault.fault_reason == FAULT_CONTROL_OVERRUN &&
+           execution_fault.fault_execution_us == CONTROL_PERIOD_US &&
+           execution_fault.fault_service_us == 999);
     assert(!ControlTiming_Execution(&timing, 4999, 1000) && timing.overruns == 2);
+    ControlTiming tolerated_timing = {0};
+    assert(ControlTiming_Tick(&tolerated_timing, CONTROL_PERIOD_US, 1) == FAULT_NONE);
+    assert(ControlTiming_Tick(&tolerated_timing, 3 * CONTROL_PERIOD_US, 1) == FAULT_NONE &&
+           tolerated_timing.missed_deadlines == 1 &&
+           tolerated_timing.consecutive_missed_ticks == 1);
+    assert(ControlTiming_Tick(&tolerated_timing, 4 * CONTROL_PERIOD_US, 1) == FAULT_NONE &&
+           tolerated_timing.consecutive_missed_ticks == 0);
+    assert(ControlTiming_Tick(&tolerated_timing, 5 * CONTROL_PERIOD_US, 1) == FAULT_NONE &&
+           tolerated_timing.consecutive_missed_ticks == 0);
+    assert(ControlTiming_Tick(&tolerated_timing, 7 * CONTROL_PERIOD_US, 1) == FAULT_NONE &&
+           tolerated_timing.consecutive_missed_ticks == 1);
+    assert(ControlTiming_Tick(&tolerated_timing, 9 * CONTROL_PERIOD_US, 1) == FAULT_CONTROL_OVERRUN &&
+           tolerated_timing.consecutive_missed_ticks == 2);
+    ControlTiming timeout_fault = {0};
+    assert(ControlTiming_Tick(&timeout_fault, CONTROL_PERIOD_US, 1) == FAULT_NONE);
+    assert(ControlTiming_Tick(&timeout_fault, CONTROL_PERIOD_US +
+                                  CONTROL_CLOCK_TIMEOUT_MS * 1000u, 0) == FAULT_CLOCK_TIMEOUT &&
+           timeout_fault.fault_reason == FAULT_CLOCK_TIMEOUT &&
+           timeout_fault.fault_missed_ticks == CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000));
+    assert(ControlTiming_Execution(&tolerated_timing, CONTROL_PERIOD_US - 1, 999));
+    assert(!ControlTiming_Execution(&tolerated_timing, CONTROL_PERIOD_US, 999));
     healthy_context(&c);
     c.machine.epoch = 42;
     Control_PublishStatus(&c);
@@ -510,7 +544,7 @@ int main(void)
     for(unsigned n=0;n<4;n++) (void)ControlClockInterrupt(NULL,NULL,NULL);
     assert(notified[0]==sensor_task_handle && notified[1]==control_task_handle &&
            notified[2]==sensor_task_handle && notified[3]==control_task_handle);
-    puts("PASS alternating 2.5ms sensor/control phases preserve 5ms control period");
+    puts("PASS alternating 5ms sensor/control phases preserve 10ms control period");
     puts("All focused control regression checks passed (mocked hardware/RTOS).");
     return 0;
 }

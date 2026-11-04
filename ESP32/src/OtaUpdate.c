@@ -186,7 +186,7 @@ void OtaMarkValidTask(void *argument) {
     vTaskDelay(pdMS_TO_TICKS(12000));
     Telemetry t={0};
     const bool good=xQueuePeek(telemetry,&t,0)==pdTRUE &&
-        t.control_hz>185.0f && t.control_hz<215.0f &&
+        t.control_hz>90.0f && t.control_hz<110.0f &&
         t.overruns==0 && t.missed_deadlines==0;
     if(good)
         ESP_ERROR_CHECK(esp_ota_mark_app_valid_cancel_rollback());

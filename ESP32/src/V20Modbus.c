@@ -2,7 +2,7 @@
  * V20Modbus.c
  *
  * Siemens SINAMICS V20: Modbus RTU protocol + UART/RS-485 transport.
- * This entire module is serviced within ControlTask (Core 1, 5 ms).
+ * This entire module is serviced within ControlTask (Core 1, 10 ms).
  * No vTaskDelay(), blocking UART receive, or actuator FreeRTOS task.
  *
  * IMPORTANT: This is an operational motor interface, NOT a safety function.

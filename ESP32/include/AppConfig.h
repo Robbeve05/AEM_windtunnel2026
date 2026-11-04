@@ -25,8 +25,9 @@
 // Control clock and sensor phase timing; keep the period and frequency consistent.
 // Task priorities and task allocation are defined elsewhere and are unchanged.
 
-// [Hz, fixed] Control-loop rate; changing it changes sampling and requires timing validation.
-#define CONTROL_FREQUENCY_HZ 200
+// [Hz, adjustable safety-critical] Control-loop rate; changing it changes sampling and requires
+// controller and hardware timing validation.
+#define CONTROL_FREQUENCY_HZ 100
 
 // [Hz, fixed derived] Control clock follows CONTROL_FREQUENCY_HZ; keep them synchronized.
 #define CONTROL_CLOCK_HZ CONTROL_FREQUENCY_HZ
@@ -35,15 +36,20 @@
 #define CONTROL_CLOCK_PERIOD_S (1.0f / CONTROL_CLOCK_HZ)
 
 // [us, fixed] Control deadline period; must agree with CONTROL_FREQUENCY_HZ.
-#define CONTROL_PERIOD_US 5000u
+#define CONTROL_PERIOD_US 10000u
 
-// [us, fixed] Half-period clock phase for sensor/control scheduling; must remain half the
-// control period.
-#define SENSOR_PHASE_US 2500u
+// [us, fixed derived] Half-period clock phase; sensor and control are notified alternately.
+#define SENSOR_PHASE_US 5000u
 
 // [ms, safety-critical] Maximum wait for the control clock; increasing delays clock-failure
 // detection.
 #define CONTROL_CLOCK_TIMEOUT_MS 50
+
+// [ticks, adjustable safety-critical] Consecutive missed 100 Hz clock ticks tolerated before
+// latching CONTROL_OVERRUN. 0 is strict; 1 tolerates one isolated missed tick.
+#ifndef CONTROL_CLOCK_MISSED_TICKS_ALLOWED
+#define CONTROL_CLOCK_MISSED_TICKS_ALLOWED 1u
+#endif
 
 // [us, fixed] V20 service execution budget; increasing leaves less time within the control
 // deadline.
@@ -90,7 +96,7 @@
 
 #ifndef V20_COMMAND_PERIOD_MS
 // [ms, adjustable] Running command interval; reducing increases command traffic.
-#define V20_COMMAND_PERIOD_MS 5
+#define V20_COMMAND_PERIOD_MS 10
 #endif
 
 #ifndef V20_STOP_HEARTBEAT_MS
@@ -264,7 +270,7 @@
 
 // [samples, adjustable] Raw samples per averaging window; increasing reduces noise and slows
 // measurement updates.
-#define PITOT_AVERAGE_SAMPLES 10
+#define PITOT_AVERAGE_SAMPLES 5
 
 // [ms, safety-critical] Maximum pitot sample age; increasing allows older airspeed feedback.
 #define SENSOR_TIMEOUT_MS 150

@@ -77,8 +77,8 @@ The network must be isolated or trusted: this custom protocol uses challenge-res
 ## 4. Verify and recover
 
 - Confirm the Pi can connect to ESP32 port 5000 and the OTA server (port 5001) is accessible **only in the commissioned service mode**.
-- Confirm `control_hz` near 200 Hz; no climbing `overruns` or `missed_deadlines` after the reboot.
+- Confirm `control_hz` near 100 Hz; no climbing `overruns` or `missed_deadlines` after the reboot.
 - Keep the motor isolated until boot and all physical safety tests pass.
-- Rollback: after an OTA boot, firmware waits 12 seconds and accepts it only when control frequency is 185–215 Hz and timing counters remain zero; otherwise it requests bootloader rollback. This is basic boot validation, **not full system acceptance**.
+- Rollback: after an OTA boot, firmware waits 12 seconds and accepts it only when control frequency is 90–110 Hz and timing counters remain zero; otherwise it requests bootloader rollback. This is basic boot validation, **not full system acceptance**.
 - If firmware or network is corrupted or recovery fails, use USB reflash; do not force outputs.
 - No secret key is distributed in Git. Only use known tested images and review code before remote firmware updates.

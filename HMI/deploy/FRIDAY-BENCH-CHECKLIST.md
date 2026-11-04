@@ -44,14 +44,14 @@ Open the existing desktop launcher; it starts **PySide6/Qt**, not Chromium. All 
 ## 3. Real ESP32 checks with VFD independently inhibited
 
 - Verify all electrical wiring/polarities and test emergency contactor circuit separately.
-- Verify pitot zero calibration **with still air**: 200 valid pitot reads are required (around 1 s at 200 Hz).
-- Verify 5 ms control timing: `control_hz` roughly 200, `execution_us < 5000`, and `overruns` and `missed_deadlines` remain stable at zero.
+- Verify pitot zero calibration **with still air**: 200 valid pitot reads are required (around 2 s at the 100 Hz acquisition rate).
+- Verify 10 ms control timing: `control_hz` roughly 100, `execution_us < 10000`, and `overruns` and `missed_deadlines` remain stable at zero.
 - Check Core 0 pressure tap task does not disturb Core 1 pitot, particularly under electrical noise.
 - V20 protocol in the code is **9600 baud, 8E1, slave address 1**, matching the documented V20 settings. Check the actual inverter's active parameter set. P0700/P1000/P2023/P2021/P2010/P2034/P2035/P2000 must agree with the documentation.
 - No commissioning or independent hardwired safety checks are completed by uploading code.
 
 ## Not yet validated
 
-GitHub Actions compiles the ESP32 firmware and runs native Windows HMI/backend and C host regression tests. These are software-only checks. Native Qt on the actual Pi, ESP32-Pi TCP, I2C voltage, E-stop wiring, V20 Modbus, watchdog trip, physical STOP and measured 200 Hz timing still require onsite verification.
+GitHub Actions compiles the ESP32 firmware and runs native Windows HMI/backend and C host regression tests. These are software-only checks. Native Qt on the actual Pi, ESP32-Pi TCP, I2C voltage, E-stop wiring, V20 Modbus, watchdog trip, physical STOP and measured 100 Hz timing still require onsite verification.
 
 Do not interpret passing offline tests as permission to enable the 5.5 kW fan.

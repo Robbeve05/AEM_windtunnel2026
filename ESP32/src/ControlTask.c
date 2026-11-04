@@ -48,7 +48,10 @@
 _Static_assert(CONTROL_PERIOD_US == (1000000u / CONTROL_FREQUENCY_HZ),
                "GPTimer and torque PID sample periods must be equal");
 _Static_assert(SENSOR_PHASE_US * 2 == CONTROL_PERIOD_US, "Two equal clock phases required");
-_Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controller runs at 200 Hz");
+_Static_assert(CONTROL_FREQUENCY_HZ == 100u,
+               "The configured wind tunnel controller runs at 100 Hz");
+_Static_assert(CONTROL_CLOCK_MISSED_TICKS_ALLOWED <= 1u,
+               "At most one consecutive control-clock tick may be tolerated");
 
 ///////////////////////////////////////////////////////////////////////////////
 // File-local data structures
@@ -56,7 +59,9 @@ _Static_assert(CONTROL_FREQUENCY_HZ == 200u, "The approved wind tunnel controlle
 typedef struct
 {
     uint64_t previous_us;
-    uint32_t max_jitter_us, missed_deadlines, overruns;
+    uint32_t max_jitter_us, missed_deadlines, overruns, consecutive_missed_ticks;
+    uint32_t fault_execution_us, fault_service_us, fault_missed_ticks;
+    FaultReason_t fault_reason;
 } ControlTiming;
 
 typedef struct
@@ -158,7 +163,7 @@ static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
 }
 
 /*
- * Starts the unchanged 5 ms GPTimer only after startup synchronization.
+ * Starts the alternating 5 ms sensor/control phase timer after startup synchronization.
  */
 static void StartControlClock(void)
 {
@@ -425,8 +430,13 @@ static void Control_CheckSafety(ControlContext *ctx)
     /* Physical reset clears a timing latch only when the input is healthy. */
     if (ctx->reset && ctx->clock_fault == FAULT_NONE && ctx->safety.valid &&
         !ctx->safety.estop_pressed &&
-        (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT))
+        (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT)) {
         ctx->latched_timing_fault = FAULT_NONE;
+        ctx->timing_stats.fault_reason = FAULT_NONE;
+        ctx->timing_stats.fault_execution_us = 0;
+        ctx->timing_stats.fault_service_us = 0;
+        ctx->timing_stats.fault_missed_ticks = 0;
+    }
 
     if (ctx->machine.reset_pending && !ctx->safety.estop_pressed && ctx->safety.relay_ok)
         SafetyIO_Acknowledge();
@@ -513,7 +523,8 @@ static void Control_UpdateController(ControlContext *ctx)
                 ctx->frequency_running = ctx->motor.ok && isfinite(ctx->motor.actual_hz) &&
                     ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
                     (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS) &&
-                    SetpointCurve_Init(&ctx->frequency_curve, ctx->motor.actual_hz, 0.005f,
+                    SetpointCurve_Init(&ctx->frequency_curve, ctx->motor.actual_hz,
+                        CONTROL_CLOCK_PERIOD_S,
                         MANUAL_MAX_SLEW_HZ_PER_S, MANUAL_MAX_ACCEL_HZ_PER_S2);
                 ctx->frequency_curve.max_third_derivative = MANUAL_MAX_JERK_HZ_PER_S3;
             }
@@ -647,16 +658,34 @@ static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned
     if (!notifications)
     {
         t->missed_deadlines += CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000);
+        t->consecutive_missed_ticks = 0;
+        if (t->fault_reason == FAULT_NONE) {
+            t->fault_reason = FAULT_CLOCK_TIMEOUT;
+            t->fault_missed_ticks = CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000);
+        }
         return FAULT_CLOCK_TIMEOUT;
     }
-    if (notifications > 1 || elapsed >= 2 * CONTROL_PERIOD_US)
+    unsigned missed = notifications > 1 ? notifications - 1 : 0;
+    unsigned elapsed_missed = (unsigned)(elapsed / CONTROL_PERIOD_US);
+    if (elapsed_missed)
+        elapsed_missed--;
+    if (elapsed_missed > missed)
+        missed = elapsed_missed;
+    if (missed)
     {
-        unsigned missed = notifications > 1 ? notifications - 1 : 0;
-        unsigned elapsed_missed = (unsigned)(elapsed / CONTROL_PERIOD_US);
-        if (elapsed_missed)
-            elapsed_missed--;
-        t->missed_deadlines += missed > elapsed_missed ? missed : elapsed_missed;
-        return FAULT_CONTROL_OVERRUN;
+        t->missed_deadlines += missed;
+        t->consecutive_missed_ticks += missed;
+        if (t->consecutive_missed_ticks > CONTROL_CLOCK_MISSED_TICKS_ALLOWED) {
+            if (t->fault_reason == FAULT_NONE) {
+                t->fault_reason = FAULT_CONTROL_OVERRUN;
+                t->fault_missed_ticks = t->consecutive_missed_ticks;
+            }
+            return FAULT_CONTROL_OVERRUN;
+        }
+    }
+    else
+    {
+        t->consecutive_missed_ticks = 0;
     }
     return FAULT_NONE;
 }
@@ -665,6 +694,11 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
     if (execution_us < CONTROL_PERIOD_US && service_us < V20_SERVICE_BUDGET_US)
         return true;
     t->overruns++;
+    if (t->fault_reason == FAULT_NONE) {
+        t->fault_reason = FAULT_CONTROL_OVERRUN;
+        t->fault_execution_us = execution_us;
+        t->fault_service_us = service_us;
+    }
     return false;
 }
 
@@ -680,8 +714,13 @@ static void Control_PublishStatus(ControlContext *ctx)
     ctx->status.control_ready = ctx->tasks_ready;
     ctx->status.control_clock_started = ctx->control_clock_started;
     ctx->status.control_cycle_count = ctx->control_cycle_count;
+    ctx->status.timing_fault_execution_us = ctx->timing_stats.fault_execution_us;
+    ctx->status.timing_fault_service_us = ctx->timing_stats.fault_service_us;
+    ctx->status.timing_fault_missed_ticks = ctx->timing_stats.fault_missed_ticks;
+    ctx->status.timing_fault_reason = ctx->timing_stats.fault_reason;
     ctx->status.modbus_initialized = ctx->v20_initialized;
     ctx->status.state = ctx->machine.state;
+    ctx->status.fault_from = ctx->machine.fault_from;
     ctx->status.fault = ctx->machine.fault;
     ctx->status.last_fault = ctx->machine.last_fault;
     ctx->status.running = ctx->machine.state == STATE_RUNNING;
@@ -801,7 +840,7 @@ static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
 // void ControlTask(void *argument)
 
 /*
- * Coordinates initialization and the ordered 200 Hz control cycle on Core 1.
+ * Coordinates initialization and the ordered 100 Hz control cycle on Core 1.
  */
 void ControlTask(void *argument)
 {
