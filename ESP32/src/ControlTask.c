@@ -33,6 +33,7 @@
 #include "AppConfig.h"
 #include "PiProtocol.h"
 #include "MotorModel.h"
+#include "DigitalOutputs.h"
 #include "FanCalibration.h"
 #include "RegelaarDesign.h"
 #include "TorqueLoadControl.h"
@@ -743,17 +744,29 @@ static void Control_PublishStatus(ControlContext *ctx)
         (TickType_t)(ctx->now_tick - ctx->safety.tick_ms) < pdMS_TO_TICKS(INPUT_TIMEOUT_MS);
     diag->estop_released = !ctx->safety.estop_pressed;
     diag->stop_ok = ctx->safety.stop_ok;
-    diag->reset_detected = ctx->safety.reset_sequence != 0;
+    diag->reset_detected = ctx->reset;
     diag->reset_accepted = ctx->machine.reset_accepted;
     diag->reset_pending = ctx->machine.reset_pending;
     diag->safety_commissioned = ctx->safety.commissioned;
     diag->safety_relay_ok = ctx->safety.relay_ok;
+    diag->relay_feedback_ok = ctx->safety.relay_ok;
     diag->safety_outputs_healthy = ctx->safety.outputs_ok;
     diag->modbus_initialized = ctx->motor.initialized;
     diag->modbus_response_received = ctx->motor.status_valid;
     diag->v20_status_healthy = ctx->motor.status_healthy;
     diag->v20_status_word = ctx->motor.status;
     diag->v20_ready = ctx->motor.ready;
+    diag->v20_ready_to_switch_on = ctx->motor.ready_to_switch_on;
+    diag->v20_ready_to_operate = ctx->motor.ready_to_operate;
+    diag->v20_operation_enabled = ctx->motor.operation_enabled;
+    diag->v20_off2_active = ctx->motor.off2_active;
+    diag->v20_off3_active = ctx->motor.off3_active;
+    diag->v20_switch_on_inhibited = ctx->motor.switch_on_inhibited;
+    diag->v20_control_word_requested = ctx->motor.control_word_requested;
+    diag->v20_control_word_acknowledged = ctx->motor.control_word_acknowledged;
+    diag->v20_control_word_requested_valid = ctx->motor.control_word_requested_valid;
+    diag->v20_control_word_acknowledged_valid =
+        ctx->motor.control_word_acknowledged_valid;
     diag->drive_communication_ok = ctx->motor.communication_ok;
     diag->v20_run_commissioned = V20_RUN_COMMISSIONED;
     diag->drive_fault_free = ctx->motor.drive_fault_free;
@@ -783,6 +796,11 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->sensor_ok = ctx->status.sensor_ok;
     diag->pi_ok = ctx->status.pi_ok;
     diag->blocking_reasons = StateMachine_GetBlockingReasons(&ctx->machine, &ctx->inputs);
+    DigitalOutputStatus outputs = {0};
+    DigitalOutputs_GetStatus(&outputs);
+    diag->do1_requested = outputs.vfd_requested;
+    diag->do1_acknowledged = outputs.vfd_acknowledged;
+    diag->do1_ack_valid = outputs.confirmed_valid;
     if (!ctx->status.running)
         ctx->status.output = 0.0f;
 

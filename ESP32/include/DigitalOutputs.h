@@ -9,7 +9,7 @@ bool DigitalOutputs_Init(void);
 // lamp or relay state.
 bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators);
 typedef struct {
-    bool initialized, vfd_requested, confirmed_valid;
+    bool initialized, vfd_requested, vfd_acknowledged, confirmed_valid;
     uint8_t requested_image, confirmed_image;
     uint32_t write_errors;
 } DigitalOutputStatus;

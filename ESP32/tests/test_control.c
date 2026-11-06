@@ -12,6 +12,13 @@
 #include "../src/ControlTask.c"
 #include "../src/InputHandlerTask.c"
 
+static DigitalOutputStatus output_status;
+void DigitalOutputs_GetStatus(DigitalOutputStatus *status)
+{
+    if (status != NULL)
+        *status = output_status;
+}
+
 /* Calibration storage is exercised by the separate NVS host suite. */
 static bool calibration_enabled;
 bool FanCalibration_IsValid(void) { return calibration_enabled; }
@@ -33,7 +40,7 @@ static MotorStatus drive = {
     .ready = true, .ok = true, .initialized = true, .response_received = true,
     .status_healthy = true, .communication_ok = true, .drive_fault_free = true,
     .operational_ready = true, .diagnostics_complete = true, .status_valid = true,
-    .reference_valid = true, .reference_config_valid = true, .status = 0x0201,
+    .reference_valid = true, .reference_config_valid = true, .status = 0x0231,
     .reference_value = 5000
 };
 int64_t esp_timer_get_time(void)
@@ -384,6 +391,19 @@ int main(void)
 
     fake_us = 0;
     Control_Init(&c);
+    output_status = (DigitalOutputStatus){
+        .initialized = true,
+        .vfd_requested = true,
+        .vfd_acknowledged = true,
+        .confirmed_valid = true,
+    };
+    Control_PublishStatus(&c);
+    Telemetry output_diagnostic;
+    xQueuePeek(telemetry, &output_diagnostic, 0);
+    assert(output_diagnostic.ready_diag.do1_requested &&
+           output_diagnostic.ready_diag.do1_acknowledged &&
+           output_diagnostic.ready_diag.do1_ack_valid);
+    output_status = (DigitalOutputStatus){0};
     thread_bits = EVT_ALL_TASKS_READY;
     Control_WaitForTasks(&c);
     assert(c.tasks_ready && thread_bits == EVT_ALL_TASKS_READY && timer_starts == 0);

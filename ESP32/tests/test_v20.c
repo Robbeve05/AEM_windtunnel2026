@@ -234,7 +234,7 @@ static void pump(MotorRequest *r, unsigned count)
 
 static void reset_mock(void)
 {
-    fake = (Fake){.reference = 5000, .watchdog = 1000, .status = 0x0201};
+    fake = (Fake){.reference = 5000, .watchdog = 1000, .status = 0x0231};
     now_us = 1000000;
 }
 
@@ -249,6 +249,9 @@ static void boot(void)
     pump(&r, 12);
     assert(status().communication_ok && status().ok);
     assert(status().ready && status().operational_ready && !status().run_authorized);
+    assert(status().ready_to_switch_on && !status().ready_to_operate &&
+           !status().operation_enabled);
+    assert(!status().off2_active && !status().off3_active && !status().switch_on_inhibited);
     assert(fake.run_commands == 0 && fake.commands == 0);
     assert(status().watchdog_valid && status().watchdog_register_value == 1000 &&
            status().watchdog_parameter_expected_value == 500 &&
@@ -256,6 +259,20 @@ static void boot(void)
 }
 
 #if V20_RUN_COMMISSIONED
+static void test_nonrunning_wait_heartbeat(void)
+{
+    boot();
+    MotorRequest r = request(false, 0);
+    pump(&r, 40);
+    MotorStatus current = status();
+    assert(current.control_word_requested_valid &&
+           current.control_word_acknowledged_valid);
+    assert(current.control_word_requested == 0x047E &&
+           current.control_word_acknowledged == 0x047E);
+    assert(current.ready_to_switch_on && !current.operation_enabled);
+    assert(!current.run_authorized && fake.run_commands == 0);
+}
+
 static void run_until_command(MotorRequest *r)
 {
     unsigned before = fake.commands;
@@ -401,7 +418,7 @@ static void test_interlocks(void)
 
 static void test_status(void)
 {
-    const uint16_t bad[] = {0x0209, 0x0241, 0x0001, 0x0200};
+    const uint16_t bad[] = {0x0201, 0x0209, 0x0241, 0x0001, 0x0200};
     for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
     {
         boot();
@@ -411,7 +428,9 @@ static void test_status(void)
         assert(!status().ready && !status().operational_ready && !V20Modbus_Arm());
         if (bad[i] & 8)
             assert(!status().drive_fault_free && status().communication_ok);
-        fake.status = 0x0201;
+        if (bad[i] == 0x0201)
+            assert(status().off2_active && status().off3_active);
+        fake.status = 0x0231;
         V20Modbus_RequestRecheck();
         pump(&r, 60);
         assert(status().ready && fake.run_commands == 0);
@@ -422,7 +441,7 @@ static void test_status(void)
     pump(&r, 30);
     assert(status().actual_hz == -25);
     fake.actual = 0;
-    fake.chunk = 1;
+    fake.chunk = 2; /* Fragmented frame, but completed within the 80 ms RTU timeout. */
     pump(&r, 60);
     assert(status().ok && status().actual_hz == 0);
     puts("PASS unhealthy drive status, signed speed and fragmented replies");
@@ -440,9 +459,30 @@ static void test_inhibited_status_is_communication_healthy(void)
     MotorStatus current = status();
     assert(current.communication_ok && current.response_received && current.status_valid);
     assert(current.drive_fault_free && !current.operational_ready && !current.ready);
+    assert(!current.ready_to_switch_on && !current.ready_to_operate &&
+           current.off2_active && current.off3_active && current.switch_on_inhibited);
     assert(current.status == 0xEB40 && current.actual_hz == 0);
     assert(!V20Modbus_Arm() && fake.run_commands == 0);
     assert(fake.commands == 0);
+}
+
+static void test_nonrunning_status_transitions(void)
+{
+    boot();
+    MotorRequest r = request(false, 0);
+    fake.status = 0x0233;
+    pump(&r, 12);
+    MotorStatus current = status();
+    assert(current.ready_to_switch_on && current.ready_to_operate &&
+           !current.operation_enabled && current.operational_ready);
+    assert(!current.run_authorized && fake.run_commands == 0);
+
+    fake.status = 0x0237;
+    pump(&r, 12);
+    current = status();
+    assert(current.ready_to_switch_on && current.ready_to_operate &&
+           current.operation_enabled && !current.run_authorized);
+    assert(fake.run_commands == 0);
 }
 
 static void test_initial_status_exception_stays_read_only(void)
@@ -529,8 +569,10 @@ int main(void)
     puts("PASS UART initialization errors, CRC and read-only configuration diagnostics");
 #if V20_RUN_COMMISSIONED
     test_inhibited_status_is_communication_healthy();
+    test_nonrunning_status_transitions();
     test_initial_status_exception_stays_read_only();
     test_initial_status_timeout_retries_read_only();
+    test_nonrunning_wait_heartbeat();
     test_run_stop();
     test_errors();
     test_interlocks();
@@ -539,6 +581,7 @@ int main(void)
     boot();
     assert(status().ready && !status().run_authorized && !V20Modbus_Arm());
     test_inhibited_status_is_communication_healthy();
+    test_nonrunning_status_transitions();
     test_initial_status_exception_stays_read_only();
     test_initial_status_timeout_retries_read_only();
     MotorRequest r = request(true, 100);

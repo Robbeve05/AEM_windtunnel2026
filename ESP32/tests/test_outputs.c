@@ -52,13 +52,15 @@ int main(void) {
     assert(DigitalOutputs_Init());
     assert(writes==2 && registers[0]==1 && registers[1]==3 && images[1]==0);
     assert(!vfd_on(images[0]) && images[0]==0xffu);
-    DigitalOutputs_GetStatus(&s);assert(s.initialized && s.confirmed_valid && !s.vfd_requested);
+    DigitalOutputs_GetStatus(&s);assert(s.initialized && s.confirmed_valid && !s.vfd_requested &&
+        !s.vfd_acknowledged);
     assert(DigitalOutputs_Set(true,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);
     assert(s.vfd_requested==(SAFETY_IO_COMMISSIONED!=0));
+    assert(s.vfd_acknowledged==(SAFETY_IO_COMMISSIONED!=0) && s.confirmed_valid);
     assert(vfd_on(s.confirmed_image)==(SAFETY_IO_COMMISSIONED!=0));
     assert((s.confirmed_image&0xfeu)==0xfeu);
     assert(DigitalOutputs_Set(false,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);
-    assert(!s.vfd_requested && !vfd_on(s.confirmed_image));
+    assert(!s.vfd_requested && !s.vfd_acknowledged && !vfd_on(s.confirmed_image));
     assert(s.confirmed_image==0xffu);
     assert(DigitalOutputs_Set(false,(StatusIndicator){.red=true,.amber=true}));DigitalOutputs_GetStatus(&s);
     assert(s.confirmed_image==0xf3u);

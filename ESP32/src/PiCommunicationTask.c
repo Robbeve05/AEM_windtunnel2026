@@ -31,6 +31,62 @@
 // Local interfaces and connection state
 
 static int client = -1;
+typedef struct {
+    uint32_t mask;
+    const char *name;
+} WaitBlockerLabel;
+
+static const WaitBlockerLabel wait_blocker_labels[] = {
+    {WAIT_BLOCK_ESTOP_PRESSED, "estop_pressed"},
+    {WAIT_BLOCK_STOP_INPUT, "stop_input"},
+    {WAIT_BLOCK_SAFETY_INPUT_INVALID, "safety_input_invalid"},
+    {WAIT_BLOCK_SAFETY_INPUT_STALE, "safety_input_stale"},
+    {WAIT_BLOCK_SAFETY_NOT_COMMISSIONED, "safety_not_commissioned"},
+    {WAIT_BLOCK_SAFETY_RELAY, "safety_relay"},
+    {WAIT_BLOCK_SAFETY_OUTPUTS, "safety_outputs"},
+    {WAIT_BLOCK_VFD_FAULT, "vfd_fault"},
+    {WAIT_BLOCK_CONTACTOR, "contactor_feedback"},
+    {WAIT_BLOCK_SENSOR, "sensor"},
+    {WAIT_BLOCK_MODBUS_NOT_INITIALIZED, "modbus_not_initialized"},
+    {WAIT_BLOCK_MODBUS_NO_RESPONSE, "modbus_no_response"},
+    {WAIT_BLOCK_V20_STATUS, "v20_status"},
+    {WAIT_BLOCK_DRIVE_COMMUNICATION, "drive_communication"},
+    {WAIT_BLOCK_V20_NOT_READY, "v20_not_ready"},
+    {WAIT_BLOCK_V20_RUN_LOCK, "v20_run_commissioning_lock"},
+    {WAIT_BLOCK_PI, "pi_heartbeat"},
+    {WAIT_BLOCK_RESET_SEQUENCE, "physical_reset_not_accepted"},
+    {WAIT_BLOCK_RESET_FEEDBACK_PENDING, "reset_feedback_pending"},
+    {WAIT_BLOCK_DRIVE_FAULT, "drive_fault"},
+    {WAIT_BLOCK_V20_CONFIGURATION, "v20_configuration"},
+    {WAIT_BLOCK_V20_OPERATION_INHIBITED, "v20_operation_inhibited"},
+};
+
+static void format_wait_blockers(uint32_t reasons, char *buffer, size_t size)
+{
+    if (buffer == NULL || size == 0) return;
+    buffer[0] = '\0';
+    size_t used = 0;
+    uint32_t known = 0;
+    for (size_t i = 0; i < sizeof(wait_blocker_labels) / sizeof(wait_blocker_labels[0]); ++i) {
+        known |= wait_blocker_labels[i].mask;
+        if ((reasons & wait_blocker_labels[i].mask) == 0) continue;
+        const int written = snprintf(buffer + used, size - used, "%s%s",
+                                     used == 0 ? "" : ",", wait_blocker_labels[i].name);
+        if (written < 0 || (size_t)written >= size - used) {
+            buffer[size - 1] = '\0';
+            return;
+        }
+        used += (size_t)written;
+    }
+    const uint32_t unknown = reasons & ~known;
+    if (unknown != 0 && used < size) {
+        (void)snprintf(buffer + used, size - used, "%sunknown_0x%08lx",
+                       used == 0 ? "" : ",", (unsigned long)unknown);
+    }
+    if (used == 0 && reasons == 0)
+        (void)snprintf(buffer, size, "none");
+}
+
 static void disconnect_client(void)
 {
     if (client >= 0)
@@ -321,7 +377,7 @@ void PiCommunicationTask(void *argument)
                         (unsigned long)outputs.write_errors,outputs.requested_image,
                         outputs.confirmed_image,outputs.confirmed_valid,EXTERNAL_STATUS_LEDS_ENABLED);
                 const ReadyDiagnostics *diag = &t.ready_diag;
-                if (length > 0 && length < (int)sizeof(buffer) - 768)
+                if (length > 0 && length < (int)sizeof(buffer) - 1152)
                     length += snprintf(
                         buffer + length, sizeof(buffer) - length,
                         " diag_blockers=%lu diag_estop_released=%d diag_stop_ok=%d"
@@ -330,8 +386,18 @@ void PiCommunicationTask(void *argument)
                         " diag_safety_commissioned=%d diag_safety_relay_ok=%d"
                         " diag_safety_outputs_healthy=%d"
                         " diag_digital_outputs_initialized=%d diag_digital_outputs_healthy=%d"
+                        " diag_do1_requested=%d diag_do1_acknowledged=%d"
+                        " diag_do1_ack_valid=%d diag_11k3_feedback_ok=%d"
                         " diag_modbus_initialized=%d diag_modbus_response_received=%d"
                         " diag_v20_status_word=%u diag_v20_status_healthy=%d diag_v20_ready=%d"
+                        " diag_v20_ready_to_switch_on=%d diag_v20_ready_to_operate=%d"
+                        " diag_v20_operation_enabled=%d"
+                        " diag_v20_off2_active=%d diag_v20_off3_active=%d"
+                        " diag_v20_switch_on_inhibited=%d"
+                        " diag_v20_control_word_requested=%u"
+                        " diag_v20_control_word_requested_valid=%d"
+                        " diag_v20_control_word_acknowledged=%u"
+                        " diag_v20_control_word_acknowledged_valid=%d"
                         " diag_drive_communication_ok=%d diag_modbus_errors=%lu"
                         " diag_modbus_timeouts=%lu diag_v20_run_commissioned=%d"
                         " diag_drive_fault_free=%d diag_operational_ready=%d diag_run_authorized=%d"
@@ -353,9 +419,17 @@ void PiCommunicationTask(void *argument)
                         diag->safety_inputs_valid, diag->safety_inputs_fresh,
                         diag->safety_commissioned, diag->safety_relay_ok,
                         diag->safety_outputs_healthy, outputs.initialized,
-                        outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
-                        diag->modbus_response_received, diag->v20_status_word,
+                        outputs.initialized && outputs.confirmed_valid, diag->do1_requested,
+                        diag->do1_acknowledged, diag->do1_ack_valid, diag->relay_feedback_ok,
+                        diag->modbus_initialized, diag->modbus_response_received, diag->v20_status_word,
                         diag->v20_status_healthy, diag->v20_ready,
+                        diag->v20_ready_to_switch_on, diag->v20_ready_to_operate,
+                        diag->v20_operation_enabled,
+                        diag->v20_off2_active, diag->v20_off3_active,
+                        diag->v20_switch_on_inhibited, diag->v20_control_word_requested,
+                        diag->v20_control_word_requested_valid,
+                        diag->v20_control_word_acknowledged,
+                        diag->v20_control_word_acknowledged_valid,
                         diag->drive_communication_ok, (unsigned long)diag->modbus_errors,
                         (unsigned long)diag->modbus_timeouts, diag->v20_run_commissioned,
                         diag->drive_fault_free, diag->operational_ready, diag->run_authorized,
@@ -387,15 +461,23 @@ void PiCommunicationTask(void *argument)
                      (TickType_t)(now - last_wait_log) >=
                          pdMS_TO_TICKS(WAIT_DIAGNOSTICS_INTERVAL_MS)))
                 {
+                    char blocker_names[512];
+                    format_wait_blockers(diag->blocking_reasons, blocker_names,
+                                         sizeof(blocker_names));
                     ESP_LOGI(
                         "WaitDiag",
-                        "WAIT READY blocked=0x%08lx state=%s fault=%s reset_pending=%d"
+                        "WAIT READY blocked=0x%08lx blockers=%s state=%s fault=%s reset_pending=%d"
                         " reset_accepted=%d estop_released=%d stop_ok=%d safety_valid=%d"
                         " safety_fresh=%d safety_commissioned=%d relay_ok=%d safety_outputs_ok=%d"
                         " digital_outputs_initialized=%d digital_outputs_healthy=%d"
                         " modbus_initialized=%d modbus_response=%d v20_status=0x%04x"
                         " v20_status_healthy=%d v20_ready=%d drive_comm_ok=%d"
-                        " drive_fault_free=%d operational_ready=%d run_authorized=%d"
+                        " drive_fault_free=%d ready_to_switch_on=%d ready_to_operate=%d"
+                        " operation_enabled=%d"
+                        " OFF2_active=%d OFF3_active=%d switch_on_inhibited=%d"
+                        " control_word_requested=0x%04x requested_valid=%d"
+                        " control_word_acknowledged=0x%04x acknowledged_valid=%d"
+                        " operational_ready=%d run_authorized=%d"
                         " v20_run_commissioned=%d diagnostics_complete=%d"
                         " reference_valid=%d reference_config_valid=%d reference_value=%u"
                         " watchdog_valid=%d watchdog_config_known=%d watchdog_config_valid=%d"
@@ -403,10 +485,12 @@ void PiCommunicationTask(void *argument)
                         " last_error=%u last_operation=%u last_error_register=%u"
                         " last_error_expected=%u last_error_actual=%u exception_code=%lu"
                         " last_response_age_ms=%lu init_deadline_exceeded=%d"
-                        " modbus_errors=%lu modbus_timeouts=%lu"
+                        " do1_requested=%d do1_acknowledged=%d do1_ack_valid=%d"
+                        " relay_feedback_ok=%d modbus_errors=%lu modbus_timeouts=%lu"
                         " pitot_comm=%d sensor_valid=%d sensor_fresh=%d sensor_ok=%d"
                         " ethernet=%d pi_heartbeat_received=%d pi_heartbeat_fresh=%d pi_ok=%d",
-                        (unsigned long)diag->blocking_reasons, StateMachine_Name(t.state),
+                        (unsigned long)diag->blocking_reasons, blocker_names,
+                        StateMachine_Name(t.state),
                         FaultReason_Name(t.last_fault), diag->reset_pending, diag->reset_accepted,
                         diag->estop_released, diag->stop_ok, diag->safety_inputs_valid,
                         diag->safety_inputs_fresh, diag->safety_commissioned,
@@ -414,7 +498,15 @@ void PiCommunicationTask(void *argument)
                         outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
                         diag->modbus_response_received, diag->v20_status_word,
                         diag->v20_status_healthy, diag->v20_ready, diag->drive_communication_ok,
-                        diag->drive_fault_free, diag->operational_ready, diag->run_authorized,
+                        diag->drive_fault_free, diag->v20_ready_to_switch_on,
+                        diag->v20_ready_to_operate, diag->v20_operation_enabled,
+                        diag->v20_off2_active,
+                        diag->v20_off3_active, diag->v20_switch_on_inhibited,
+                        diag->v20_control_word_requested,
+                        diag->v20_control_word_requested_valid,
+                        diag->v20_control_word_acknowledged,
+                        diag->v20_control_word_acknowledged_valid,
+                        diag->operational_ready, diag->run_authorized,
                         diag->v20_run_commissioned, diag->diagnostics_complete,
                         diag->reference_valid, diag->reference_config_valid,
                         diag->reference_value, diag->watchdog_valid,
@@ -426,7 +518,8 @@ void PiCommunicationTask(void *argument)
                         (unsigned long)diag->modbus_exception_code,
                         (unsigned long)diag->modbus_last_success_age_ms,
                         t.init_deadline_exceeded,
-                        (unsigned long)diag->modbus_errors,
+                        diag->do1_requested, diag->do1_acknowledged, diag->do1_ack_valid,
+                        diag->relay_feedback_ok, (unsigned long)diag->modbus_errors,
                         (unsigned long)diag->modbus_timeouts, diag->pitot_communication_ok,
                         diag->sensor_data_valid, diag->sensor_data_fresh, diag->sensor_ok,
                         ethernet_link, heartbeat_received, heartbeat_fresh, diag->pi_ok);

@@ -240,10 +240,16 @@ static void LogApplicationStatus(void)
              (unsigned long)(sample_available ? ticks_age_ms(sample.tick) : UINT32_MAX),
              (double)sample.value, (double)sample.pressure_pa, (double)sample.temperature_c,
              sample.taps_valid, (unsigned long)sample.errors);
-    ESP_LOGI("Diag", "V20 modbus_initialized=%d status_available=%d drive_ready=%d drive_ok=%d "
-                     "actual_hz=%.2f status=0x%04x errors=%lu timeouts=%lu",
+    ESP_LOGI("Diag", "V20 modbus_initialized=%d status_available=%d drive_ready=%d "
+                     "ready_to_switch_on=%d ready_to_operate=%d operation_enabled=%d drive_ok=%d "
+                     "actual_hz=%.2f status=0x%04x control_word_requested=0x%04x/%d "
+                     "acknowledged=0x%04x/%d errors=%lu timeouts=%lu",
              state_available && state.modbus_initialized, motor_available,
-             motor.ready, motor.ok, (double)motor.actual_hz, motor.status,
+             motor.ready, motor.ready_to_switch_on, motor.ready_to_operate,
+             motor.operation_enabled, motor.ok,
+             (double)motor.actual_hz, motor.status, motor.control_word_requested,
+             motor.control_word_requested_valid, motor.control_word_acknowledged,
+             motor.control_word_acknowledged_valid,
              (unsigned long)motor.errors, (unsigned long)motor.timeouts);
     esp_netif_ip_info_t ip_info = {0};
     const bool ip_info_available = Ethernet_GetIpInfo(&ip_info);
@@ -268,10 +274,12 @@ static void LogApplicationStatus(void)
     ESP_LOGI("Diag", "DO map: DO1/bit0=11K3_VFD_ENABLE DO2/bit1=green DO3/bit2=red "
                      "DO4/bit3=yellow (verify DO2/DO3 lamp colors)");
     ESP_LOGI("Diag", "DO requested=0x%02x acknowledged=0x%02x ack_valid=%d initialized=%d "
-                     "11K3_requested=%d write_errors=%lu (I2C ack is not contact feedback)",
+                     "DO1_requested=%d DO1_acknowledged=%d 11K3_feedback=%d "
+                     "write_errors=%lu (I2C ack is not contact feedback)",
              (unsigned)outputs.requested_image, (unsigned)outputs.confirmed_image,
              outputs.confirmed_valid,
-             outputs.initialized, outputs.vfd_requested,
+             outputs.initialized, outputs.vfd_requested, outputs.vfd_acknowledged,
+             safety_available && safety.relay_ok,
              (unsigned long)outputs.write_errors);
     ESP_LOGI("Diag", "status_indicator=%s (onboard RGB only); external status DOs not assigned",
              indicator.text);

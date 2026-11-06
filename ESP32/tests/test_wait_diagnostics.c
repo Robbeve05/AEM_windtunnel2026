@@ -137,6 +137,19 @@ int main(void)
            !(locked & WAIT_BLOCK_MODBUS_NO_RESPONSE) &&
            (locked & WAIT_BLOCK_V20_OPERATION_INHIBITED));
 
+    MachineInputs supplied_diagnostics = ready_inputs();
+    supplied_diagnostics.safety.commissioned = false;
+    supplied_diagnostics.drive_ready = false;
+    supplied_diagnostics.v20_run_commissioned = false;
+    machine = (StateMachine){.state = STATE_WAIT};
+    const uint32_t supplied_blockers =
+        StateMachine_GetBlockingReasons(&machine, &supplied_diagnostics);
+    assert(supplied_blockers == 0x00228010u);
+    assert((supplied_blockers & WAIT_BLOCK_V20_OPERATION_INHIBITED) &&
+           (supplied_blockers & WAIT_BLOCK_RESET_SEQUENCE) &&
+           (supplied_blockers & WAIT_BLOCK_V20_RUN_LOCK) &&
+           (supplied_blockers & WAIT_BLOCK_SAFETY_NOT_COMMISSIONED));
+
     machine.state = STATE_READY;
     assert(StateMachine_GetBlockingReasons(&machine, &inputs) == 0);
 

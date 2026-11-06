@@ -28,6 +28,14 @@ _Static_assert(V20_REFERENCE_HZ == 50.0f && MANUAL_MAX_HZ <= 50.0f, "50 Hz comma
 #define V20_PDU_REF_FREQ     15u    /* Holding register 40016. */
 #define V20_WORD_OFF1        0x047Eu
 #define V20_WORD_RUN         0x047Fu
+#define V20_STATUS_READY_BIT 0x0001u
+#define V20_STATUS_OPERATION_ENABLED_BIT 0x0004u
+#define V20_STATUS_FAULT_BIT 0x0008u
+#define V20_STATUS_OFF2_BIT  0x0010u
+#define V20_STATUS_OFF3_BIT  0x0020u
+#define V20_STATUS_INHIBIT_BIT 0x0040u
+#define V20_STATUS_REMOTE_BIT 0x0200u
+#define V20_STATUS_READY_TO_OPERATE_BIT 0x0002u
 #define V20_FC_READ          3u
 #define V20_FC_WRITE_MULTI   16u
 #define V20_MAX_FRAME        32u
@@ -57,6 +65,7 @@ typedef struct {
     bool status_valid;
     bool drive_ready;
     bool drive_fault_free;
+    bool control_word_requested_valid, control_word_acknowledged_valid;
     bool reference_valid, reference_config_valid, watchdog_valid;
     bool watchdog_config_valid, watchdog_config_known, diagnostics_complete;
     bool pending_stop;
@@ -66,7 +75,8 @@ typedef struct {
     V20Operation bootstrap_next;
     V20Operation active_operation;
     Phase phase;
-    uint16_t status_word, reference_value, watchdog_register_value;
+    uint16_t status_word, control_word_requested, control_word_acknowledged;
+    uint16_t reference_value, watchdog_register_value;
     float actual_hz;
     uint32_t errors, timeouts, exception_code, last_error_count;
     uint16_t last_error_register, last_error_expected, last_error_actual;
@@ -223,6 +233,8 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
     d.errors++;
     if (error == V20_COMM_TIMEOUT)
         d.timeouts++;
+    if (d.active_operation == V20_OP_WRITE_CONTROL)
+        d.control_word_acknowledged_valid = false;
     record_error(error, actual, exception_code);
     d.armed = false;
     d.demand_run = false;
@@ -256,6 +268,7 @@ static void accept_exception(int64_t now_us, uint32_t exception_code)
         d.watchdog_config_known = V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED;
         d.watchdog_config_valid = false;
     } else if (d.active_operation == V20_OP_WRITE_CONTROL) {
+        d.control_word_acknowledged_valid = false;
         d.armed = false;
         d.demand_run = false;
         d.latched_fault = true;
@@ -284,6 +297,9 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
         size = build_command(d.tx, stw, hsw);
         d.active_stw = stw;
         d.active_hsw = hsw;
+        d.control_word_requested = stw;
+        d.control_word_requested_valid = true;
+        d.control_word_acknowledged_valid = false;
         d.active_address = V20_PDU_STW_HSW;
         d.active_count = 2;
         d.rx_expected = 8;
@@ -352,9 +368,14 @@ static void accept_reply(int64_t now_us)
         const uint16_t raw = get_word(&d.rx[5]);
         const int32_t signed_raw = raw < 32768u ? (int32_t)raw : (int32_t)raw - 65536;
         d.actual_hz = (float)signed_raw * V20_REFERENCE_HZ / 16384.0f;
-        d.drive_fault_free = (d.status_word & 0x0008u) == 0;
-        d.drive_ready = (d.status_word & 0x0201u) == 0x0201u &&
-                        (d.status_word & 0x0048u) == 0;
+        d.drive_fault_free = (d.status_word & V20_STATUS_FAULT_BIT) == 0;
+        /* OFF2/OFF3 and inhibit bits must be clear before the app treats the drive as start-ready. */
+        d.drive_ready =
+            (d.status_word & (V20_STATUS_READY_BIT | V20_STATUS_REMOTE_BIT |
+                              V20_STATUS_OFF2_BIT | V20_STATUS_OFF3_BIT)) ==
+                (V20_STATUS_READY_BIT | V20_STATUS_REMOTE_BIT |
+                 V20_STATUS_OFF2_BIT | V20_STATUS_OFF3_BIT) &&
+            (d.status_word & (V20_STATUS_FAULT_BIT | V20_STATUS_INHIBIT_BIT)) == 0;
         d.status_valid = true;
         d.last_status_us = now_us;
         break;
@@ -382,6 +403,8 @@ static void accept_reply(int64_t now_us)
         break;
     case V20_OP_WRITE_CONTROL:
         d.last_run_command = d.active_stw == V20_WORD_RUN;
+        d.control_word_acknowledged = d.active_stw;
+        d.control_word_acknowledged_valid = true;
         if (!d.last_run_command) d.pending_stop = false;
         d.last_command_us = now_us;
         break;
@@ -418,7 +441,7 @@ static void simulate_response(int64_t now_us)
                 (uint16_t)V20_EXPECTED_WATCHDOG_PARAMETER_MS : V20_EXPECTED_REFERENCE_CENTIHZ;
         d.rx[2] = (uint8_t)(2 * d.active_count);
             if (d.active_operation == V20_OP_READ_STATUS) {
-            put_word(&d.rx[3], 0x0201u);
+            put_word(&d.rx[3], 0x0231u);
             put_word(&d.rx[5], (uint16_t)lroundf(d.actual_hz * 16384.0f / V20_REFERENCE_HZ));
         } else put_word(&d.rx[3], value);
         d.rx_used = d.rx_expected;
@@ -657,6 +680,18 @@ void V20Modbus_GetStatus(MotorStatus *status)
         .operational_ready = d.drive_ready && recent && d.reference_config_valid &&
                              (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
                               d.watchdog_config_valid),
+        .ready_to_switch_on = recent &&
+                              (d.status_word & V20_STATUS_READY_BIT) != 0,
+        .ready_to_operate = recent &&
+                            (d.status_word & V20_STATUS_READY_TO_OPERATE_BIT) != 0,
+        .operation_enabled = recent &&
+                             (d.status_word & V20_STATUS_OPERATION_ENABLED_BIT) != 0,
+        .off2_active = recent && (d.status_word & V20_STATUS_OFF2_BIT) == 0,
+        .off3_active = recent && (d.status_word & V20_STATUS_OFF3_BIT) == 0,
+        .switch_on_inhibited = recent &&
+                               (d.status_word & V20_STATUS_INHIBIT_BIT) != 0,
+        .control_word_requested_valid = d.control_word_requested_valid,
+        .control_word_acknowledged_valid = d.control_word_acknowledged_valid,
         .run_authorized = d.armed && d.demand_run,
         .diagnostics_complete = d.diagnostics_complete,
         .status_valid = d.status_valid && recent,
@@ -667,6 +702,8 @@ void V20Modbus_GetStatus(MotorStatus *status)
         .watchdog_config_valid = d.watchdog_config_valid,
         .actual_hz = d.actual_hz,
         .status = d.status_word,
+        .control_word_requested = d.control_word_requested,
+        .control_word_acknowledged = d.control_word_acknowledged,
         .reference_value = d.reference_value,
         .watchdog_register_value = d.watchdog_register_value,
         .watchdog_parameter_expected_value = V20_EXPECTED_WATCHDOG_PARAMETER_MS,

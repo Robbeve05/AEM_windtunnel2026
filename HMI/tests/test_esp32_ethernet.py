@@ -54,6 +54,14 @@ class ParserTests(unittest.TestCase):
             FRAME.replace("state=FAULT", "state=WAIT")
             + " last_fault=NONE diag_blockers=163840 diag_v20_status_word=513"
             " diag_modbus_errors=2 diag_modbus_timeouts=1 diag_v20_ready=0"
+            " diag_v20_ready_to_switch_on=0 diag_v20_ready_to_operate=0"
+            " diag_v20_operation_enabled=0"
+            " diag_v20_off2_active=1 diag_v20_off3_active=1"
+            " diag_v20_switch_on_inhibited=1"
+            " diag_v20_control_word_requested=1150 diag_v20_control_word_requested_valid=1"
+            " diag_v20_control_word_acknowledged=1150 diag_v20_control_word_acknowledged_valid=1"
+            " diag_do1_requested=0 diag_do1_acknowledged=0 diag_do1_ack_valid=1"
+            " diag_11k3_feedback_ok=1"
             " diag_drive_communication_ok=1 diag_v20_run_commissioned=0"
             " diag_v20_diagnostics_complete=1 diag_drive_fault_free=1"
             " diag_v20_reference_value=5000 diag_v20_reference_valid=1"
@@ -68,7 +76,9 @@ class ParserTests(unittest.TestCase):
         self.assertIn("V20 RUN commissioning lock active", waiting)
         self.assertIn("Physical RESET sequence not accepted", waiting)
         self.assertIn("V20 status word: 0x0201", details)
-        self.assertIn("V20 operational status bits ready: FAIL", details)
+        self.assertIn("V20 ready to switch on: FAIL", details)
+        self.assertIn("V20 control word requested: 0x047E", details)
+        self.assertIn("V20 control word acknowledged: 0x047E", details)
         self.assertIn("Drive communication healthy: OK", details)
         self.assertIn(
             "Watchdog register: 1000 (P2014 expected 500 ms; register mapping unverified)",

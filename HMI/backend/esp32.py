@@ -23,6 +23,13 @@ INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outp
         "diag_digital_outputs_initialized", "diag_digital_outputs_healthy",
         "diag_modbus_initialized", "diag_modbus_response_received", "diag_v20_status_word",
         "diag_v20_status_healthy", "diag_v20_ready", "diag_drive_communication_ok",
+        "diag_v20_ready_to_switch_on", "diag_v20_ready_to_operate",
+        "diag_v20_operation_enabled",
+        "diag_v20_off2_active", "diag_v20_off3_active", "diag_v20_switch_on_inhibited",
+        "diag_v20_control_word_requested", "diag_v20_control_word_requested_valid",
+        "diag_v20_control_word_acknowledged", "diag_v20_control_word_acknowledged_valid",
+        "diag_do1_requested", "diag_do1_acknowledged", "diag_do1_ack_valid",
+        "diag_11k3_feedback_ok",
         "diag_modbus_errors", "diag_modbus_timeouts", "diag_v20_run_commissioned",
         "diag_drive_fault_free", "diag_operational_ready", "diag_run_authorized",
         "diag_v20_diagnostics_complete", "diag_v20_reference_valid",
@@ -73,7 +80,7 @@ V20_OPERATIONS = ("NONE", "READ_STATUS", "READ_REFERENCE", "READ_WATCHDOG", "WRI
 DIAGNOSTIC_SIGNALS = (
     ("diag_estop_released", "E-stop released"),
     ("diag_stop_ok", "Stop input healthy"),
-    ("diag_reset_detected", "Reset button sequence detected"),
+    ("diag_reset_detected", "Physical RESET detected this cycle"),
     ("diag_reset_accepted", "Reset sequence accepted"),
     ("diag_reset_pending", "Reset feedback pending"),
     ("diag_safety_inputs_valid", "Safety input data valid"),
@@ -83,12 +90,22 @@ DIAGNOSTIC_SIGNALS = (
     ("diag_safety_outputs_healthy", "Safety outputs healthy"),
     ("diag_digital_outputs_initialized", "Digital outputs initialized"),
     ("diag_digital_outputs_healthy", "Digital outputs healthy"),
+    ("diag_do1_requested", "DO1/11K3 software request"),
+    ("diag_do1_acknowledged", "DO1/11K3 output-driver acknowledgement"),
+    ("diag_do1_ack_valid", "DO1 output acknowledgement valid"),
+    ("diag_11k3_feedback_ok", "11K3 physical feedback input"),
     ("diag_modbus_initialized", "Modbus initialized"),
     ("diag_modbus_response_received", "Recent V20 response received"),
     ("diag_v20_status_healthy", "V20 status response is fault-free"),
     ("diag_drive_fault_free", "V20 reports no active drive fault"),
-    ("diag_v20_ready", "V20 operational status bits ready"),
-    ("diag_operational_ready", "V20 operational readiness"),
+    ("diag_v20_ready", "V20 diagnostics and configuration ready"),
+    ("diag_v20_ready_to_switch_on", "V20 ready to switch on"),
+    ("diag_v20_ready_to_operate", "V20 ready to operate"),
+    ("diag_v20_operation_enabled", "V20 operation enabled (not a RUN command)"),
+    ("diag_v20_off2_active", "V20 OFF2 active"),
+    ("diag_v20_off3_active", "V20 OFF3 active"),
+    ("diag_v20_switch_on_inhibited", "V20 switch-on inhibited"),
+    ("diag_operational_ready", "V20 start readiness"),
     ("diag_drive_communication_ok", "Drive communication healthy"),
     ("diag_v20_run_commissioned", "V20 RUN commissioned"),
     ("diag_v20_diagnostics_complete", "Read-only V20 diagnostics complete"),
@@ -117,6 +134,16 @@ def wait_diagnostics(drive):
         f"V20 status word: 0x{drive['diag_v20_status_word']:04X}"
         if isinstance(drive.get("diag_v20_status_word"), int)
         else "V20 status word: unavailable",
+        f"V20 control word requested: "
+        f"0x{drive['diag_v20_control_word_requested']:04X}"
+        if drive.get("diag_v20_control_word_requested_valid") == 1
+        and isinstance(drive.get("diag_v20_control_word_requested"), int)
+        else "V20 control word requested: none",
+        f"V20 control word acknowledged: "
+        f"0x{drive['diag_v20_control_word_acknowledged']:04X}"
+        if drive.get("diag_v20_control_word_acknowledged_valid") == 1
+        and isinstance(drive.get("diag_v20_control_word_acknowledged"), int)
+        else "V20 control word acknowledged: none",
         f"Modbus errors/timeouts: {drive.get('diag_modbus_errors', 'unavailable')}/"
         f"{drive.get('diag_modbus_timeouts', 'unavailable')}",
         f"V20 communication error/operation: "

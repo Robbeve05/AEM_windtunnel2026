@@ -13,10 +13,13 @@ typedef struct { float output; TickType_t tick; bool run,permissive,coast; uint3
 typedef struct {
     bool ready, ok, initialized, response_received, status_healthy, communication_ok;
     bool drive_fault_free, operational_ready, run_authorized;
+    bool ready_to_switch_on, ready_to_operate, operation_enabled, off2_active, off3_active;
+    bool switch_on_inhibited, control_word_requested_valid, control_word_acknowledged_valid;
     bool diagnostics_complete, status_valid, reference_valid, reference_config_valid;
     bool watchdog_valid, watchdog_config_known, watchdog_config_valid;
     float actual_hz;
-    uint16_t status, reference_value, watchdog_register_value;
+    uint16_t status, control_word_requested, control_word_acknowledged;
+    uint16_t reference_value, watchdog_register_value;
     uint16_t watchdog_parameter_expected_value;
     uint16_t last_error_register, last_error_expected, last_error_actual;
     uint32_t errors, timeouts, last_success_age_ms;
@@ -34,9 +37,14 @@ typedef struct {
     bool safety_outputs_healthy, digital_outputs_initialized, digital_outputs_healthy;
     bool modbus_initialized, modbus_response_received, v20_status_healthy, v20_ready;
     bool drive_communication_ok, v20_run_commissioned;
+    bool v20_ready_to_switch_on, v20_ready_to_operate, v20_operation_enabled;
+    bool v20_off2_active, v20_off3_active, v20_switch_on_inhibited;
+    bool v20_control_word_requested_valid, v20_control_word_acknowledged_valid;
+    bool do1_requested, do1_acknowledged, do1_ack_valid, relay_feedback_ok;
     bool drive_fault_free, operational_ready, run_authorized, diagnostics_complete;
     bool reference_valid, reference_config_valid, watchdog_valid, watchdog_config_known;
     bool watchdog_config_valid;
+    uint16_t v20_control_word_requested, v20_control_word_acknowledged;
     uint16_t reference_value, watchdog_register_value, watchdog_parameter_expected_value;
     uint8_t modbus_last_error, modbus_last_operation;
     uint16_t modbus_last_error_register, modbus_last_error_expected, modbus_last_error_actual;

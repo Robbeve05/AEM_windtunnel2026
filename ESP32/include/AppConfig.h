@@ -427,14 +427,14 @@
 // must be measured (section 11); software does not replace a certified E-stop.
 
 #ifndef SAFETY_IO_COMMISSIONED
-// [Safety-critical flag] 0 inhibits uncommissioned I/O; 1 permits operation only after physical
-// safety I/O verification.
+// [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1 permits operation
+// only after physical safety I/O verification.
 #define SAFETY_IO_COMMISSIONED 0
 #endif
 
 #ifndef V20_RUN_COMMISSIONED
-// [Safety-critical flag] 0 inhibits drive RUN; 1 permits RUN only after documented
-// drive/hardware commissioning.
+// [Safety-critical flag] 0 suppresses V20 control writes and blocks READY; 1 permits the
+// non-running OFF1 heartbeat, while RUN still requires commissioning and physical START.
 #define V20_RUN_COMMISSIONED 0
 #endif
 

@@ -63,6 +63,7 @@ bool DigitalOutputs_Init(void) {
     portENTER_CRITICAL(&state_lock);
     state.initialized=state.confirmed_valid=ok;
     state.confirmed_image=inactive;
+    state.vfd_acknowledged=false;
     if(!ok) state.write_errors++;
     portEXIT_CRITICAL(&state_lock);
     if(!ok) ESP_LOGE("DigitalOutputs","Inactive image/direction initialization failed; motor inhibited");
@@ -85,7 +86,10 @@ bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators) {
     const bool ok=write_image(image);
     portENTER_CRITICAL(&state_lock);
     state.confirmed_valid=ok;
-    if(ok) state.confirmed_image=image;
+    if(ok) {
+        state.confirmed_image=image;
+        state.vfd_acknowledged=authorized;
+    }
     else state.write_errors++;
     portEXIT_CRITICAL(&state_lock);
     xSemaphoreGive(writer_lock);
