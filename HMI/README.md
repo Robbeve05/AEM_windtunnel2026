@@ -4,7 +4,9 @@ The only operator interface is the native Qt application (`desktop.py`). The loc
 
 ## Native interface
 
-Six pages: Overview, Raw Data, Cp Analysis, Measurements, Storage, Settings. Settings has two tabs: General and Calibration. Calibration uses the existing ESP32 MANUAL mode, physical START/STOP and the FastAPI calibration endpoints. It supports configuration of 10–50 Hz, 5 Hz steps and 5-second averaging, live stability/status, plot, history, CSV/JSON export, Save & Activate and Reset Fan Calibration. Calibration lookup/CRC/NVS and torque-PID execution remain in ESP32 firmware.
+Six pages: Overview, Raw Data, Aerodynamic Analysis, Measurements, Storage, Settings. Aerodynamic Analysis has Overview, Cp Distribution, Aerodynamic Coefficients and Compare tabs. Prepare pressure experiments from the new Overview card, explicitly choose simulation for hardware-free testing, then acquire, analyze and export. See [aerodynamic analysis](AERODYNAMIC-ANALYSIS.md) for mathematics, API, hardware adapter requirements, validation and Windows/Pi instructions.
+
+Settings has two tabs: General and Calibration. Calibration uses the existing ESP32 MANUAL mode, physical START/STOP and the FastAPI calibration endpoints. It supports configuration of 10–50 Hz, 5 Hz steps and 5-second averaging, live stability/status, plot, history, CSV/JSON export, Save & Activate and Reset Fan Calibration. Calibration lookup/CRC/NVS and torque-PID execution remain in ESP32 firmware.
 
 On the Overview page, ESP32 `WAIT` telemetry lists only the reported conditions blocking `WAIT` → `READY`. Expand **System Diagnostics** to see all reported safety, reset, V20/Modbus, sensor and Pi signals, the V20 status word, and Modbus error/timeout counters. This display is read-only and requires firmware that sends the optional `diag_*` STATUS fields; older firmware remains compatible and reports diagnostics as unavailable.
 
@@ -34,4 +36,6 @@ Saving calibration also exports `dynamics.json` and `dynamic_transitions.csv`. S
 
 The read-only `/api/calibration/fan/runs/{id}/dynamics?lambda_s=1.0` endpoint recalculates candidate tuning/simulation without editing the saved identification or activating hardware. Numerical fit acceptance, independent model validation and hardware commissioning remain separate. Historical runs without dynamics exports still open. See [controller design](../docs/control/TORQUE-CONTROL.md).
 
-Run `python -m unittest discover -s tests -v` with `requirements-desktop.txt` installed to include native Qt tests.
+Run `python -m pip install -r requirements-test.txt`, then `python -m unittest discover -s tests -v` to include native Qt and PDF export tests.
+
+The right control panel offers AUTO airspeed, MANUAL frequency and AUTO Reynolds number. Reynolds uses the same AUTO controller and `/api/tunnel/setpoint` endpoint. It requires fresh measured temperature, existing Pitot density, desired Re and chord; it never substitutes a default temperature, clamps a request or starts the fan. See [analysis guide](AERODYNAMIC-ANALYSIS.md#reynolds-setpoint).

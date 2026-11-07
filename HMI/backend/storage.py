@@ -33,7 +33,10 @@ class Storage:
         metadata = self.measurements.detail(identifier)['metadata']
         if metadata['state'] != 'COMPLETED':
             raise ValueError('Only completed measurements can be exported')
-        size = sum(p.stat().st_size for p in source.iterdir() if p.is_file())
+        files = [p for p in source.rglob('*') if p.is_file()]
+        if any(p.is_symlink() or source.resolve() not in p.resolve().parents for p in files):
+            raise ValueError('Export cannot include files outside the measurement folder')
+        size = sum(p.stat().st_size for p in files)
         if shutil.disk_usage(self.usb).free < size + 1024 * 1024:
             raise ValueError('Insufficient USB free space')
         destination = self.usb / identifier
@@ -45,10 +48,11 @@ class Storage:
         self.progress = dict(state='EXPORTING', percent=0, message=metadata['name'])
         try:
             temporary.mkdir()
-            files = [p for p in source.iterdir() if p.is_file()]
             for i, path in enumerate(files):
-                shutil.copy2(path, temporary / path.name)
-                with (temporary / path.name).open('r+b') as stream:
+                target = temporary / path.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                with target.open('r+b') as stream:
                     os.fsync(stream.fileno())
                 self.progress['percent'] = round((i + 1) / len(files) * 100)
             metadata['exported'] = True

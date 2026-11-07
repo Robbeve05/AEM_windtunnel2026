@@ -9,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 
 from native_calibration import CalibrationPanel
+from native_diagnostics import DiagnosticsPanel
+from native_reynolds import ReynoldsSetpointWidget
+from native_aerodynamics import AerodynamicAnalysisPanel, AerodynamicExperimentCard
 from PySide6.QtCore import QIODevice, QRegularExpression, QSize, Qt, QTimer, QUrl, QSaveFile
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRegularExpressionValidator
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTabWidget,
     QStackedWidget,
     QTableWidget,
@@ -53,7 +57,7 @@ PANEL = "#1e2023"
 PAGES = (
     ("overview", "◫", "Overview", "Tunnel overview", "A clear view of your flow. Every parameter, in real time."),
     ("raw", "≡", "Raw Data", "Raw sensor data", "Inspect the ESP32-S3 / ASPD-4525 telemetry frame."),
-    ("cp", "⌁", "Cp Analysis", "Cp analysis", "Multi-point pressure distribution is the next measurement subsystem."),
+    ("cp", "⌁", "Aerodynamic Analysis", "Aerodynamic analysis", "Acquire pressure data, inspect Cp and compare sectional pressure coefficients."),
     ("measurements", "▤", "Measurements", "Measurements", "Record and review real pitot-tube measurements."),
     ("storage", "▱", "Storage", "Storage & export", "Keep data local and export complete runs when needed."),
     ("settings", "⚙", "Settings", "System settings", "Current acquisition configuration and hardware status."),
@@ -277,9 +281,69 @@ class AirfoilDiagram(QWidget):
         painter.drawLine(int(.06 * width), int(.60 * height), int(.95 * width), int(.60 * height))
 
 
+class ControlInputStack(QStackedWidget):
+    """Hidden Reynolds fields must not enlarge the airspeed/manual input panel."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(self.updateGeometry)
+
+    def sizeHint(self):
+        return self.currentWidget().sizeHint() if self.currentWidget() else QSize(0, 0)
+
+    def minimumSizeHint(self):
+        return self.currentWidget().minimumSizeHint() if self.currentWidget() else QSize(0, 0)
+
+
+class VerticalResizeHandle(QFrame):
+    """Drag grip for a panel inside a vertically scrolling sidebar."""
+
+    def __init__(self, target, parent=None):
+        super().__init__(parent)
+        self.target = target
+        self._drag_start = None
+        self.setObjectName("verticalResizeHandle")
+        self.setFixedHeight(10)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setToolTip("Drag up or down to resize diagnostics")
+        self.setAccessibleName("Resize diagnostics height")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = (event.globalPosition().y(), self.target.height())
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            y, height = self._drag_start
+            self.target.setFixedHeight(max(140, min(900, round(height + event.globalPosition().y() - y))))
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
+
+
 class HMIWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Keep the light workspace independent of the Windows dark-mode palette.
+        palette = self.palette()
+        for role, color in (
+            (QPalette.ColorRole.Window, CREAM),
+            (QPalette.ColorRole.Base, "#ffffff"),
+            (QPalette.ColorRole.Text, INK),
+            (QPalette.ColorRole.WindowText, INK),
+            (QPalette.ColorRole.Button, "#ffffff"),
+            (QPalette.ColorRole.ButtonText, INK),
+            (QPalette.ColorRole.PlaceholderText, "#666662"),
+        ):
+            palette.setColor(role, QColor(color))
+        self.setPalette(palette)
         self.setWindowTitle("Avans Windtunnel · HMI")
         self.resize(1600, 950)
         self.setMinimumSize(1120, 700)
@@ -327,10 +391,15 @@ class HMIWindow(QMainWindow):
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setObjectName("workspaceSplitter")
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(8)
+        layout.addWidget(self.main_splitter)
 
         self.navigation = QWidget()
         self.navigation.setObjectName("navigation")
-        self.navigation.setFixedWidth(220)
+        self.navigation.setMinimumWidth(200)
         nav_layout = QVBoxLayout(self.navigation)
         nav_layout.setContentsMargins(14, 20, 14, 15)
         nav_layout.setSpacing(8)
@@ -338,6 +407,7 @@ class HMIWindow(QMainWindow):
         logo.setFixedSize(132, 52)
         brand = QLabel("WINDTUNNEL\nAEROSPACE ENGINEERING")
         brand.setObjectName("brand")
+        brand.setWordWrap(True)
         nav_layout.addWidget(logo)
         nav_layout.addWidget(brand)
         nav_layout.addSpacing(18)
@@ -366,10 +436,11 @@ class HMIWindow(QMainWindow):
         facility_label = QLabel("Avans windtunnel test facility\nSUPERVISORY HMI · 2026")
         facility_label.setObjectName("facilityLabel")
         nav_layout.addWidget(facility_label)
-        layout.addWidget(self.navigation)
+        self.main_splitter.addWidget(self.navigation)
 
         center = QWidget()
         center.setObjectName("center")
+        center.setMinimumWidth(420)
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
@@ -380,7 +451,9 @@ class HMIWindow(QMainWindow):
         self.connection = QLabel("CONNECTING")
         self.connection.setObjectName("tagAmber")
         self.clock = QLabel("--:--:--")
-        header_layout.addWidget(QLabel("AVANS HOGESCHOOL   /   AEROSPACE ENGINEERING   /   WINDTUNNEL 2026"))
+        header_caption = QLabel("AVANS HOGESCHOOL   /   AEROSPACE ENGINEERING   /   WINDTUNNEL 2026")
+        header_caption.setWordWrap(True)
+        header_layout.addWidget(header_caption)
         header_layout.addStretch(1)
         # Always-visible, non-safety signal tower for the physical tunnel.
         self.status_lamp = QLabel("●")
@@ -432,11 +505,10 @@ class HMIWindow(QMainWindow):
         footer.setObjectName("footer")
         main_layout.addWidget(footer)
         center_layout.addWidget(main, 1)
-        layout.addWidget(center, 1)
+        self.main_splitter.addWidget(center)
 
         self.right = QWidget()
         self.right.setObjectName("rightSidebar")
-        self.right.setFixedWidth(324)
         right_layout = QVBoxLayout(self.right)
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(9)
@@ -473,12 +545,13 @@ class HMIWindow(QMainWindow):
         self.waiting_for_text.setVisible(False)
         self.diagnostics_toggle = QCheckBox("System Diagnostics")
         self.diagnostics_toggle.setChecked(False)
-        self.diagnostics_text = QPlainTextEdit()
-        self.diagnostics_text.setReadOnly(True)
-        self.diagnostics_text.setMaximumHeight(190)
-        self.diagnostics_text.setPlaceholderText("Awaiting ESP32 readiness diagnostics.")
+        self.diagnostics_text = DiagnosticsPanel()
+        self.diagnostics_text.setFixedHeight(270)
         self.diagnostics_text.setVisible(False)
         self.diagnostics_toggle.toggled.connect(self.diagnostics_text.setVisible)
+        self.diagnostics_resize = VerticalResizeHandle(self.diagnostics_text)
+        self.diagnostics_resize.setVisible(False)
+        self.diagnostics_toggle.toggled.connect(self.diagnostics_resize.setVisible)
         # A simple text editor is more reliable than QDoubleSpinBox in the
         # styled dark Windows sidebar; units are in the label above.
         self.setpoint_spin = OperatorNumericInput(40.0, "m/s")
@@ -491,7 +564,7 @@ class HMIWindow(QMainWindow):
         self.setpoint_apply.clicked.connect(self._apply_setpoint)
         self.setpoint_spin.textChanged.connect(lambda _: self._refresh_mode_controls())
         self.mode_select=QComboBox()
-        self.mode_select.addItems(["AUTO","MANUAL"])
+        self.mode_select.addItems(["AUTO", "MANUAL", "AUTO — Reynolds number"])
         self.mode_select.setToolTip("AUTO: Pitot airspeed feedback control. MANUAL: V20 frequency command.")
         self.mode_apply=QPushButton("Apply mode")
         self.mode_apply.setEnabled(False)
@@ -514,6 +587,7 @@ class HMIWindow(QMainWindow):
         control_layout.addWidget(self.waiting_for_text)
         control_layout.addWidget(self.diagnostics_toggle)
         control_layout.addWidget(self.diagnostics_text)
+        control_layout.addWidget(self.diagnostics_resize)
         mode_label = QLabel("CONTROL MODE")
         mode_label.setObjectName("smallLabel")
         control_layout.addWidget(mode_label)
@@ -527,7 +601,7 @@ class HMIWindow(QMainWindow):
         control_layout.addWidget(self.mode_explanation)
         # Only show inputs appropriate to the selected control mode.
         # This is UI presentation only; selecting a mode never sends a command.
-        self.mode_value_stack = QStackedWidget()
+        self.mode_value_stack = ControlInputStack()
         auto_page = QWidget()
         auto_layout = QVBoxLayout(auto_page)
         auto_layout.setContentsMargins(0, 0, 0, 0)
@@ -546,6 +620,8 @@ class HMIWindow(QMainWindow):
         manual_layout.addWidget(self.manual_hz)
         manual_layout.addWidget(self.manual_apply)
         self.mode_value_stack.addWidget(manual_page)
+        self.reynolds_widget = ReynoldsSetpointWidget(self._refresh_mode_controls, self._apply_reynolds)
+        self.mode_value_stack.addWidget(self.reynolds_widget)
         self.mode_value_stack.setCurrentIndex(0)
         self.mode_select.currentTextChanged.connect(self._on_mode_selection_changed)
         control_layout.addSpacing(7)
@@ -569,7 +645,7 @@ class HMIWindow(QMainWindow):
         self.health_card.setProperty("section", True)
         health_layout = QVBoxLayout(self.health_card)
         health_layout.setContentsMargins(0, 10, 0, 0)
-        health_layout.setSpacing(8)
+        health_layout.setSpacing(3)
         health_heading = QHBoxLayout()
         health_heading.addWidget(self._heading("System health"))
         health_heading.addStretch(1)
@@ -579,12 +655,9 @@ class HMIWindow(QMainWindow):
         health_layout.addLayout(health_heading)
         self.health_labels = {}
         for key, label in (
-            ("host", "Host / Raspberry Pi"), ("connection", "ESP32 Ethernet"),
-            ("ethernet_link", "Ethernet link"), ("ipv4", "IPv4 address"),
-            ("tcp", "TCP application"), ("heartbeat", "Pi heartbeat"),
-            ("heartbeat_received", "Heartbeat received"),
-            ("pitot", "Pitot sensor"), ("pressure_sensors", "Cp pressure taps"),
-            ("vfd", "Fan / VFD"), ("logger", "Measurement logger"), ("storage", "Storage"),
+            ("host", "HMI / host"), ("connection", "ESP32"),
+            ("pitot", "Pitot"), ("vfd", "Fan / VFD"),
+            ("logger", "Recording"), ("storage", "Storage"),
         ):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
@@ -598,9 +671,9 @@ class HMIWindow(QMainWindow):
             row.addWidget(value)
             health_layout.addLayout(row)
             self.health_labels[key] = value
-        self.usb_health = QLabel("USB storage  ·  CHECKING")
-        self.usb_health.setObjectName("healthLabel")
-        health_layout.addWidget(self.usb_health)
+        # Retain the USB status for tooltips; details belong in Storage.
+        self.usb_health = QLabel("USB storage · CHECKING", self.health_card)
+        self.usb_health.hide()
         right_layout.addWidget(self.health_card)
         warning_card = Card()
         warning_card.setProperty("section", True)
@@ -644,7 +717,20 @@ class HMIWindow(QMainWindow):
         event_scroll.setWidget(self.event_list)
         event_layout.addWidget(event_scroll, 1)
         right_layout.addWidget(event_card, 1)
-        layout.addWidget(self.right)
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setObjectName("rightSidebarScroll")
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.right_scroll.setMinimumWidth(280)
+        self.right_scroll.setWidget(self.right)
+        self.main_splitter.addWidget(self.right_scroll)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setSizes([220, 1000, 380])
+        for index in (1, 2):
+            self.main_splitter.handle(index).setToolTip("Drag left or right to resize panels")
         self._show_page("overview")
 
     def _heading(self, text):
@@ -907,7 +993,7 @@ class HMIWindow(QMainWindow):
             ("5 S MIN / MAX", "—"),
             ("ANGLE OF ATTACK", "IN DEVELOPMENT"),
             ("FAN / VFD CONTROL", "LIVE ESP32 STATUS"),
-            ("REYNOLDS NUMBER", "IN DEVELOPMENT"),
+            ("REYNOLDS NUMBER", "—"),
         )
         for index, (title, text) in enumerate(fields):
             cell_widget = QWidget()
@@ -939,6 +1025,8 @@ class HMIWindow(QMainWindow):
         layout.setStretch(0, 0)
         layout.setStretch(1, 1)
         layout.setStretch(2, 0)
+        self.aerodynamic_experiment = AerodynamicExperimentCard(self)
+        layout.addWidget(self.aerodynamic_experiment)
         page.setWidget(self.overview_content)
         self.overview_page = page
         self.pages.addWidget(page)
@@ -969,19 +1057,8 @@ class HMIWindow(QMainWindow):
         self.pages.addWidget(page)
 
     def _build_cp(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        empty = self._empty_state(
-            "Cp",
-            "IN DEVELOPMENT",
-            "Pressure tap system not connected",
-            "Cp analysis will become available when the multi-point pressure manifold and channel switching hardware are installed.",
-            "PRESSURE SYSTEM OFFLINE",
-            development=True,
-        )
-        layout.addWidget(empty, 1)
-        self.pages.addWidget(page)
+        self.aerodynamic_panel = AerodynamicAnalysisPanel(self)
+        self.pages.addWidget(self.aerodynamic_panel)
 
     def _empty_state(self, icon, title, message, detail, status=None, development=False, min_height=320):
         frame = QFrame()
@@ -1263,9 +1340,30 @@ class HMIWindow(QMainWindow):
         self.pages.addWidget(page)
 
     def _apply_style(self):
+        # Paint native tab/scroll surfaces explicitly, including Settings tabs.
+        # Windows dark mode can otherwise supply their viewport background.
+        for tabs in self.findChildren(QTabWidget):
+            for index in range(tabs.count()):
+                tab = tabs.widget(index)
+                surfaces = [tab]
+                scrolls = tab.findChildren(QScrollArea)
+                if isinstance(tab, QScrollArea):
+                    scrolls.append(tab)
+                for scroll in scrolls:
+                    surfaces.extend([scroll.viewport(), scroll.widget()])
+                for surface in surfaces:
+                    if surface is not None:
+                        surface.setProperty('workspaceSurface', True)
+                        surface.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                        surface.setAutoFillBackground(True)
         self.setStyleSheet(f"""
             QWidget {{ color:{INK}; font-family:Arial; font-size:14px; }}
             QMainWindow, #center {{ background:{CREAM}; }}
+            #workspaceSplitter::handle {{ background:#bfc2c5; }}
+            #workspaceSplitter::handle:hover {{ background:{RED}; }}
+            #verticalResizeHandle {{ background:#5c6065; border-top:2px solid #92969a; border-radius:3px; }}
+            #verticalResizeHandle:hover {{ background:{RED}; }}
+            #overviewScroll, #overviewContent, #overviewScroll > QWidget {{ background:{CREAM}; }}
             #navigation {{ background:{RED}; color:white; }}
             #navigation QLabel {{ color:white; }}
             #brandLogo {{ font-size:17px; font-weight:800; padding:4px 7px; }}
@@ -1296,7 +1394,7 @@ class HMIWindow(QMainWindow):
             #footer {{ color:#8a8a85; font-size:8px; letter-spacing:1px; padding-top:5px; }}
             #card {{ background:white; border:1px solid {LINE}; border-radius:6px; }}
             #card[accent="true"] {{ border-color:#d4c0bd; border-left:4px solid {RED}; }}
-            #chartCard {{ border-top:3px solid {RED}; }}
+            #chartCard {{ background:white; border:1px solid {LINE}; border-top:3px solid {RED}; border-radius:6px; }}
             #cardHeading {{ font-size:15px; font-weight:700; }}
             #smallLabel {{ color:#727272; font-size:8px; font-weight:800; letter-spacing:1px; }}
             #operatingValue {{ font-size:14px; font-weight:700; }}
@@ -1309,6 +1407,8 @@ class HMIWindow(QMainWindow):
             #tagSuccess {{ padding:4px 7px; border:1px solid #badbca; border-radius:3px; background:#e6f3ed; color:#16865f; font-size:8px; font-weight:800; }}
             #rightSidebar {{ background:{PANEL}; color:#f5f5f5; border-left:1px solid #303236; }}
             #rightSidebar QLabel {{ color:#eee; }}
+            #rightSidebar QCheckBox {{ color:#eee; }}
+            #rightSidebarScroll {{ background:{PANEL}; border:0; }}
             #rightSidebar #card[section="true"] {{ background:transparent; border:0; border-top:1px solid #3a3d42; border-radius:0; }}
             #rightSidebar #cardHeading {{ color:white; font-size:12px; }}
             #rightSidebar #smallLabel {{ color:#bbb; }}
@@ -1320,7 +1420,13 @@ class HMIWindow(QMainWindow):
             #rightSidebar #stopButton {{ border:1px solid #d36c67; color:#a82020; font-weight:800; }}
             #rightSidebar #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
             #rightSidebar #healthLabel {{ color:#bdc0c4; font-size:10px; }}
-            #rightSidebar #healthValue {{ color:#69caa4; font-size:9px; font-weight:700; }}
+            #rightSidebar #healthValue {{ color:#bdc0c4; font-size:9px; font-weight:700; }}
+            #rightSidebar #diagnosticsPanel {{ background:white; border:1px solid #c9c9c5; border-radius:5px; }}
+            #rightSidebar #reynoldsValue {{ color:#eee; font-size:11px; font-weight:600; }}
+            #rightSidebar #diagnosticsSummary {{ color:#62666b; font-size:10px; }}
+            #diagnosticsTree {{ background:white; alternate-background-color:#fafafa; color:{INK}; border:0; font-size:11px; }}
+            #diagnosticsTree::item {{ padding:4px 2px; }}
+            #diagnosticsTree::item:selected {{ background:#fce4df; color:{INK}; }}
             #hardwareBadge {{ background:#e6f3ed; border:1px solid #badbca; border-radius:3px; color:#16865f; padding:3px 6px; font-size:8px; font-weight:800; }}
             #sideValue {{ font-size:19px; font-weight:700; }}
             #development {{ background:#292c30; border:1px solid #444; border-radius:4px; }}
@@ -1370,11 +1476,14 @@ class HMIWindow(QMainWindow):
             #emptyStateTitle {{ color:{INK}; font-size:18px; font-weight:700; letter-spacing:1.25px; }}
             #emptyStateMessage {{ color:#575754; font-size:14px; }}
             #emptyStateDetail {{ color:#8a8a85; font-size:11px; }}
-            QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {{ background:white; border:1px solid #c9c9c5; border-radius:4px; padding:7px; }}
+            QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {{ background:white; color:{INK}; border:1px solid #c9c9c5; border-radius:4px; padding:7px; }}
             QLineEdit:focus, QComboBox:focus {{ border-color:{RED}; }}
             QHeaderView::section {{ background:#f1f1ee; color:#555; border:0; padding:7px; font-weight:700; }}
             QTableWidget {{ gridline-color:#e9e8e4; }}
             QTabWidget::pane {{ border:1px solid #deded9; background:{CREAM}; }}
+            QWidget[workspaceSurface="true"] {{ background:{CREAM}; color:{INK}; }}
+            #aerodynamicPanel QWidget[aerodynamicSurface="true"], #aerodynamicScroll {{ background:{CREAM}; color:{INK}; }}
+            #aerodynamicPanel QCheckBox {{ color:{INK}; background:transparent; }}
             QTabBar::tab {{ background:#eee; padding:10px 22px; color:{INK}; }}
             QTabBar::tab:selected {{ background:white; color:{RED}; border-bottom:2px solid {RED}; }}
             #calibrationCard {{ background:white; border:1px solid #deded9; border-radius:5px; }}
@@ -1398,6 +1507,8 @@ class HMIWindow(QMainWindow):
             button.setChecked(name == key)
         if key in ("measurements", "storage"):
             self._refresh_data()
+        if key == 'cp':
+            self.aerodynamic_panel.refresh()
         if key == "settings" and self.settings_tabs.currentIndex() == 1:
             self.calibration_panel.refresh_status()
 
@@ -1494,6 +1605,7 @@ class HMIWindow(QMainWindow):
         """100% local Qt animation; no hardware outputs or motor commands."""
         if self._last_status_ok and time.monotonic() - self._last_status_ok > 2.0:
             self._last_status_ok = 0.0
+            self.reynolds_widget.unavailable("HMI status feed stale; fresh temperature telemetry required.")
             self._set_signal_indicator("UNKNOWN", "#808080", False,
                                        "HMI status feed stale; fan may still rotate")
         elapsed = time.monotonic() - self._indicator_epoch
@@ -1537,10 +1649,14 @@ class HMIWindow(QMainWindow):
             self.tunnel_badge.style().unpolish(self.tunnel_badge)
             self.tunnel_badge.style().polish(self.tunnel_badge)
 
+    def _selected_mode(self):
+        # Reynolds is an HMI input representation, never an ESP32 mode.
+        return "MANUAL" if self.mode_select.currentText() == "MANUAL" else "AUTO"
+
     def _on_mode_selection_changed(self, selected):
         # Update the visible input immediately, even when no ESP32 is connected.
         self._mode_draft = True
-        self.mode_value_stack.setCurrentIndex(0 if selected == "AUTO" else 1)
+        self.mode_value_stack.setCurrentIndex(self.mode_select.currentIndex())
         self._refresh_mode_controls()
 
     def _refresh_mode_controls(self):
@@ -1551,9 +1667,9 @@ class HMIWindow(QMainWindow):
             and bool(drive.get("connected", False))
         )
         ready = online and drive.get("state") == "READY"
-        selected = self.mode_select.currentText()
+        selected = self._selected_mode()
         active_mode = drive.get("mode")
-        self.mode_value_stack.setCurrentIndex(0 if selected == "AUTO" else 1)
+        self.mode_value_stack.setCurrentIndex(self.mode_select.currentIndex())
         # Input values remain editable for offline layout previews.
         self.setpoint_spin.setEnabled(True)
         self.manual_hz.setEnabled(True)
@@ -1561,13 +1677,25 @@ class HMIWindow(QMainWindow):
         self.mode_apply.setEnabled(ready)
         # All three Apply buttons require physical READY.
         self.setpoint_apply.setEnabled(
-            ready and selected == active_mode == "AUTO" and self.setpoint_spin.has_valid_value()
+            ready and selected == active_mode == "AUTO" and self.mode_select.currentIndex() != 2
+            and self.setpoint_spin.has_valid_value()
         )
         self.manual_apply.setEnabled(
             ready and selected == active_mode == "MANUAL" and self.manual_hz.has_valid_value()
         )
+        self.reynolds_widget.refresh(self.state, self.config.get("max_airspeed_ms", 40.0))
+        if not self._last_status_ok or time.monotonic()-self._last_status_ok > 2.0:
+            self.reynolds_widget.unavailable("HMI status feed unavailable; fresh temperature telemetry required.")
+        self.reynolds_widget.apply_button.setEnabled(
+            ready and selected == active_mode == "AUTO" and self.mode_select.currentIndex() == 2
+            and self.reynolds_widget.preview is not None
+            and not (self.state.get("calibration") or {}).get("active", False)
+        )
+        self.operating_values["REYNOLDS NUMBER"].setText(self.reynolds_widget.values["actual"].text())
         active_input = self.setpoint_spin if selected == "AUTO" else self.manual_hz
-        if not active_input.has_valid_value():
+        if self.mode_select.currentIndex() == 2:
+            self.input_validation.setText("")
+        elif not active_input.has_valid_value():
             self.input_validation.setText(
                 f"Invalid value. Enter {getattr(active_input, 'minimum_value', 0):g}–{active_input.maximum():g} "
                 + ("m/s." if selected == "AUTO" else "Hz.")
@@ -1580,6 +1708,8 @@ class HMIWindow(QMainWindow):
             reason = "LOCKED · Apply is only permitted when the physical machine is in READY."
         elif selected != active_mode:
             reason = f"Selected {selected}; ESP32 is still in {active_mode}. Click Apply mode first."
+        elif self.mode_select.currentIndex() == 2:
+            reason = "AUTO active · Review calculated airspeed, then Apply Reynolds Setpoint."
         elif selected == "AUTO":
             reason = "AUTO active · Enter airspeed in m/s, then Apply setpoint."
         else:
@@ -1610,11 +1740,21 @@ class HMIWindow(QMainWindow):
 
         self._post("tunnel/setpoint", {"airspeed_ms": target}, done)
 
+    def _apply_reynolds(self):
+        self._refresh_mode_controls()
+        if not self.reynolds_widget.apply_button.isEnabled():
+            self._show_error(self.reynolds_widget.error or "Reynolds Apply requires fresh AUTO/READY telemetry.")
+            return
+        payload = dict(self.reynolds_widget.preview)
+        self.reynolds_widget.apply_button.setEnabled(False)
+        self._post("tunnel/setpoint", payload,
+                   lambda data, error: self._show_error(str(error)) if error else self._on_status(data, None))
+
     def _apply_mode(self):
         if (self.state.get('esp32') or {}).get('state')!='READY':
             self._show_error('Mode changes require READY')
             return
-        self._post('tunnel/mode',{'mode':self.mode_select.currentText()},
+        self._post('tunnel/mode',{'mode':self._selected_mode()},
                    lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))
 
     def _apply_hz(self):
@@ -1691,6 +1831,7 @@ class HMIWindow(QMainWindow):
             self.poll_busy = False
             if error:
                 self._last_status_ok = 0.0
+                self.reynolds_widget.unavailable("HMI status feed unavailable; fresh temperature telemetry required.")
                 self._set_signal_indicator("UNKNOWN", "#808080", False,
                                            "HMI backend unreachable; fan may still rotate")
                 self.connection.setText("RECONNECTING")
@@ -1709,6 +1850,7 @@ class HMIWindow(QMainWindow):
     def _on_status(self, data, error):
         if error:
             self._last_status_ok = 0.0
+            self.reynolds_widget.unavailable("HMI status feed stale; fresh temperature telemetry required.")
             self._set_signal_indicator("UNKNOWN", "#808080", False,
                                        "HMI status request failed; fan may still rotate")
             return
@@ -1736,7 +1878,7 @@ class HMIWindow(QMainWindow):
         machine_state = data.get("tunnel_state", "UNKNOWN") if is_sim else drive.get("state", "UNKNOWN")
         machine_fault = "NONE" if is_sim else drive.get("fault", "UNKNOWN")
         estop_pressed = drive.get("estop_pressed") == 1
-        waiting_for, diagnostic_details = wait_diagnostics(drive)
+        waiting_for, _ = wait_diagnostics(drive)
         waiting = not stale and not is_sim and machine_state in {"INIT", "WAIT"}
         self.waiting_for_heading.setVisible(waiting)
         self.waiting_for_text.setVisible(waiting)
@@ -1744,7 +1886,8 @@ class HMIWindow(QMainWindow):
             "\n".join(f"- {reason}" for reason in waiting_for)
             if waiting_for else "No blocking conditions reported."
         )
-        self.diagnostics_text.setPlainText("\n".join(diagnostic_details))
+        self.diagnostics_text.update_status(drive, stale=stale, simulation=is_sim,
+                                             system=data.get("system"))
         self._update_signal_from_status(drive, is_sim, stale,
                                         machine_state, machine_fault, estop_pressed)
         if stale:
@@ -1768,9 +1911,9 @@ class HMIWindow(QMainWindow):
         online = not stale and not is_sim
         actual_mode = drive.get("mode")
         if online and actual_mode in ("AUTO", "MANUAL"):
-            if self._mode_draft and self.mode_select.currentText() == actual_mode:
+            if self._mode_draft and self._selected_mode() == actual_mode:
                 self._mode_draft = False
-            if not self._mode_draft and self.mode_select.currentText() != actual_mode:
+            if not self._mode_draft and self._selected_mode() != actual_mode:
                 self.mode_select.blockSignals(True)
                 self.mode_select.setCurrentText(actual_mode)
                 self.mode_select.blockSignals(False)
@@ -1861,7 +2004,15 @@ class HMIWindow(QMainWindow):
              ("Ready · enter a measurement name" if live else "Connect ESP32-S3 via Ethernet to record."))
         )
         for key, label in self.health_labels.items():
-            label.setText(str((data.get("system") or {}).get(key, "—")))
+            value = str((data.get("system") or {}).get(key, "—"))
+            label.setText(value)
+            label.setToolTip(self.usb_health.text() if key == "storage" else value)
+            if label.property("healthState") != value:
+                color = ("#ef9a9a" if value.upper() in {"OFFLINE", "DISCONNECTED", "ERROR", "FAIL"} else
+                         "#e6bc77" if value.upper() in {"UNKNOWN", "UNAVAILABLE", "NO DATA", "NOT COMMISSIONED"} else
+                         "#69caa4" if value.upper() in {"OK", "ONLINE", "CONNECTED", "LOCAL"} else "#bdc0c4")
+                label.setStyleSheet(f"color:{color}; font-size:9px; font-weight:700;")
+                label.setProperty("healthState", value)
         self.warnings.setText(" · ".join(data.get("errors", []) + data.get("warnings", [])) or "No warnings")
         events = data.get("events", [])[:8]
         signature = json.dumps(events, sort_keys=True)

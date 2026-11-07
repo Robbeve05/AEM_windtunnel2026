@@ -9,6 +9,7 @@ fi
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-desktop.txt
 if [[ "${RUN_TESTS:-0}" == "1" ]]; then
+  .venv/bin/python -m pip install -r requirements-test.txt
   .venv/bin/python -m unittest discover -s tests -v
 else
   echo 'Skipping backend tests; set RUN_TESTS=1 to run them before installation.'

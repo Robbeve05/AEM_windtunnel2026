@@ -10,10 +10,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QTimer, QPoint, Qt
     from PySide6.QtGui import QColor, QPalette
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QLineEdit
+    from PySide6.QtWidgets import QLineEdit, QCheckBox
     from desktop import HMIWindow, OperatorNumericInput
     from native_calibration import CalibrationPanel
     QT_AVAILABLE = True
@@ -26,6 +26,115 @@ class NativeHMITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_aerodynamic_navigation_actions_and_explicit_source(self):
+        from desktop import PAGES
+        from native_aerodynamics import AerodynamicPlot
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow(); window.resize(1280, 800); window.show()
+            self.assertEqual(PAGES[2][2], 'Aerodynamic Analysis')
+            window._show_page('cp'); panel = window.aerodynamic_panel
+            self.assertEqual([panel.tabs.tabText(i) for i in range(4)],
+                             ['Overview', 'Cp Distribution', 'Aerodynamic Coefficients', 'Compare'])
+            for index in range(4): panel.tabs.setCurrentIndex(index); self.app.processEvents()
+            self.assertGreaterEqual(panel.tabs.widget(3).verticalScrollBar().maximum(), 1)
+            experiment = window.aerodynamic_experiment
+            self.assertEqual(experiment.duration.value(), 5)
+            self.assertEqual(experiment.configuration()['source'], 'physical')
+            self.assertFalse(experiment.start.isEnabled())
+            experiment.name.setText('SIM_test'); experiment.airfoil.setText('Synthetic foil')
+            experiment.source.setCurrentIndex(1)
+            calls = []
+            with patch.object(window, '_post', lambda path, body, callback: calls.append((path, body))):
+                experiment.prepare_experiment()
+                self.assertEqual(calls[0][0], 'aerodynamics/experiments')
+                self.assertEqual(calls[0][1]['source'], 'simulation')
+                self.assertFalse(any('tunnel' in path for path, body in calls))
+            points = [dict(tap_id='A', surface='upper', x_c=.2, cp=-1, cp_std=.01),
+                      dict(tap_id='B', surface='lower', x_c=.8, cp=1, cp_std=.01)]
+            panel.cp_plot.set_results([dict(cp=points, experiment_name='fixture', alpha_deg=0, source='simulation')])
+            panel.tabs.setCurrentIndex(1); self.app.processEvents(); panel.cp_plot.grab()
+            hits = panel.cp_plot.hits
+            self.assertEqual(len(hits), 2)
+            self.assertLess(hits[0][0].y(), hits[1][0].y())  # Negative Cp is above positive Cp.
+            panel.toggle_surface('upper', False); self.assertEqual(len(panel.cp_plot.series()), 1)
+            window.close()
+
+    def test_aerodynamic_native_export_commits_successful_reply(self):
+        import tempfile
+        from pathlib import Path
+        from PySide6.QtCore import QObject, Signal, QByteArray
+        from PySide6.QtNetwork import QNetworkReply
+        class Reply(QObject):
+            readyRead = Signal()
+            finished = Signal()
+            def __init__(self):
+                super().__init__(); self.content = QByteArray(b'%PDF-successful-export')
+            def readAll(self):
+                content = self.content; self.content = QByteArray(); return content
+            def error(self): return QNetworkReply.NetworkError.NoError
+            def errorString(self): return 'No error'
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+                window = HMIWindow(); panel = window.aerodynamic_panel
+                panel.identifier = 'safe-id'; panel.detail = {'files': ['analysis_report.pdf']}
+                reply = Reply(); destination = Path(directory)/'report.pdf'
+                with patch('native_aerodynamics.QFileDialog.getSaveFileName', return_value=(str(destination), '')):
+                    with patch.object(window.network, 'get', return_value=reply) as request:
+                        panel.download('analysis_report.pdf')
+                        self.assertIn('/api/aerodynamics/experiments/safe-id/files/analysis_report.pdf', request.call_args.args[0].url().toString())
+                        reply.readyRead.emit(); reply.finished.emit()
+                self.assertEqual(destination.read_bytes(), b'%PDF-successful-export')
+                self.assertTrue(panel.message.text().startswith('Exported '))
+                window.close()
+
+    def test_dark_windows_palette_keeps_workspace_and_diagnostics_readable(self):
+        original = self.app.palette()
+        dark = QPalette(original)
+        for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base,
+                     QPalette.ColorRole.Button):
+            dark.setColor(role, QColor('#202020'))
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText,
+                     QPalette.ColorRole.ButtonText):
+            dark.setColor(role, QColor('#ffffff'))
+        self.app.setPalette(dark)
+        try:
+            with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+                window = HMIWindow()
+                window.show()
+                window._on_status({'simulation': False, 'esp32': {'stale': True}}, None)
+                window.diagnostics_toggle.setChecked(True)
+                self.app.processEvents()
+                self.assertEqual(window.overview_content.grab().toImage().pixelColor(0, 0).name(), '#f6f6f4')
+                self.assertEqual(window.chart_card.grab().toImage().pixelColor(3, 25).name(), '#ffffff')
+                self.assertEqual(window.diagnostics_text.palette().color(QPalette.ColorRole.Text).name(), '#181818')
+                self.assertIn('ESP32 offline', window.diagnostics_text.toPlainText())
+                self.assertEqual(len(window.health_labels), 6)
+                self.assertGreaterEqual(window.diagnostics_text.height(), 140)
+                self.assertIs(window.right_scroll.widget(), window.right)
+                window._show_page('cp')
+                for index in range(4):
+                    panel = window.aerodynamic_panel
+                    panel.tabs.setCurrentIndex(index)
+                    self.app.processEvents()
+                    content = panel.tabs.widget(index).widget()
+                    self.assertTrue(content.testAttribute(Qt.WidgetAttribute.WA_StyledBackground))
+                    self.assertEqual(content.grab().toImage().pixelColor(3, 25).name(), '#f6f6f4', panel.tabs.tabText(index))
+                    viewport = panel.tabs.widget(index).viewport()
+                    self.assertEqual(viewport.palette().color(QPalette.ColorRole.Window).name(), '#f6f6f4')
+                for checkbox in window.aerodynamic_panel.findChildren(QCheckBox):
+                    self.assertEqual(checkbox.palette().color(QPalette.ColorRole.WindowText).name(), '#181818')
+                window._show_page('settings')
+                for index in range(window.settings_tabs.count()):
+                    window.settings_tabs.setCurrentIndex(index)
+                    self.app.processEvents()
+                    content = window.settings_tabs.widget(index)
+                    self.assertTrue(content.property('workspaceSurface'))
+                    color = content.grab().toImage().pixelColor(3, 25)
+                    self.assertGreater(color.lightness(), 180, window.settings_tabs.tabText(index))
+                window.close()
+        finally:
+            self.app.setPalette(original)
 
     def test_graph_maximum_is_independent_of_auto_limit(self):
         with patch.object(HMIWindow, "_get", lambda *args, **kwargs: None):
@@ -49,6 +158,140 @@ class NativeHMITests(unittest.TestCase):
             )])
             self.assertEqual(window.chart.y_max, 75.0)
             self.assertEqual(window.setpoint_spin.maximum(), 40.0)
+            window.close()
+
+    def test_reynolds_input_uses_auto_and_existing_setpoint_api(self):
+        from backend.reynolds import viscosity
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.mode_select.setCurrentIndex(2)
+            panel = window.reynolds_widget
+            self.assertEqual(len(panel.findChildren(QLineEdit)), 2)
+            panel.reynolds.setText('100000')
+            panel.chord.setText('100')
+            status = dict(simulation=False, sensor_fresh=True, sample_age_s=0.05,
+                sample=dict(airspeed_ms=10, temperature_c=20),
+                reynolds=dict(environment=dict(valid=True, temperature_c=20,
+                    air_density_kg_m3=1.225, dynamic_viscosity_pa_s=viscosity(20))),
+                esp32=dict(connected=True, stale=False, state='READY', mode='MANUAL', fault='NONE'))
+            window._on_status(status, None)
+            self.assertEqual(window.mode_value_stack.currentIndex(), 2)
+            self.assertFalse(panel.apply_button.isEnabled())
+            calls = []
+            with patch.object(window, '_post', lambda path, body, callback: calls.append((path, body))):
+                window._apply_mode()
+                self.assertEqual(calls, [('tunnel/mode', {'mode': 'AUTO'})])
+                status['esp32']['mode'] = 'AUTO'
+                window._on_status(status, None)
+                self.assertEqual(window.mode_value_stack.currentIndex(), 2)
+                self.assertTrue(panel.apply_button.isEnabled())
+                window._apply_reynolds()
+            self.assertEqual(calls[-1][0], 'tunnel/setpoint')
+            self.assertAlmostEqual(calls[-1][1]['airspeed_ms'], 14.8033133237, places=8)
+            self.assertEqual(calls[-1][1]['requested_reynolds'], 100000)
+            self.assertEqual(calls[-1][1]['chord_mm'], 100)
+            self.assertIn('20.00', panel.values['temperature'].text())
+            self.assertNotEqual(panel.values['actual'].text(), '100,000')
+            window.close()
+
+    def test_reynolds_apply_blocks_invalid_sensor_and_over_limit_without_clamping(self):
+        from backend.reynolds import viscosity
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.mode_select.setCurrentIndex(2)
+            panel = window.reynolds_widget
+            panel.reynolds.setText('1000000')
+            panel.chord.setText('100')
+            status = dict(simulation=False, sensor_fresh=True,
+                sample=dict(airspeed_ms=10), esp32=dict(connected=True, stale=False,
+                    state='READY', mode='AUTO', fault='NONE'),
+                reynolds=dict(environment=dict(valid=True, temperature_c=20,
+                    air_density_kg_m3=1.225, dynamic_viscosity_pa_s=viscosity(20))))
+            window._on_status(status, None)
+            self.assertFalse(panel.apply_button.isEnabled())
+            self.assertIn('148.033', panel.values['airspeed'].text())
+            self.assertIn('maximum', panel.message.text())
+            panel.reynolds.setText('100000')
+            self.assertTrue(panel.apply_button.isEnabled())
+            status['reynolds']['environment'].update(valid=False, reason='Temperature telemetry unavailable')
+            window._on_status(status, None)
+            self.assertFalse(panel.apply_button.isEnabled())
+            self.assertIn('Temperature telemetry unavailable', panel.message.text())
+            window.close()
+
+    def test_diagnostic_scroll_survives_unchanged_and_changed_status_updates(self):
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.show()
+            window.diagnostics_toggle.setChecked(True)
+            status = {'simulation': False, 'esp32': {'stale': False, 'connected': True, 'diag_modbus_errors': 1}}
+            window._on_status(status, None)
+            self.app.processEvents()
+            bar = window.diagnostics_text.verticalScrollBar()
+            self.assertGreater(bar.maximum(), 0)
+            position = max(1, bar.maximum() // 2)
+            bar.setValue(position)
+            self.app.processEvents()
+            position = bar.value()
+            for _ in range(10):
+                window._on_status(status, None)
+            self.assertEqual(bar.value(), position)
+            status['esp32']['diag_modbus_errors'] = 42
+            window._on_status(status, None)
+            self.app.processEvents()
+            self.assertIn('42', window.diagnostics_text.toPlainText())
+            self.assertEqual(bar.value(), position)
+            window.close()
+
+    def test_panel_dividers_and_diagnostics_grip_can_be_dragged(self):
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow()
+            window.resize(1600, 950)
+            window.show()
+            window.diagnostics_toggle.setChecked(True)
+            self.app.processEvents()
+            handle = window.main_splitter.handle(2)
+            previous_width = window.right_scroll.width()
+            start = handle.rect().center()
+            QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
+            QTest.mouseMove(handle, start + QPoint(-100, 0))
+            QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=handle.rect().center())
+            self.app.processEvents()
+            self.assertGreater(window.right_scroll.width(), previous_width + 50)
+            grip = window.diagnostics_resize
+            previous_height = window.diagnostics_text.height()
+            start = grip.rect().center()
+            QTest.mousePress(grip, Qt.MouseButton.LeftButton, pos=start)
+            QTest.mouseMove(grip, start + QPoint(0, 80))
+            QTest.mouseRelease(grip, Qt.MouseButton.LeftButton, pos=grip.rect().center())
+            self.app.processEvents()
+            self.assertGreater(window.diagnostics_text.height(), previous_height + 40)
+            window.diagnostics_text.update_status({'state': 'Long diagnostic value ' * 60}, stale=False)
+            window.diagnostics_text.tree.resizeColumnToContents(1)
+            self.app.processEvents()
+            self.assertGreater(window.diagnostics_text.horizontalScrollBar().maximum(), 0)
+            window.close()
+
+    def test_clean_diagnostic_groups_keep_expansion_and_suppress_stale_signals(self):
+        with patch.object(HMIWindow, '_get', lambda *args, **kwargs: None):
+            window = HMIWindow()
+            panel = window.diagnostics_text
+            self.assertEqual(set(panel.groups), {'Controller', 'Connection', 'Safety',
+                'V20 drive', 'Outputs', 'Sensors', 'Registers'})
+            panel.groups['Safety'].setExpanded(True)
+            row = panel.rows['diag_estop_released']
+            panel.tree.setCurrentItem(row)
+            drive = {'diag_estop_released': 1, 'diag_v20_off2_active': 0,
+                     'diag_v20_status_word': 513}
+            panel.update_status(drive, stale=False)
+            self.assertEqual(row.text(1), 'YES')
+            self.assertEqual(panel.rows['diag_v20_off2_active'].text(1), 'NO')
+            self.assertEqual(panel.rows['diag_v20_status_word'].text(1), '0x0201')
+            self.assertTrue(panel.groups['Safety'].isExpanded())
+            self.assertIs(panel.tree.currentItem(), row)
+            panel.update_status(drive, stale=True)
+            self.assertEqual(row.text(1), '—')
+            self.assertEqual(len(window.health_labels), 6)
             window.close()
 
     def test_native_settings_and_calibration_parity(self):
@@ -119,7 +362,7 @@ class NativeHMITests(unittest.TestCase):
             }, None)
             self.assertIn("V20 RUN commissioning lock active", window.waiting_for_text.text())
             self.assertIn("Physical RESET sequence not accepted", window.waiting_for_text.text())
-            self.assertIn("V20 status word: 0x0201", window.diagnostics_text.toPlainText())
+            self.assertEqual(window.diagnostics_text.rows['diag_v20_status_word'].text(1), '0x0201')
             self.assertTrue(window.waiting_for_text.isVisibleTo(window))
             self.assertTrue(window.diagnostics_text.isHidden())
             window.diagnostics_toggle.setChecked(True)

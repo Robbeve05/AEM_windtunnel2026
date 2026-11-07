@@ -18,7 +18,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
 OPENAPI_URL = "http://127.0.0.1:8000/openapi.json"
-EXPECTED_ROUTE = "/api/settings/graph-airspeed"
+EXPECTED_ROUTE = "/api/aerodynamics/experiments/{identifier}/analyze"
 EXPECTED_TITLE = "Avans Windtunnel HMI"
 
 

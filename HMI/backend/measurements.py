@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from .cp import calculate_cp
+from .reynolds import REYNOLDS_FIELDS
 
 
 def save_json(path: Path, value: dict) -> None:
@@ -53,7 +54,7 @@ class Measurements:
             file_status='Writing locally' if self.state == 'RECORDING' else self.state,
         )
 
-    def start(self, name: str, recording_rate_hz: int = 25):
+    def start(self, name: str, recording_rate_hz: int = 25, reynolds_setpoint=None):
         if self.state in ('RECORDING', 'SAVING'):
             raise ValueError('A measurement is already active')
         if not 1 <= recording_rate_hz <= 100:
@@ -68,6 +69,7 @@ class Measurements:
         self.meta = dict(id=identifier, name=name, timestamp=now.isoformat(), state='RECORDING',
                          samples=0, duration_s=0, average_airspeed_ms=0, exported=False,
                          recording_rate_hz=recording_rate_hz,
+                         reynolds_setpoint=dict(reynolds_setpoint) if reynolds_setpoint else None,
                          pressure_reference='pitot differential Pa', sensor='SIMULATED' if self.config.simulation else 'ASPD-4525 via ESP32 Ethernet', config=self.config.model_dump())
         self.started = time.monotonic()
         self.first_recorded_monotonic = None
@@ -80,10 +82,10 @@ class Measurements:
             raw = self._writer('raw_data.csv', ['host_timestamp', 'timestamp_ms', 'state', 'airspeed_ms', 'airspeed_kmh',
                                'differential_pressure_pa', 'dynamic_pressure_pa', 'temperature_c',
                                'flow_stability_pct', 'flow_mean_ms', 'flow_std_ms', 'flow_min_ms', 'flow_max_ms',
-                               'static_pressure_pa', 'fan_output_pct', 'angle_of_attack_deg', 'pressure_pa', 'errors'])
+                               'static_pressure_pa', 'fan_output_pct', 'angle_of_attack_deg', 'pressure_pa', 'errors', *REYNOLDS_FIELDS])
             processed = self._writer('processed_data.csv', ['host_timestamp', 'timestamp_ms', 'airspeed_ms', 'airspeed_kmh',
                                      'dynamic_pressure_pa', 'temperature_c', 'flow_stability_pct', 'flow_mean_ms',
-                                     'flow_std_ms', 'flow_min_ms', 'flow_max_ms'])
+                                     'flow_std_ms', 'flow_min_ms', 'flow_max_ms', *REYNOLDS_FIELDS])
             self.raw, self.processed = raw, processed
             self.state = 'RECORDING'
         except Exception as exc:
@@ -113,6 +115,7 @@ class Measurements:
         row['errors'] = json.dumps(sample.get('errors', []))
         self.raw.writerow(row)
         self.processed.writerow({key: sample.get(key) for key in self.processed.fieldnames})
+        self.meta['last_reynolds_sample'] = {key: sample.get(key) for key in REYNOLDS_FIELDS}
         self.meta['samples'] += 1
         self.total_speed += sample['airspeed_ms']
         if self.first_recorded_monotonic is None:

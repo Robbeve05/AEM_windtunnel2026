@@ -18,6 +18,11 @@ from backend.measurements import Measurements
 from backend.models import Config, FlowMetricsSetting, GraphAirspeedSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
 from backend.simulator import Simulator
 from backend.storage import Storage
+from backend.aerodynamics.experiments import AerodynamicExperiments
+from backend.aerodynamics.models import ExperimentConfig, AnalysisSettings, CompareRequest
+from backend.reynolds import (
+    annotate_sample, chord_metres, density_value, finite_number, required_airspeed, viscosity,
+)
 
 BASE = Path(__file__).resolve().parent
 
@@ -41,9 +46,13 @@ class Controller:
         self.storage = Storage(base, self.config, self.measurements)
         self.events = deque(maxlen=80)
         self.sample = {}
+        self.reynolds_setpoint = None
         self.running = True
         self.lock = asyncio.Lock()
         self.export_lock = asyncio.Lock()
+        self.aerodynamics = AerodynamicExperiments(self.measurements, self._aero_density,
+                                                   self._aero_guard, self.export_lock,
+                                                   lambda: self.reynolds_setpoint)
         self.speed_window = deque()  # (monotonic_time, velocity)
         self.last_valid_sample_monotonic = None
         self.started_monotonic = time.monotonic()
@@ -51,6 +60,22 @@ class Controller:
             self.event('Simulation mode active.')
         elif self.esp32_mode:
             self.event('ESP32 Ethernet mode active. Physical START and RESET required.')
+
+    def _aero_density(self):
+        return density_value(self.esp32_frame.get('air_density', self.config.air_density))
+
+    def _aero_guard(self, config):
+        self.calibration.require_idle()
+        if self.measurements.state in ('RECORDING', 'SAVING'):
+            raise ValueError('Stop general recording before aerodynamic acquisition')
+        if config.source == 'physical':
+            if not self.aerodynamics.physical_adapter.available:
+                raise ValueError('Physical pressure adapter is not configured')
+            frame = self.esp32.snapshot() if self.esp32 else {}
+            if (not self.sensor_fresh() or self.last_valid_sample_monotonic is None
+                    or time.monotonic()-self.last_valid_sample_monotonic > self.esp32.status_timeout
+                    or frame.get('state') != 'RUNNING' or frame.get('fault') != 'NONE'):
+                raise ValueError('Physical acquisition requires fresh, fault-free RUNNING telemetry')
 
     def event(self, message, level='info'):
         self.events.appendleft(dict(timestamp=datetime.now(timezone.utc).isoformat(), message=message, level=level))
@@ -84,7 +109,9 @@ class Controller:
             differential_pressure_pa=differential,
             dynamic_pressure_pa=abs(differential),
             static_pressure_pa=None,
-            temperature_c=float(raw['temperature_c']),
+            temperature_c=(float(raw['temperature_c']) if isinstance(raw.get('temperature_c'), (float, int))
+                           and not isinstance(raw['temperature_c'], bool)
+                           and math.isfinite(raw['temperature_c']) else None),
             fan_output_pct=None,
             angle_of_attack_deg=None,
             pressure_pa=[],
@@ -95,6 +122,28 @@ class Controller:
     def sensor_fresh(self) -> bool:
         return bool(self.simulation or (self.esp32_mode and self.esp32 is not None and
                     self.esp32.fresh and self.esp32_frame.get('sensor_ok') == 1))
+
+    def reynolds_environment(self):
+        """Read existing telemetry/config; no substituted temperature or new density model."""
+        environment = dict(valid=False, reason='', temperature_c=None,
+                           air_density_kg_m3=None, dynamic_viscosity_pa_s=None)
+        try:
+            reported_density = (self.esp32_frame.get('air_density', self.config.air_density)
+                                if self.esp32_mode else self.config.air_density)
+            environment['air_density_kg_m3'] = density_value(reported_density)
+            timeout = self.esp32.status_timeout if self.esp32_mode and self.esp32 else 1.0
+            if (not self.sensor_fresh() or self.last_valid_sample_monotonic is None or
+                    time.monotonic()-self.last_valid_sample_monotonic > timeout):
+                raise ValueError('Fresh temperature telemetry unavailable; wait for a new valid sensor sample')
+            # Checking the frame as well prevents an old sample masking a newly missing temperature.
+            temperature = (self.esp32_frame.get('temperature_c') if self.esp32_mode else
+                           self.sample.get('temperature_c'))
+            environment['temperature_c'] = finite_number(temperature, 'Measured air temperature')
+            environment['dynamic_viscosity_pa_s'] = viscosity(temperature)
+            environment['valid'] = True
+        except ValueError as exc:
+            environment['reason'] = str(exc)
+        return environment
 
     @property
     def setpoint(self):
@@ -147,6 +196,7 @@ class Controller:
         measurement = self.measurements.status()
         return dict(
             calibration=self.calibration.status(),
+            reynolds=dict(environment=self.reynolds_environment(), applied=self.reynolds_setpoint),
             sample=self.sample,
             setpoint=self.setpoint,
             tunnel_state=self.tunnel_state,
@@ -178,13 +228,17 @@ class Controller:
             return
         self._last_pitot_sequence = sequence
         raw = {'airspeed_ms':frame['pv'], 'pressure_pa':frame.get('pressure_pa', 0.0),
-               'temperature_c':frame.get('temperature_c', 0.0)}
+               'temperature_c':frame.get('temperature_c')}
         async with self.lock:
             self.last_valid_sample_monotonic = now
             self.sample = self._hardware_sample(raw, now)
             self.sample['fan_output_pct'] = frame.get('out')
             self.sample['state'] = frame['state']
             self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
+            if frame.get('mode') == 'MANUAL':
+                self.reynolds_setpoint = None
+            self.sample.update(annotate_sample(self.sample, self.reynolds_setpoint,
+                                               self.reynolds_environment()))
             for index in range(16):
                 if frame.get('taps_valid', 0) & (1 << index):
                     self.sample['pressure_pa'].append(frame.get(f'p{index}'))
@@ -209,6 +263,9 @@ class Controller:
                     self.sample['airspeed_kmh'] = self.sample['airspeed_ms'] * 3.6
                     self.sample['differential_pressure_pa'] = self.sample['dynamic_pressure_pa']
                     self.sample['host_timestamp'] = datetime.now(timezone.utc).isoformat()
+                    self.last_valid_sample_monotonic = now
+                    self.sample.update(annotate_sample(self.sample, self.reynolds_setpoint,
+                                                       self.reynolds_environment()))
                     await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
                 last = now
                 await asyncio.sleep(max(0.001, 1 / self.config.sample_rate_hz - (time.monotonic() - now)))
@@ -223,6 +280,7 @@ async def lifespan(app):
     task = asyncio.create_task(controller.loop())
     yield
     await controller.calibration.cancel()
+    await controller.aerodynamics.close()
     controller.running = False
     if controller.esp32:
         await controller.esp32.close()
@@ -352,6 +410,8 @@ async def select_mode(body: ControlMode):
     async with c.calibration.lock:
         require_ready_esp32(c)
         await c.esp32.command('MODE '+body.mode)
+        if body.mode == 'MANUAL':
+            c.reynolds_setpoint = None
         return c.status()
 
 @app.post('/api/tunnel/frequency')
@@ -375,15 +435,36 @@ async def setpoint(body: Setpoint):
     async with c.calibration.lock:
         if body.airspeed_ms > c.config.max_airspeed_ms:
             raise ValueError(f'Setpoint exceeds configured {c.config.max_airspeed_ms:g} m/s maximum')
+        target = body.airspeed_ms
+        context = None
+        if body.requested_reynolds is not None:
+            environment = c.reynolds_environment()
+            if not environment['valid']:
+                raise ValueError(environment['reason'])
+            target = required_airspeed(body.requested_reynolds, body.chord_mm,
+                environment['temperature_c'], environment['air_density_kg_m3'], c.config.max_airspeed_ms)
+            if not math.isclose(body.airspeed_ms, target, rel_tol=0.001, abs_tol=0.0005):
+                raise ValueError('Temperature or density changed; review the recalculated Reynolds airspeed and apply again')
+            wire_target = float(f'{target:.3f}') if c.esp32_mode else target
+            if wire_target <= 0:
+                raise ValueError('Calculated Reynolds airspeed is below the existing 0.001 m/s command resolution')
+            context = dict(requested_reynolds=body.requested_reynolds, chord_mm=body.chord_mm,
+                chord_m=chord_metres(body.chord_mm), temperature_c=environment['temperature_c'],
+                air_density_kg_m3=environment['air_density_kg_m3'],
+                dynamic_viscosity_pa_s=environment['dynamic_viscosity_pa_s'],
+                applied_airspeed_setpoint_ms=wire_target, calculated_airspeed_setpoint_ms=target)
         if c.esp32_mode:
             require_ready_esp32(c, 'AUTO')
-            await c.esp32.command(f'SETPOINT {body.airspeed_ms:.3f}')
-            c.event(f'ESP32 airspeed setpoint requested: {body.airspeed_ms:g} m/s')
+            await c.esp32.command(f'SETPOINT {target:.3f}')
+            c.reynolds_setpoint = context
+            c.event(f'ESP32 airspeed setpoint requested: {target:g} m/s' +
+                    (f' (Re {body.requested_reynolds:g}, chord {body.chord_mm:g} mm)' if context else ''))
             return c.status()
         if not c.simulation:
             raise ValueError('Airspeed setpoint control is unavailable in this mode')
-        c.tunnel.setpoint = body.airspeed_ms
-        c.event(f'Setpoint changed to {body.airspeed_ms:g} m/s')
+        c.tunnel.setpoint = target
+        c.reynolds_setpoint = context
+        c.event(f'Setpoint changed to {target:g} m/s')
         return c.status()
 
 
@@ -391,10 +472,11 @@ async def setpoint(body: Setpoint):
 async def start_measurement(body: MeasurementRequest):
     c = control()
     async with c.lock:
+        c.aerodynamics.require_idle()
         if not c.simulation and not c.sensor_fresh():
             raise ValueError('No fresh pitot data. Check the acquisition connection before recording.')
         result = await asyncio.to_thread(
-            c.measurements.start, body.name.strip(), body.recording_rate_hz
+            c.measurements.start, body.name.strip(), body.recording_rate_hz, c.reynolds_setpoint
         )
         c.event('Recording started: ' + body.name)
         return result
@@ -412,6 +494,78 @@ async def stop_measurement():
 @app.get('/api/measurements')
 async def measurements():
     return await asyncio.to_thread(control().measurements.list)
+
+
+@app.get('/api/aerodynamics/experiments')
+async def aerodynamic_experiments(airfoil: str = '', name: str = '', date: str = '',
+                                 alpha_min: float = -90, alpha_max: float = 90):
+    runs = await asyncio.to_thread(control().aerodynamics.list)
+    return [run for run in runs if airfoil.lower() in run['configuration']['airfoil'].lower()
+            and name.lower() in run['name'].lower() and run['timestamp'].startswith(date)
+            and alpha_min <= run['configuration']['alpha_deg'] <= alpha_max]
+
+
+@app.post('/api/aerodynamics/experiments')
+async def create_aerodynamic_experiment(body: ExperimentConfig):
+    return await control().aerodynamics.create(body)
+
+
+@app.get('/api/aerodynamics/status')
+async def aerodynamic_status():
+    manager = control().aerodynamics
+    return dict(physical_available=bool(manager.physical_adapter.available),
+                active=[key for key, task in manager.tasks.items() if not task.done()])
+
+
+@app.post('/api/aerodynamics/compare')
+async def aerodynamic_compare(body: CompareRequest):
+    return await asyncio.to_thread(control().aerodynamics.comparison, body.identifiers)
+
+
+@app.get('/api/aerodynamics/experiments/{identifier}')
+async def aerodynamic_experiment(identifier: str):
+    return await asyncio.to_thread(control().aerodynamics.detail, identifier)
+
+
+@app.put('/api/aerodynamics/experiments/{identifier}')
+async def update_aerodynamic_experiment(identifier: str, body: ExperimentConfig):
+    return await control().aerodynamics.update(identifier, body)
+
+
+@app.post('/api/aerodynamics/experiments/{identifier}/start')
+async def start_aerodynamic_acquisition(identifier: str):
+    async with control().lock:
+        return await control().aerodynamics.start(identifier)
+
+
+@app.post('/api/aerodynamics/experiments/{identifier}/stop')
+async def stop_aerodynamic_acquisition(identifier: str):
+    return await control().aerodynamics.stop(identifier)
+
+
+@app.post('/api/aerodynamics/experiments/{identifier}/analyze')
+async def analyze_aerodynamic_experiment(identifier: str, body: AnalysisSettings):
+    return await control().aerodynamics.run_analysis(identifier, body)
+
+
+@app.get('/api/aerodynamics/experiments/{identifier}/cp')
+async def aerodynamic_cp(identifier: str):
+    detail = await asyncio.to_thread(control().aerodynamics.detail, identifier)
+    return dict(status=detail['metadata']['analysis_status'],
+                points=detail['analysis']['cp'] if detail['analysis'] else [])
+
+
+@app.get('/api/aerodynamics/experiments/{identifier}/coefficients')
+async def aerodynamic_coefficients(identifier: str):
+    detail = await asyncio.to_thread(control().aerodynamics.detail, identifier)
+    return dict(status=detail['metadata']['analysis_status'],
+                coefficients=detail['analysis']['coefficients'] if detail['analysis'] else {})
+
+
+@app.get('/api/aerodynamics/experiments/{identifier}/files/{filename}')
+async def aerodynamic_file(identifier: str, filename: str):
+    path = await asyncio.to_thread(control().aerodynamics.file, identifier, filename)
+    return FileResponse(path, filename=f'{identifier}_{filename}')
 
 
 @app.get('/api/measurements/{identifier}')
@@ -494,6 +648,7 @@ async def live(websocket: WebSocket):
 @app.post('/api/calibration/fan/prepare')
 async def prepare_fan(body: dict | None = None):
     c = control()
+    c.aerodynamics.require_idle()
     payload = {**c.config.calibration_defaults.model_dump(), **(body or {})}
     config = CalibrationConfig.model_validate(payload)
     if (config.start_hz < c.config.min_manual_frequency_hz or

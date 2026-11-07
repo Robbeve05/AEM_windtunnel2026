@@ -59,6 +59,14 @@ class ControlMode(BaseModel):
 
 class Setpoint(BaseModel):
     airspeed_ms: float = Field(ge=0, allow_inf_nan=False)
+    requested_reynolds: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
+    chord_mm: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
+
+    @model_validator(mode='after')
+    def reynolds_pair(self):
+        if (self.requested_reynolds is None) != (self.chord_mm is None):
+            raise ValueError('Reynolds number and chord length must be supplied together')
+        return self
 
 
 class MeasurementRequest(BaseModel):

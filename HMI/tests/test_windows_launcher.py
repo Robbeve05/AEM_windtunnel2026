@@ -12,7 +12,7 @@ class LauncherTests(unittest.TestCase):
     def test_detects_new_backend_and_required_route(self):
         doc = {
             "info": {"title": "Avans Windtunnel HMI"},
-            "paths": {"/api/settings/graph-airspeed": {"post": {}}},
+            "paths": {start_windows.EXPECTED_ROUTE: {"post": {}}},
         }
         with patch.object(start_windows, "urlopen",
                           return_value=io.BytesIO(json.dumps(doc).encode())):

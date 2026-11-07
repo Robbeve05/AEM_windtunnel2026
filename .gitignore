@@ -1,4 +1,8 @@
 .venv*/
 .hmi-test.log
+.hmi-aero-test.log
+.hmi-native-test.log
+output/pdf/
+tmp/pdfs/
 __pycache__/
 *.pyc
