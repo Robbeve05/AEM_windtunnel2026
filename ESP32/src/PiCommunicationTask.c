@@ -294,7 +294,7 @@ void PiCommunicationTask(void *argument)
                 MotorStatus motor = {0};
                 xQueuePeek(sensors, &sample, 0);
                 xQueuePeek(motor_status, &motor, 0);
-                char buffer[4096];
+                char buffer[1024];
                 int length = snprintf(
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s "
@@ -461,7 +461,7 @@ void PiCommunicationTask(void *argument)
                      (TickType_t)(now - last_wait_log) >=
                          pdMS_TO_TICKS(WAIT_DIAGNOSTICS_INTERVAL_MS)))
                 {
-                    char blocker_names[512];
+                    char blocker_names[256];
                     format_wait_blockers(diag->blocking_reasons, blocker_names,
                                          sizeof(blocker_names));
                     ESP_LOGI(
