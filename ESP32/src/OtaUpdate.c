@@ -1,13 +1,17 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen.
+/*
+ * OtaUpdate.c
+ *
  * ESP32 Ethernet OTA receiver. Never update while drive may run.
  * Transport: single TCP connection, authenticated with pre-shared HMAC-SHA256.
  * The Pi sends: WOTA1 <bytes> <sha256hex> <hmac_sha256hex>\n followed by image.
  * A fresh nonce is sent before each authenticated request.
  * The HMAC message is "WOTA1:<noncehex>:<bytes>:<sha256hex>".
  * OTA requires separate physical maintenance and motor isolation feedback.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

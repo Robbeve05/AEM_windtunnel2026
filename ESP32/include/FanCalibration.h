@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Public fan-calibration storage and control-gate interface. */
+/*
+ * FanCalibration.h
+ *
+ * Public fan-calibration storage and control-gate interface.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

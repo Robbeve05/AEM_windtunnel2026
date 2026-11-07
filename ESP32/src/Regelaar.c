@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Ideal ISA PID, Tustin integral and filtered derivative on measurement. */
+/*
+ * Regelaar.c
+ *
+ * Ideal ISA PID, Tustin integral and filtered derivative on measurement.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

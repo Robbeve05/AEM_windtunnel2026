@@ -3,6 +3,7 @@
 
 /*
  * ApplicationTasks.c
+ *
  * Creates communication infrastructure before starting any application task.
  *
  * Author: R.E. van Eekelen

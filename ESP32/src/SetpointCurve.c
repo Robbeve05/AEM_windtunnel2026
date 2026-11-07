@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Vijfdegraads bewegingscurve voor het luchtsnelheid-setpoint. */
+/*
+ * SetpointCurve.c
+ *
+ * Vijfdegraads bewegingscurve voor het luchtsnelheid-setpoint.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

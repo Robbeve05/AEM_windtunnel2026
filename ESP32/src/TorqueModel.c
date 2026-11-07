@@ -1,9 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* One-mass theoretical PID design. Author: R.E. van Eekelen.
+/*
+ * TorqueModel.c
+ *
+ * Torque plant design, inertia/load feedforward and inverse motor model.
  * Model: incremental shaft torque [Nm] -> airspeed [m/s].
  * Never apply gains directly to a frequency-commanded V20.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

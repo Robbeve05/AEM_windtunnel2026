@@ -3,6 +3,7 @@
 
 /*
  * InputHandlerTask.c
+ *
  * Physical input validation and operational VFD-enable relay management.
  *
  * Author: R.E. van Eekelen

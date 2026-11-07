@@ -3,6 +3,7 @@
 
 /*
  * ApplicationTasks.h
+ *
  * Shared startup and advisory event interfaces.
  *
  * Author: R.E. van Eekelen

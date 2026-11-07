@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen */
+/*
+ * PressureSensors.h
+ *
+ * Pitot and pressure-tap acquisition, calibration and filtered measurements.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

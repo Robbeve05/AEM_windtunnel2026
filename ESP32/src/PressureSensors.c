@@ -1,11 +1,15 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen.
+/*
+ * PressureSensors.c
+ *
  * Pitot ASPD-4525 and taps are owned only by SensorTask (Core 0).
  * One bounded I2C transaction every 10 ms, 5-point batch average.
  * Pressure tap acquisition is separately owned by SensorTask (Core 0).
  * Hardware I2C latency is NOT hard real-time: verify overruns on target.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

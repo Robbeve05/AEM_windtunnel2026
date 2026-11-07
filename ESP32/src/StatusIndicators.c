@@ -1,7 +1,12 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Indication never establishes mechanical standstill.
+/*
+ * StatusIndicators.c
+ *
+ * Indication never establishes mechanical standstill.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Core 0 only; never called by ControlTask. */
+/*
+ * I2CBus.c
+ *
+ * Core 0 only; never called by ControlTask.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

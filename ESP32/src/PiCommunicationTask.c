@@ -3,6 +3,7 @@
 
 /*
  * PiCommunicationTask.c
+ *
  * Exchanges commands, heartbeat and telemetry with the Raspberry Pi.
  *
  * Author: R.E. van Eekelen

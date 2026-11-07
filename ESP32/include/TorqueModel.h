@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Theoretical one-mass controller design, R.E. van Eekelen. */
+/*
+ * TorqueModel.h
+ *
+ * Torque plant design, inertia/load feedforward and inverse motor model.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

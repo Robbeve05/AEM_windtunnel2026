@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* FOPDT/SIMC ISA PI design, frequency feedforward and actuator decisions. */
+/*
+ * FrequencyModel.c
+ *
+ * FOPDT/SIMC ISA PI design, frequency feedforward and actuator decisions.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

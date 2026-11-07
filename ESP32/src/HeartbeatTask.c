@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* R.E. van Eekelen. Waveshare WS2812 status LED (non-safety). */
+/*
+ * HeartbeatTask.c
+ *
+ * Waveshare WS2812 status LED (non-safety).
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

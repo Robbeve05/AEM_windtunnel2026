@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Ethernet network interface initialization and link state. */
+/*
+ * Ethernet.c
+ *
+ * Ethernet network interface initialization and link state.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

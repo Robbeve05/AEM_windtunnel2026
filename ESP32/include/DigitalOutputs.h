@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Operational outputs, not a safety function. */
+/*
+ * DigitalOutputs.h
+ *
+ * Operational outputs, not a safety function.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

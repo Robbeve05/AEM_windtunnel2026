@@ -25,6 +25,14 @@ class SourceLayoutTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 source = path.read_text(encoding='utf-8')
                 self.assertTrue(source.startswith(SEPARATOR+'\n// File information\n\n'))
+                # Match the complete ControlTask-style metadata block, not only
+                # the presence of a section label above a one-line comment.
+                self.assertRegex(source,
+                    r'\A'+re.escape(SEPARATOR)+r'\n// File information\n\n/\*\n'
+                    r' \* '+re.escape(path.name)+r'\n \*\n'
+                    r' \* \S[^\n]*\n(?: \*(?: [^\n]*)?\n)* \*/\n\n')
+                information = re.search(r'/\*.*?\*/', source, re.S)[0]
+                self.assertIn('\n * Author: R.E. van Eekelen\n', information)
                 for line in source.splitlines():
                     if re.fullmatch(r'\s*/{20,}\s*', line):
                         self.assertEqual(line, SEPARATOR)

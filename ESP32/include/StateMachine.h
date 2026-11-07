@@ -1,8 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Operational software, not a hardware safety
- * function. */
+/*
+ * StateMachine.h
+ *
+ * Operational software, not a hardware safety
+ * function.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

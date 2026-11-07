@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Generic ISA controller. No plant units, hardware or I/O. */
+/*
+ * Regelaar.h
+ *
+ * Generic ISA controller. No plant units, hardware or I/O.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

@@ -1,8 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Physical maintenance authorization, no speed
- * estimate. */
+/*
+ * OtaSafety.h
+ *
+ * Physical maintenance authorization, no speed
+ * estimate.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

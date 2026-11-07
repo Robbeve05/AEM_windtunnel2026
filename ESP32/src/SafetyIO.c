@@ -1,7 +1,12 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. These interrupts do not implement hardware safety.
+/*
+ * SafetyIO.c
+ *
+ * These interrupts do not implement hardware safety.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

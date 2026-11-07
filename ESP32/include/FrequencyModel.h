@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Frequency plant and calibrated feedforward; corrections are in Hz. */
+/*
+ * FrequencyModel.h
+ *
+ * Frequency plant and calibrated feedforward; corrections are in Hz.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

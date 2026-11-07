@@ -1,8 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Persistent fan characteristic. All protocol, validation, CRC and NVS live
- * here. */
+/*
+ * FanCalibration.c
+ *
+ * Persistent fan characteristic. All protocol, validation, CRC and NVS live
+ * here.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes

@@ -1,7 +1,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Raspberry Pi command protocol types and parser declaration. */
+/*
+ * PiProtocol.h
+ *
+ * Raspberry Pi command protocol types and parser declaration.
+ *
+ * Author: R.E. van Eekelen
+ */
 
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard

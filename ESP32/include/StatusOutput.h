@@ -1,7 +1,12 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
-/* Author: R.E. van Eekelen. Shared telemetry interpretation, no hardware I/O.
+/*
+ * StatusOutput.h
+ *
+ * Shared telemetry interpretation, no hardware I/O.
+ *
+ * Author: R.E. van Eekelen
  */
 
 ///////////////////////////////////////////////////////////////////////////////

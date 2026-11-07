@@ -3,6 +3,7 @@
 
 /*
  * StateMachine.c
+ *
  * Operational state transitions and fault recovery.
  *
  * Author: R.E. van Eekelen

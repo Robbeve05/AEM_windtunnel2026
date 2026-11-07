@@ -1,5 +1,11 @@
 # ISA controller refactor validation — 7 November 2026
 
+## Follow-up: complete file-information layout
+
+The initial layout check only checked section labels and did not require the complete ControlTask-style information block. Following the review, 41 blocks were corrected to include the actual filename, a blank line and a description. On explicit user request, the missing `Author: R.E. van Eekelen` line was also added to 14 files. All 44 application C/H files now have the complete metadata block. The strengthened test requires the actual filename, multiline layout and author line as well as the existing section/include/prototype checks. All 44 files retain exactly the same C tokens as commit `37133cc2788617f29f4a8906a957347986a9e2c2`; only comments changed.
+
+The follow-up host run passed 19/20; Device Guard blocked `indicators` (exit 4551), and the explicit `-Case indicators` retry passed. The stricter layout test passes. Both firmware configurations were rebuilt successfully after the complete metadata correction. HMI code and control behavior were not changed by this follow-up.
+
 Starting commit: `695f95be90536d082ca32906eb808ee9ee0ae34c` on `main`, initially clean and equal to fetched `origin/main`. No feature branch or PR was created. No upload or physical motor test was performed.
 
 ## Results on the final implementation
