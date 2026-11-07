@@ -346,6 +346,7 @@ int main(void)
     Control_CheckSafety(&c);
     Control_UpdateStateMachine(&c);
     assert(c.machine.state == STATE_WAIT && c.machine.fault == FAULT_NONE &&
+           c.machine.reset_accepted && !c.machine.reset_pending &&
            !c.machine.permissive && arms == 1);
     Control_PublishStatus(&c);
     assert(!c.status.reset_required);

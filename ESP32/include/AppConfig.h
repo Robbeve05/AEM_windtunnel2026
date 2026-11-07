@@ -365,7 +365,7 @@
 
 #ifndef SAFETY_RELAY_OK_ACTIVE_LEVEL
 // [Logic level, safety-critical] Provisional observed active-low healthy safety feedback.
-#define SAFETY_RELAY_OK_ACTIVE_LEVEL 1
+#define SAFETY_RELAY_OK_ACTIVE_LEVEL 0
 #endif
 
 #ifndef ESTOP_PRESSED_ACTIVE_LEVEL

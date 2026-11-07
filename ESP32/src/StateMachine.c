@@ -122,14 +122,16 @@ void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
 {
     if (f == FAULT_NONE)
         return;
+    const bool new_fault = m->state == STATE_FAULT && m->fault != f;
     m->last_fault = f;
     if (m->fault == FAULT_NONE || f == FAULT_EMERGENCY_STOP)
         m->fault = f;
-    if (m->state != STATE_FAULT)
+    if (m->state != STATE_FAULT || new_fault)
     {
-        m->fault_from = m->state;
         m->reset_pending = false;
         m->reset_accepted = false;
+        if (m->state != STATE_FAULT)
+            m->fault_from = m->state;
     }
     transition(m, STATE_FAULT, now);
     m->permissive = false;
@@ -198,7 +200,11 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
             StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
     }
     if (i->reset && (m->state == STATE_WAIT || m->state == STATE_FAULT) && fresh &&
-        !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok)
+        !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok &&
+        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE &&
+        !i->drive_fault &&
+        (!i->safety.vfd_fault_available || !i->safety.vfd_fault) &&
+        (!i->safety.contactor_available || i->safety.contactor_ok))
     {
         m->reset_pending = true;
         m->reset_until_ms = i->now_ms + RESET_FEEDBACK_WINDOW_MS;
@@ -214,7 +220,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     {
         m->fault = FAULT_NONE;
         m->reset_pending = false;
-        m->reset_accepted = false;
+        m->reset_accepted = true;
         transition(m, STATE_WAIT, i->now_ms);
     }
     switch (m->state)

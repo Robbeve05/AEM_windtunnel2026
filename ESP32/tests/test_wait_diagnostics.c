@@ -173,6 +173,65 @@ int main(void)
     inhibited.now_ms = INIT_TIMEOUT_MS;
     StateMachine_Step(&machine, &inhibited);
     assert(machine.state == STATE_INIT && machine.fault == FAULT_NONE);
+
+    MachineInputs startup = ready_inputs();
+    machine = (StateMachine){0};
+    StateMachine_Init(&machine, 0);
+    StateMachine_Step(&machine, &startup);
+    assert(machine.state == STATE_WAIT && !machine.reset_accepted);
+    startup.now_ms++;
+    StateMachine_Step(&machine, &startup);
+    assert(machine.state == STATE_WAIT && !machine.reset_accepted);
+    startup.reset = true;
+    startup.now_ms++;
+    StateMachine_Step(&machine, &startup);
+    assert(machine.state == STATE_WAIT && machine.reset_pending);
+    startup.reset = false;
+    startup.now_ms++;
+    StateMachine_Step(&machine, &startup);
+    assert(machine.state == STATE_READY && machine.reset_accepted);
+
+    MachineInputs emergency_reset = ready_inputs();
+    emergency_reset.sensor_ok = false;
+    emergency_reset.reset = true;
+    machine = (StateMachine){.state = STATE_FAULT, .fault = FAULT_EMERGENCY_STOP};
+    StateMachine_Step(&machine, &emergency_reset);
+    assert(machine.state == STATE_WAIT && machine.fault == FAULT_NONE &&
+           machine.reset_accepted && !machine.reset_pending);
+    emergency_reset.sensor_ok = true;
+    emergency_reset.reset = false;
+    emergency_reset.now_ms++;
+    StateMachine_Step(&machine, &emergency_reset);
+    assert(machine.state == STATE_READY && machine.reset_accepted);
+
+    MachineInputs new_fault = ready_inputs();
+    new_fault.urgent_fault = FAULT_VFD;
+    machine = (StateMachine){.state = STATE_FAULT, .fault = FAULT_EMERGENCY_STOP,
+                             .reset_pending = true, .reset_accepted = true};
+    StateMachine_Step(&machine, &new_fault);
+    assert(machine.state == STATE_FAULT && machine.reset_pending == false &&
+           machine.reset_accepted == false);
+    new_fault.reset = true;
+    new_fault.now_ms++;
+    StateMachine_Step(&machine, &new_fault);
+    assert(machine.state == STATE_FAULT && !machine.reset_pending &&
+           !machine.reset_accepted);
+    new_fault.reset = false;
+    new_fault.urgent_fault = FAULT_NONE;
+    new_fault.now_ms++;
+    StateMachine_Step(&machine, &new_fault);
+    assert(machine.state == STATE_FAULT && machine.fault == FAULT_EMERGENCY_STOP);
+    new_fault.reset = true;
+    new_fault.now_ms++;
+    StateMachine_Step(&machine, &new_fault);
+    assert(machine.state == STATE_WAIT && machine.fault == FAULT_NONE &&
+           machine.reset_accepted);
+    new_fault.reset = false;
+    new_fault.now_ms++;
+    StateMachine_Step(&machine, &new_fault);
+    assert(machine.state == STATE_READY && machine.fault == FAULT_NONE &&
+           machine.reset_accepted);
+
     puts("PASS WAIT readiness blocker diagnostics and unchanged READY transition");
     return 0;
 }
