@@ -1,22 +1,25 @@
-
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
 /* ESP32 application startup and runtime diagnostics. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
@@ -25,6 +28,21 @@
 #include "StatusOutput.h"
 #include "TaskData.h"
 #include "V20Modbus.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static const char *task_state_name(TaskHandle_t task);
+static unsigned task_stack_free(TaskHandle_t task);
+static uint32_t ticks_age_ms(TickType_t timestamp);
+static unsigned raw_di_level(const SafetySnapshot *safety, bool available, unsigned di);
+static void LogFaultEntry(const Telemetry *state);
+static const char *interpreted_di(bool available, unsigned raw, int active_level,
+                                  const char *active, const char *inactive);
+static void LogApplicationStatus(void);
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
 
 ///////////////////////////////////////////////////////////////////////////////
 // task_state_name()

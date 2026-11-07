@@ -1,10 +1,11 @@
-
 ///////////////////////////////////////////////////////////////////////////////
 // File information
 
 /* Ethernet network interface initialization and link state. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_eth.h"
@@ -16,10 +17,12 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "Ethernet.h"
 #include "TaskData.h"
@@ -32,47 +35,14 @@ static bool link_up;
 static esp_netif_t *ethernet_netif;
 
 ///////////////////////////////////////////////////////////////////////////////
-// get_ethernet_netif()
+// Function prototypes
 
-static esp_netif_t *get_ethernet_netif(void)
-{
-    portENTER_CRITICAL(&ethernet_state_lock);
-    esp_netif_t *netif = ethernet_netif;
-    portEXIT_CRITICAL(&ethernet_state_lock);
-    return netif;
-}
+static esp_netif_t *get_ethernet_netif(void);
+static void ethernet_event(void *arg, esp_event_base_t base, int32_t id, void *data);
 
 ///////////////////////////////////////////////////////////////////////////////
-// ethernet_event()
+// Initialization
 
-static void ethernet_event(void *arg, esp_event_base_t base, int32_t id, void *data)
-{
-    (void)arg;
-    if (base == ETH_EVENT && id == ETHERNET_EVENT_CONNECTED)
-    {
-        portENTER_CRITICAL(&ethernet_state_lock);
-        link_up = true;
-        portEXIT_CRITICAL(&ethernet_state_lock);
-        ESP_LOGI("Ethernet", "Physical link up");
-    }
-    if (base == ETH_EVENT && id == ETHERNET_EVENT_DISCONNECTED)
-    {
-        portENTER_CRITICAL(&ethernet_state_lock);
-        link_up = false;
-        portEXIT_CRITICAL(&ethernet_state_lock);
-        ESP_LOGW("Ethernet", "Physical link down");
-        xEventGroupSetBits(events, STOP_REQUEST);
-    }
-    if (base == IP_EVENT && id == IP_EVENT_ETH_GOT_IP)
-    {
-        const ip_event_got_ip_t *event = data;
-        ESP_LOGI("Ethernet", "IPv4 address available: " IPSTR, IP2STR(&event->ip_info.ip));
-    }
-    if (base == IP_EVENT && id == IP_EVENT_ETH_LOST_IP)
-    {
-        ESP_LOGW("Ethernet", "IP address lost");
-    }
-}
 ///////////////////////////////////////////////////////////////////////////////
 // Ethernet_Init()
 
@@ -136,6 +106,52 @@ void Ethernet_Init(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// get_ethernet_netif()
+
+static esp_netif_t *get_ethernet_netif(void)
+{
+    portENTER_CRITICAL(&ethernet_state_lock);
+    esp_netif_t *netif = ethernet_netif;
+    portEXIT_CRITICAL(&ethernet_state_lock);
+    return netif;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ethernet_event()
+
+static void ethernet_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    if (base == ETH_EVENT && id == ETHERNET_EVENT_CONNECTED)
+    {
+        portENTER_CRITICAL(&ethernet_state_lock);
+        link_up = true;
+        portEXIT_CRITICAL(&ethernet_state_lock);
+        ESP_LOGI("Ethernet", "Physical link up");
+    }
+    if (base == ETH_EVENT && id == ETHERNET_EVENT_DISCONNECTED)
+    {
+        portENTER_CRITICAL(&ethernet_state_lock);
+        link_up = false;
+        portEXIT_CRITICAL(&ethernet_state_lock);
+        ESP_LOGW("Ethernet", "Physical link down");
+        xEventGroupSetBits(events, STOP_REQUEST);
+    }
+    if (base == IP_EVENT && id == IP_EVENT_ETH_GOT_IP)
+    {
+        const ip_event_got_ip_t *event = data;
+        ESP_LOGI("Ethernet", "IPv4 address available: " IPSTR, IP2STR(&event->ip_info.ip));
+    }
+    if (base == IP_EVENT && id == IP_EVENT_ETH_LOST_IP)
+    {
+        ESP_LOGW("Ethernet", "IP address lost");
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Ethernet_LinkUp()
 
 bool Ethernet_LinkUp(void)
@@ -152,8 +168,6 @@ bool Ethernet_LinkUp(void)
 bool Ethernet_HasIp(void)
 {
     esp_netif_ip_info_t info;
-    ///////////////////////////////////////////////////////////////////////////////
-    // Function prototypes
 
     return Ethernet_GetIpInfo(&info);
 }

@@ -76,6 +76,29 @@ class WorkflowTests(unittest.TestCase):
         self.post('storage/export-all')
         self.assertEqual(self.client.get('/api/measurements/' + started['id']).status_code,200)
 
+    def test_dynamic_tuning_endpoint_is_advisory_and_keeps_saved_fit(self):
+        identifier = '20261107T120000-abcdef12'
+        folder = self.controller.calibration.directory / identifier
+        folder.mkdir(parents=True)
+        fit = dict(advisory_only=True, transitions=[dict(K_ms_per_hz=0.8, tau_s=2, L_s=0.2,
+                                                       model_valid=False)])
+        path = folder / 'dynamics.json'
+        path.write_text(json.dumps(fit), encoding='utf-8')
+        result = self.client.get(f'/api/calibration/fan/runs/{identifier}/dynamics?lambda_s=0.8')
+        self.assertEqual(result.status_code, 200, result.text)
+        candidate = result.json()['transitions'][0]['candidate_pi']
+        self.assertEqual(candidate['kp'], 2.5)
+        self.assertEqual(candidate['ti_s'], 2)
+        self.assertEqual(json.loads(path.read_text()), fit)
+        for value in ('nan', 'inf', '0', '-1', '61'):
+            self.assertEqual(self.client.get(
+                f'/api/calibration/fan/runs/{identifier}/dynamics?lambda_s={value}').status_code, 400)
+        del fit['transitions'][0]['L_s']
+        path.write_text(json.dumps(fit), encoding='utf-8')
+        legacy = self.client.get(f'/api/calibration/fan/runs/{identifier}/dynamics')
+        self.assertEqual(legacy.status_code, 200)
+        self.assertNotIn('candidate_pi', legacy.json()['transitions'][0])
+
     def test_simulated_cp_and_real_cp_gate(self):
         self.controller.config.pressure_taps = [Tap(
             name='p1', x_c=0.5, surface='upper')]

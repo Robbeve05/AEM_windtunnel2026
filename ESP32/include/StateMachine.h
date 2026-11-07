@@ -3,12 +3,15 @@
 
 /* Author: R.E. van Eekelen. Operational software, not a hardware safety
  * function. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard
+
 #pragma once
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -38,28 +41,6 @@ typedef enum
     FAULT_INTERLOCK,
     FAULT_INTERNAL
 } FaultReason_t;
-///////////////////////////////////////////////////////////////////////////////
-// Public data structures
-
-typedef struct
-{
-    bool valid, commissioned, estop_pressed, relay_ok, stop_ok, outputs_ok;
-    bool vfd_fault_available, vfd_fault, contactor_available, contactor_ok;
-    bool start_pressed, reset_pressed;
-    uint32_t tick_ms, raw_levels, start_sequence, reset_sequence, start_ms, reset_ms;
-} SafetySnapshot;
-typedef struct
-{
-    uint32_t now_ms;
-    SafetySnapshot safety;
-    bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
-    bool drive_communication_ok, v20_response_received, v20_status_healthy;
-    bool v20_modbus_initialized, v20_run_commissioned;
-    bool v20_diagnostics_complete, v20_configuration_valid;
-    bool stop_confirmed;
-    FaultReason_t urgent_fault, timing_fault;
-} MachineInputs;
-
 typedef enum
 {
     WAIT_BLOCK_ESTOP_PRESSED = 1u << 0,
@@ -86,6 +67,28 @@ typedef enum
     WAIT_BLOCK_V20_OPERATION_INHIBITED = 1u << 21
 } WaitBlockingReason;
 
+///////////////////////////////////////////////////////////////////////////////
+// Public data structures
+
+typedef struct
+{
+    bool valid, commissioned, estop_pressed, relay_ok, stop_ok, outputs_ok;
+    bool vfd_fault_available, vfd_fault, contactor_available, contactor_ok;
+    bool start_pressed, reset_pressed;
+    uint32_t tick_ms, raw_levels, start_sequence, reset_sequence, start_ms, reset_ms;
+} SafetySnapshot;
+typedef struct
+{
+    uint32_t now_ms;
+    SafetySnapshot safety;
+    bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
+    bool drive_communication_ok, v20_response_received, v20_status_healthy;
+    bool v20_modbus_initialized, v20_run_commissioned;
+    bool v20_diagnostics_complete, v20_configuration_valid;
+    bool stop_confirmed;
+    FaultReason_t urgent_fault, timing_fault;
+} MachineInputs;
+
 typedef struct
 {
     SystemState_t state;
@@ -94,6 +97,7 @@ typedef struct
     uint32_t entered_ms, boot_ms, reset_until_ms, epoch, transition_count;
     bool reset_pending, reset_accepted, recovery_requested, permissive;
 } StateMachine;
+
 ///////////////////////////////////////////////////////////////////////////////
 // Function declarations
 

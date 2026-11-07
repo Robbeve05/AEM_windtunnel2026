@@ -3,18 +3,22 @@
 
 /* Author: R.E. van Eekelen. These interrupts do not implement hardware safety.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include <string.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "SafetyIO.h"
@@ -25,12 +29,60 @@
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool emergency_latch, relay_latch, stop_latch;
 static volatile uint32_t unsafe_generation;
+#if SIMULATION_MODE
+static SafetySnapshot simulated = {
+    .valid = true, .commissioned = true, .relay_ok = true, .stop_ok = true, .outputs_ok = true};
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static bool valid_active_level(int level);
+#if !SIMULATION_MODE
+static int input_level(const SafetySnapshot *snapshot, unsigned gpio);
+#endif
+#if !SIMULATION_MODE
+static void input_isr(void *arg);
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
+
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Init()
+
+void SafetyIO_Init(void)
+{
+    /* Central installation precedes both input handlers and Ethernet startup. */
+    esp_err_t result = gpio_install_isr_service(0);
+    ESP_ERROR_CHECK(result == ESP_ERR_INVALID_STATE ? ESP_OK : result);
+#if !SIMULATION_MODE
+    gpio_config_t c = {
+        .pin_bit_mask = 0xffULL << 4, .mode = GPIO_MODE_INPUT, .intr_type = GPIO_INTR_DISABLE};
+    ESP_ERROR_CHECK(gpio_config(&c));
+    const int pins[] = {SAFETY_RELAY_OK_GPIO, ESTOP_PRESSED_GPIO, STOP_BUTTON_OK_GPIO};
+    for (unsigned i = 0; i < 3; i++)
+    {
+        ESP_ERROR_CHECK(gpio_set_intr_type(pins[i], GPIO_INTR_ANYEDGE));
+        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[i], input_isr, NULL));
+    }
+    (void)SafetyIO_Read();
+#endif
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
 ///////////////////////////////////////////////////////////////////////////////
 // valid_active_level()
 
-static bool valid_active_level(int level) { return level == 0 || level == 1; }
+static bool valid_active_level(int level)
+{
+    return level == 0 || level == 1;
+}
 
 #if !SIMULATION_MODE
+
 ///////////////////////////////////////////////////////////////////////////////
 // input_level()
 
@@ -51,10 +103,8 @@ bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active)
     return true;
 }
 
-#if SIMULATION_MODE
-static SafetySnapshot simulated = {
-    .valid = true, .commissioned = true, .relay_ok = true, .stop_ok = true, .outputs_ok = true};
-#else
+#if !SIMULATION_MODE
+
 ///////////////////////////////////////////////////////////////////////////////
 // input_isr()
 
@@ -80,27 +130,7 @@ static void IRAM_ATTR input_isr(void *arg)
     portEXIT_CRITICAL_ISR(&lock);
 }
 #endif
-///////////////////////////////////////////////////////////////////////////////
-// SafetyIO_Init()
 
-void SafetyIO_Init(void)
-{
-    /* Central installation precedes both input handlers and Ethernet startup. */
-    esp_err_t result = gpio_install_isr_service(0);
-    ESP_ERROR_CHECK(result == ESP_ERR_INVALID_STATE ? ESP_OK : result);
-#if !SIMULATION_MODE
-    gpio_config_t c = {
-        .pin_bit_mask = 0xffULL << 4, .mode = GPIO_MODE_INPUT, .intr_type = GPIO_INTR_DISABLE};
-    ESP_ERROR_CHECK(gpio_config(&c));
-    const int pins[] = {SAFETY_RELAY_OK_GPIO, ESTOP_PRESSED_GPIO, STOP_BUTTON_OK_GPIO};
-    for (unsigned i = 0; i < 3; i++)
-    {
-        ESP_ERROR_CHECK(gpio_set_intr_type(pins[i], GPIO_INTR_ANYEDGE));
-        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[i], input_isr, NULL));
-    }
-    (void)SafetyIO_Read();
-#endif
-}
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Read()
 
@@ -165,6 +195,7 @@ SafetySnapshot SafetyIO_Read(void)
     portEXIT_CRITICAL(&lock);
     return s;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Fault()
 
@@ -177,6 +208,7 @@ FaultReason_t SafetyIO_Fault(void)
     portEXIT_CRITICAL(&lock);
     return f;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Stop()
 
@@ -188,6 +220,7 @@ bool SafetyIO_Stop(void)
     portEXIT_CRITICAL(&lock);
     return value;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Acknowledge()
 
@@ -209,6 +242,7 @@ void SafetyIO_Acknowledge(void)
     /* Recheck levels to capture an edge concurrent with acknowledgement. */
     (void)SafetyIO_Read();
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Inhibited()
 
@@ -218,6 +252,7 @@ bool SafetyIO_Inhibited(void)
     return !s.valid || !s.commissioned || s.estop_pressed || !s.relay_ok ||
            SafetyIO_Fault() != FAULT_NONE;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SafetyIO_Simulate()
 
@@ -249,7 +284,8 @@ bool SafetyIO_Simulate(const char *name, bool active)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// void SafetyIO_PublishButtonEvents(...)
+// SafetyIO_PublishButtonEvents()
+
 /*
  * Publishes new validated START/RESET sequences from InputHandlerTask.
  * STOP has no existing debounced sequence: debounce only its advisory event.

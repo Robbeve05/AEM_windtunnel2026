@@ -5,18 +5,53 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include <math.h>
 #include <stddef.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "SetpointCurve.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Losse rekenfuncties
 
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static double BerekenOvergangstijd(const SetpointCurve *curve, double verschil);
+static double BerekenVijfdegraadsFactor(double q);
+static void StartNieuweOvergang(SetpointCurve *curve, float doel);
+static void BerekenVolgendeWaarde(SetpointCurve *curve, float Tsample);
+
 /* Kies de gewenste tijd, of verleng tot versnelling en jerk binnen de grenzen
  * vallen. Voor een snelheidsetpoint is dv/dt versnelling en d2v/dt2 jerk. */
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
+
+///////////////////////////////////////////////////////////////////////////////
+// SetpointCurve_Init()
+
+bool SetpointCurve_Init(SetpointCurve *curve, float initial, float time, float acceleration,
+                        float jerk)
+{
+    if (curve == NULL || !isfinite(initial) || !isfinite(time) || !isfinite(acceleration) ||
+        !isfinite(jerk) || time <= 0 || acceleration <= 0 || jerk <= 0)
+        return false;
+    *curve = (SetpointCurve){.start = initial,
+                             .target = initial,
+                             .value = initial,
+                             .requested_time = time,
+                             .max_acceleration = acceleration,
+                             .max_jerk = jerk};
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
 ///////////////////////////////////////////////////////////////////////////////
 // BerekenOvergangstijd()
 
@@ -27,14 +62,13 @@ static double BerekenOvergangstijd(const SetpointCurve *curve, double verschil)
     const double tijd_jerk = sqrt((10.0 / sqrt(3.0)) * afstand / curve->max_jerk);
     const double third =
         curve->max_third_derivative > 0 ? cbrt(60.0 * afstand / curve->max_third_derivative) : 0;
-    ///////////////////////////////////////////////////////////////////////////////
-    // Function prototypes
 
     return fmax(third, fmax(curve->requested_time, fmax(tijd_versnelling, tijd_jerk)));
 }
 
 /* q loopt van 0 naar 1. Waarde, versnelling en jerk sluiten aan op de
  * eindpunten. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // BerekenVijfdegraadsFactor()
 
@@ -65,24 +99,6 @@ static void BerekenVolgendeWaarde(SetpointCurve *curve, float Tsample)
     curve->value = curve->start + (curve->target - curve->start) * factor;
     if (curve->elapsed >= curve->duration)
         curve->value = curve->target;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// SetpointCurve_Init()
-
-bool SetpointCurve_Init(SetpointCurve *curve, float initial, float time, float acceleration,
-                        float jerk)
-{
-    if (curve == NULL || !isfinite(initial) || !isfinite(time) || !isfinite(acceleration) ||
-        !isfinite(jerk) || time <= 0 || acceleration <= 0 || jerk <= 0)
-        return false;
-    *curve = (SetpointCurve){.start = initial,
-                             .target = initial,
-                             .value = initial,
-                             .requested_time = time,
-                             .max_acceleration = acceleration,
-                             .max_jerk = jerk};
-    return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -60,7 +60,9 @@ class SequenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c for c in self.esp.commands if c.startswith('FREQ ')],['FREQ 0']+[f'FREQ {f:.3f}' for f in range(10,51,5)]+['FREQ 0'])
         self.esp.frame['state']='READY';await self.tick();await self.cal.task
         self.assertEqual(self.cal.state,'COMPLETED',self.cal.message)
-        self.assertEqual(len(list((Path(self.tmp.name)/self.cal.run_id).iterdir())),4)
+        self.assertEqual({p.name for p in (Path(self.tmp.name)/self.cal.run_id).iterdir()},
+                         {'calibration.json', 'raw_samples.csv', 'characteristic.csv',
+                          'inverse_lookup.csv', 'dynamics.json', 'dynamic_transitions.csv'})
         await self.cal.deploy(self.cal.run_id);self.assertEqual(self.esp.frame['cal_valid'],1)
         await self.cal.reset();self.assertEqual(self.esp.frame['cal_valid'],0);self.assertEqual(len(self.cal.runs()),1)
         self.assertFalse(any(c in ('START','RESET') for c in self.esp.commands))

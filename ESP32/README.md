@@ -10,7 +10,7 @@ Firmware for the Avans Aerospace wind tunnel, maintained on the **`main` branch*
 - **RTOS:** FreeRTOS with an internal GPTimer, **100 Hz (10 ms)** control cycles. Timer alarms alternate sensor and control notifications at **5 ms** phases. The Pitot sensor is sampled at 100 Hz and averaged in groups of five for 20 Hz telemetry. Modbus communication is serviced asynchronously; responses need not complete within one 10 ms control period.
 - **Timing faults:** `CONTROL_CLOCK_MISSED_TICKS_ALLOWED` defaults to `1`, tolerating one consecutive missed 100 Hz clock tick. Set it to `0` for strict clock-miss handling. A 50 ms clock timeout, control execution at or above 10 ms, or Modbus service at or above 1 ms still faults immediately; the tolerance does not relax those limits.
 - **Startup:** hardware and NVS-backed fan calibration are initialized before application tasks, then queues/event groups and tasks are created. Flash initialization must not overlap the 10 ms control task. The control loop waits for required task-ready bits; those bits indicate local initialization, not live sensor, V20 or Pi health. Failed initialization leaves motor outputs inhibited.
-- **Control modes:** MANUAL commands V20 frequency in Hz through a fifth-order ramp; AUTO uses an airspeed reference ramp, torque PID, a one-mass motor/fan model and an inverse motor model to produce V20 Hz. A valid stored fan calibration can supply the base frequency.
+- **Control modes:** MANUAL commands V20 frequency in Hz through a fifth-order ramp; AUTO uses an airspeed reference ramp and one generic ISA/Tustin regulator with a selectable torque or identified frequency plant to produce V20 Hz. A valid stored fan calibration can supply the base frequency.
 - **Operational state machine:** `INIT → WAIT → READY → RUNNING → STOP → FAULT` (transitions are governed by interlocks and commands). The controller publishes state, input and drive diagnostics to the HMI.
 
 The serial console reports startup readiness and task states every five seconds. On a new fault, it also logs the state the controller faulted from, the latched reason, and the safety, sensor, and V20 readiness/communication flags from that fault cycle. Its diagnostics distinguish local task initialization from current hardware health: sensor samples may remain invalid or stale, the V20 may not respond, and the Pi heartbeat may be absent even after the corresponding task/listener initialized. Ethernet link/IP, each raw DI1-DI8 level, interpreted input function and configured polarity, commissioning flags, machine state/fault, output image and status indication are included. The onboard RGB LED adds a brief blue pulse each second while fresh control-cycle notifications are being processed; the existing red/amber/green colors continue to show machine status. External lamps follow the same state indication: DO2 green, DO3 red, DO4 yellow/amber. Output-image acknowledgement is not physical contact feedback. These reports do not issue output or motor commands.
@@ -24,8 +24,11 @@ The serial console reports startup readiness and task states every five seconds.
 | `src/InputHandlerTask.c` | Reads/validates buttons, applies VFD-enable relay request |
 | `src/SafetyIO.c` | Reads safety-related DI, interrupt latches, fault/stop signals and simulated inputs |
 | `src/SensorTask.c` | Acquires and publishes sensor samples |
-| `src/ControlTask.c` | State machine coordination, references, torque controller, drive requests and diagnostics |
+| `src/ControlTask.c` | State machine coordination, references, selected plant, generic controller, drive requests and diagnostics |
 | `src/PiCommunicationTask.c` | Ethernet TCP text commands, heartbeats and status telemetry |
+| `src/Regelaar.c` | Generic ISA/Tustin NONE/P/PI/PID and integrator management |
+| `src/TorqueModel.c` | One-mass design, torque feedforward and inverse slip model |
+| `src/FrequencyModel.c` | FOPDT/SIMC design, frequency feedforward and actuator decisions |
 | `src/FanCalibration.c` | Stores and retrieves the calibrated fan characteristic in NVS |
 | `include/AppConfig.h` | Operating limits, timing, model parameters and commissioning flags |
 
@@ -76,13 +79,13 @@ Set `CONTROLLER_SETTING` in `include/AppConfig.h`:
 | `CONTROLLER_PI` | Proportional and integral (default) | Active |
 | `CONTROLLER_PID` | Proportional, integral and filtered derivative | Active |
 
-Selection is enforced in `TorqueLoadControl_Step()`, so commands that update stored PID gains cannot activate disabled terms. It does **not** affect MANUAL frequency control and **does not** bypass physical AUTO commissioning gates. `NONE` means no feedback correction, not a stopped fan or disabled feedforward. Rebuild/flash firmware after changing the setting. These modes have not been physically tuned or commissioned.
+Selection is enforced in `Regelaar_Step()` through the ISA mode selected at initialization, so commands that update stored PID gains cannot activate disabled terms. It does **not** affect MANUAL frequency control and **does not** bypass physical AUTO commissioning gates. `NONE` means no feedback correction, not a stopped fan or disabled feedforward. Rebuild/flash firmware after changing the setting. These modes have not been physically tuned or commissioned.
 
 ## Control and calibration
 
 **MANUAL:** enter a requested frequency from 0 to 50 Hz. The output follows a separate fifth-order frequency profile with slew, acceleration and jerk limits. MANUAL does not close the airspeed feedback loop.
 
-**AUTO:** airspeed setpoint (m/s) → fifth-order reference → torque PID correction and inertia/load feedforward → inverse induction-motor approximation → V20 frequency → fan → Pitot feedback. The frequency command is bounded; motor and drive dynamics still require physical verification.
+**AUTO:** select `CONTROL_TYPE=CONTROL_TORQUE_PI` (default) or `CONTROL_FREQUENCY_PI`. Both use `Regelaar.c` and the same filtered measurement. Torque adds inertia/load feedforward and an inverse slip model; frequency adds the stored calibration feedforward to an ISA PI frequency correction. Frequency defaults have no approved identified model and remain inhibited until validation/commissioning. See [controller equations and units](../docs/control/TORQUE-CONTROL.md). The frequency command is bounded; motor and drive dynamics still require physical verification.
 
 For RUCK EL 710 D4 02, article 146531, the confirmed rotating inertias used in the theoretical one-mass model are:
 
@@ -107,7 +110,7 @@ The dedicated Pi link uses static IPv4: ESP32 `192.168.50.2/24`, Raspberry Pi `1
 From `ESP32/`, in a local directory without spaces:
 
 ```bash
-pio run -e waveshare_s3
+pio run -e waveshare_s3 -e waveshare_s3_frequency
 pio run -e waveshare_s3_sim
 ```
 
@@ -115,6 +118,7 @@ Windows host regression tests:
 
 ```powershell
 ./tests/run_host_tests.ps1
+python -m unittest discover -s tests -p test_source_layout.py -v
 ```
 
 These tests use mocked hardware; they include V20 asynchronous responses, OFF1/stop confirmation, faults and recovery. A passing test suite cannot validate relay wiring, GPIO voltage levels, drive configuration, braking/coast behavior or functional safety.

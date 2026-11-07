@@ -7,14 +7,17 @@
  *
  * Author: R.E. van Eekelen
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "I2CBus.h"
@@ -33,7 +36,16 @@ typedef struct
 } Buttons;
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
+// Function prototypes
+
+static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now);
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// Buttons_Update()
+
 /*
  * Debounces START on press and RESET on release. Preserves the existing
  * arming, validity and emergency inhibition conditions and event timestamps.
@@ -100,7 +112,8 @@ static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// void InputHandlerTask(void *argument)
+// InputHandlerTask()
+
 /*
  * Owns button validation and VFD-enable relay updates. Publishes notifications
  * only after the matching sequence and timestamp are visible in safety_status.

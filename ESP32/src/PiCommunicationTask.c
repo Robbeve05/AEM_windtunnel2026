@@ -7,8 +7,10 @@
  *
  * Author: R.E. van Eekelen
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
@@ -20,11 +22,13 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
@@ -37,10 +41,6 @@
 #include "TaskData.h"
 
 ///////////////////////////////////////////////////////////////////////////////
-// File-local variables
-
-static int client = -1;
-///////////////////////////////////////////////////////////////////////////////
 // File-local data structures
 
 typedef struct
@@ -49,6 +49,10 @@ typedef struct
     const char *name;
 } WaitBlockerLabel;
 
+///////////////////////////////////////////////////////////////////////////////
+// File-local variables
+
+static int client = -1;
 static const WaitBlockerLabel wait_blocker_labels[] = {
     {WAIT_BLOCK_ESTOP_PRESSED, "estop_pressed"},
     {WAIT_BLOCK_STOP_INPUT, "stop_input"},
@@ -73,6 +77,17 @@ static const WaitBlockerLabel wait_blocker_labels[] = {
     {WAIT_BLOCK_V20_CONFIGURATION, "v20_configuration"},
     {WAIT_BLOCK_V20_OPERATION_INHIBITED, "v20_operation_inhibited"},
 };
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static void format_wait_blockers(uint32_t reasons, char *buffer, size_t size);
+static void disconnect_client(void);
+static void reply(const char *text);
+static void process(const char *line);
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
 
 ///////////////////////////////////////////////////////////////////////////////
 // format_wait_blockers()
@@ -125,6 +140,7 @@ static void disconnect_client(void)
     xEventGroupSetBits(events, STOP_REQUEST);
     xQueueReset(commands);
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // reply()
 
@@ -143,6 +159,7 @@ static void reply(const char *text)
         text += n;
     }
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // process()
 
@@ -237,7 +254,8 @@ static void process(const char *line)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// void PiCommunicationTask(void *argument)
+// PiCommunicationTask()
+
 /*
  * Announces readiness after Ethernet and the listening socket initialize.
  * Does not wait for a Pi connection; heartbeat health remains independent.

@@ -7,18 +7,22 @@
  *
  * Author: R.E. van Eekelen
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_err.h"
 #include "esp_log.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "FanCalibration.h"
@@ -29,12 +33,7 @@
 #include "TaskData.h"
 
 ///////////////////////////////////////////////////////////////////////////////
-// Function prototypes
-
-void HeartbeatTask(void *argument);
-
-///////////////////////////////////////////////////////////////////////////////
-// Shared handles
+// File-local variables
 
 QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry, safety_status,
     pi_heartbeat;
@@ -49,7 +48,20 @@ TaskHandle_t input_task_handle, pi_task_handle, heartbeat_task_handle;
 volatile bool ota_task_alive, ota_valid_task_alive;
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void InitHardware(void)
+// Function prototypes
+
+void HeartbeatTask(void *argument);
+static void InitHardware(void);
+static void CreateQueues(void);
+static void CreateEventGroups(void);
+static void CreateTasks(void);
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
+
+///////////////////////////////////////////////////////////////////////////////
+// InitHardware()
+
 /*
  * Configures physical inputs and loads inactive output latches before tasks
  * start.
@@ -76,7 +88,11 @@ static void InitHardware(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void CreateQueues(void)
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// CreateQueues()
+
 /*
  * Creates the existing command and one-element latest-value queues.
  */
@@ -96,7 +112,8 @@ static void CreateQueues(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void CreateEventGroups(void)
+// CreateEventGroups()
+
 /*
  * Creates all event interfaces before any producer or consumer can run.
  */
@@ -113,7 +130,8 @@ static void CreateEventGroups(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void CreateTasks(void)
+// CreateTasks()
+
 /*
  * Preserves task stacks, priorities, CPU assignments and the startup barrier.
  */
@@ -158,7 +176,8 @@ static void CreateTasks(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// void StartApplicationTasks(void)
+// StartApplicationTasks()
+
 /*
  * Initializes hardware and shared communication before creating application
  * tasks.

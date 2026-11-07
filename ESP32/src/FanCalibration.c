@@ -3,8 +3,10 @@
 
 /* Persistent fan characteristic. All protocol, validation, CRC and NVS live
  * here. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <errno.h>
@@ -15,12 +17,14 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "FanCalibration.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -36,6 +40,7 @@ typedef struct
     uint32_t crc;
     Point point[FAN_CAL_MAX_POINTS];
 } Table;
+
 ///////////////////////////////////////////////////////////////////////////////
 // File-local variables
 
@@ -45,108 +50,22 @@ static bool uploading;
 static int slot = -1;
 static bool gate_requested, gate_granted;
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
 ///////////////////////////////////////////////////////////////////////////////
-// FanCalibration_ControlGate()
+// Function prototypes
 
-bool FanCalibration_ControlGate(bool safe_stopped)
-{
-    portENTER_CRITICAL(&mux);
-    gate_granted = gate_requested && safe_stopped;
-    bool held = gate_requested;
-    portEXIT_CRITICAL(&mux);
-    return held;
-}
+static bool acquire_gate(void);
+static uint32_t byte_crc(uint32_t crc, unsigned byte);
+static uint32_t checksum(const Table *t);
+static bool valid(const Table *t);
+static void publish(const Table *t);
+static bool read_slot(nvs_handle_t h, int s, Table *t);
+static bool store(void);
+static bool numbers(const char *s, uint32_t *v, int n);
+
 ///////////////////////////////////////////////////////////////////////////////
-// acquire_gate()
+// Initialization
 
-static bool acquire_gate(void)
-{
-    portENTER_CRITICAL(&mux);
-    gate_requested = true;
-    gate_granted = false;
-    portEXIT_CRITICAL(&mux);
-    for (int i = 0; i < 20; i++)
-    {
-        vTaskDelay(pdMS_TO_TICKS(5));
-        portENTER_CRITICAL(&mux);
-        bool ok = gate_granted;
-        portEXIT_CRITICAL(&mux);
-        if (ok)
-            return true;
-    }
-    portENTER_CRITICAL(&mux);
-    gate_requested = false;
-    portEXIT_CRITICAL(&mux);
-    return false;
-}
-///////////////////////////////////////////////////////////////////////////////
-// byte_crc()
-
-static uint32_t byte_crc(uint32_t crc, unsigned byte)
-{
-    crc ^= byte;
-    for (int b = 0; b < 8; b++)
-        crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0);
-    return crc;
-}
-///////////////////////////////////////////////////////////////////////////////
-// checksum()
-
-static uint32_t checksum(const Table *t)
-{
-    uint32_t c = 0xffffffffu;
-    for (int i = 0; i < 2; i++)
-        c = byte_crc(c, (t->version >> (8 * i)) & 255);
-    for (int i = 0; i < 2; i++)
-        c = byte_crc(c, (t->count >> (8 * i)) & 255);
-    for (unsigned j = 0; j < t->count; j++)
-    {
-        for (int i = 0; i < 4; i++)
-            c = byte_crc(c, (t->point[j].velocity >> (8 * i)) & 255);
-        for (int i = 0; i < 4; i++)
-            c = byte_crc(c, (t->point[j].frequency >> (8 * i)) & 255);
-    }
-    return c ^ 0xffffffffu;
-}
-///////////////////////////////////////////////////////////////////////////////
-// valid()
-
-static bool valid(const Table *t)
-{
-    if (t->version != FAN_CAL_VERSION || t->count < 2 || t->count > FAN_CAL_MAX_POINTS)
-        return false;
-    for (unsigned i = 0; i < t->count; i++)
-    {
-        Point p = t->point[i];
-        if (!p.velocity || p.velocity > 100000 || !p.frequency || p.frequency > 50000)
-            return false;
-        if (i &&
-            (p.velocity <= t->point[i - 1].velocity || p.frequency <= t->point[i - 1].frequency))
-            return false;
-    }
-    return checksum(t) == t->crc;
-}
-///////////////////////////////////////////////////////////////////////////////
-// publish()
-
-static void publish(const Table *t)
-{
-    portENTER_CRITICAL(&mux);
-    active = *t;
-    portEXIT_CRITICAL(&mux);
-}
-///////////////////////////////////////////////////////////////////////////////
-// read_slot()
-
-static bool read_slot(nvs_handle_t h, int s, Table *t)
-{
-    size_t size = sizeof(*t);
-    ///////////////////////////////////////////////////////////////////////////////
-    // Function prototypes
-
-    return nvs_get_blob(h, s ? "slot_b" : "slot_a", t, &size) == ESP_OK && size == sizeof(*t) &&
-           valid(t);
-}
 ///////////////////////////////////////////////////////////////////////////////
 // FanCalibration_Init()
 
@@ -175,6 +94,117 @@ bool FanCalibration_Init(void)
     publish(&t);
     return slot >= 0;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// FanCalibration_ControlGate()
+
+bool FanCalibration_ControlGate(bool safe_stopped)
+{
+    portENTER_CRITICAL(&mux);
+    gate_granted = gate_requested && safe_stopped;
+    bool held = gate_requested;
+    portEXIT_CRITICAL(&mux);
+    return held;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// acquire_gate()
+
+static bool acquire_gate(void)
+{
+    portENTER_CRITICAL(&mux);
+    gate_requested = true;
+    gate_granted = false;
+    portEXIT_CRITICAL(&mux);
+    for (int i = 0; i < 20; i++)
+    {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        portENTER_CRITICAL(&mux);
+        bool ok = gate_granted;
+        portEXIT_CRITICAL(&mux);
+        if (ok)
+            return true;
+    }
+    portENTER_CRITICAL(&mux);
+    gate_requested = false;
+    portEXIT_CRITICAL(&mux);
+    return false;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// byte_crc()
+
+static uint32_t byte_crc(uint32_t crc, unsigned byte)
+{
+    crc ^= byte;
+    for (int b = 0; b < 8; b++)
+        crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0);
+    return crc;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// checksum()
+
+static uint32_t checksum(const Table *t)
+{
+    uint32_t c = 0xffffffffu;
+    for (int i = 0; i < 2; i++)
+        c = byte_crc(c, (t->version >> (8 * i)) & 255);
+    for (int i = 0; i < 2; i++)
+        c = byte_crc(c, (t->count >> (8 * i)) & 255);
+    for (unsigned j = 0; j < t->count; j++)
+    {
+        for (int i = 0; i < 4; i++)
+            c = byte_crc(c, (t->point[j].velocity >> (8 * i)) & 255);
+        for (int i = 0; i < 4; i++)
+            c = byte_crc(c, (t->point[j].frequency >> (8 * i)) & 255);
+    }
+    return c ^ 0xffffffffu;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// valid()
+
+static bool valid(const Table *t)
+{
+    if (t->version != FAN_CAL_VERSION || t->count < 2 || t->count > FAN_CAL_MAX_POINTS)
+        return false;
+    for (unsigned i = 0; i < t->count; i++)
+    {
+        Point p = t->point[i];
+        if (!p.velocity || p.velocity > 100000 || !p.frequency || p.frequency > 50000)
+            return false;
+        if (i &&
+            (p.velocity <= t->point[i - 1].velocity || p.frequency <= t->point[i - 1].frequency))
+            return false;
+    }
+    return checksum(t) == t->crc;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// publish()
+
+static void publish(const Table *t)
+{
+    portENTER_CRITICAL(&mux);
+    active = *t;
+    portEXIT_CRITICAL(&mux);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// read_slot()
+
+static bool read_slot(nvs_handle_t h, int s, Table *t)
+{
+    size_t size = sizeof(*t);
+
+    return nvs_get_blob(h, s ? "slot_b" : "slot_a", t, &size) == ESP_OK && size == sizeof(*t) &&
+           valid(t);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // FanCalibration_GetStatus()
 
@@ -187,6 +217,7 @@ void FanCalibration_GetStatus(FanCalibrationStatus *s)
                                 .crc = active.crc};
     portEXIT_CRITICAL(&mux);
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // FanCalibration_IsValid()
 
@@ -196,6 +227,7 @@ bool FanCalibration_IsValid(void)
     FanCalibration_GetStatus(&s);
     return s.valid;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // FanCalibration_GetBaseFrequency()
 
@@ -225,6 +257,7 @@ float FanCalibration_GetBaseFrequency(float v, float fallback)
         }
     return t.point[t.count - 1].frequency / 1000.0f;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // store()
 
@@ -247,6 +280,7 @@ static bool store(void)
     }
     return ok;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // numbers()
 
@@ -266,6 +300,7 @@ static bool numbers(const char *s, uint32_t *v, int n)
     }
     return !*s;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // FanCalibration_HandleCommand()
 

@@ -40,13 +40,13 @@ def main():
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = [
-        ('enabled', ['-DEXTERNAL_STATUS_LEDS_ENABLED=1'], None, True),
-        ('active_low', ['-DEXTERNAL_STATUS_LEDS_ENABLED=1', '-DSTATUS_LED_ACTIVE_LEVEL=0', '-DVFD_ENABLE_ACTIVE_LEVEL=0'], None, True),
-        ('invalid_lamp_polarity', ['-DSTATUS_LED_ACTIVE_LEVEL=2'], None, False),
+        ('active_high', ['-DBOARD_DO_ACTIVE_LEVEL=1', '-DVFD_ENABLE_ACTIVE_LEVEL=1'], None, True),
+        ('active_low', ['-DBOARD_DO_ACTIVE_LEVEL=0', '-DVFD_ENABLE_ACTIVE_LEVEL=0'], None, True),
+        ('invalid_board_polarity', ['-DBOARD_DO_ACTIVE_LEVEL=2'], None, False),
         ('invalid_k2_polarity', ['-DVFD_ENABLE_ACTIVE_LEVEL=2'], None, False),
-        ('invalid_enable', ['-DEXTERNAL_STATUS_LEDS_ENABLED=2'], None, False),
-        ('duplicate_bit', [], ('#define GREEN_LED_DO_BIT 1', '#define GREEN_LED_DO_BIT 0'), False),
-        ('out_of_range', [], ('#define RED_LED_DO_BIT 3', '#define RED_LED_DO_BIT 8'), False),
+        ('negative_bit', [], ('#define YELLOW_INDICATOR_DO_BIT 3', '#define YELLOW_INDICATOR_DO_BIT (-1)'), False),
+        ('duplicate_bit', [], ('#define GREEN_INDICATOR_DO_BIT 1', '#define GREEN_INDICATOR_DO_BIT 0'), False),
+        ('out_of_range', [], ('#define RED_INDICATOR_DO_BIT 2', '#define RED_INDICATOR_DO_BIT 8'), False),
     ]
     for name, flags, replacement, should_compile in cases:
         overlay = output / name

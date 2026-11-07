@@ -1,0 +1,4 @@
+.venv*/
+.hmi-test.log
+__pycache__/
+*.pyc

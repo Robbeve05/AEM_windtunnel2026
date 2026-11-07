@@ -18,6 +18,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "driver/uart.h"
 #include "esp_timer.h"
 #include <math.h>
@@ -25,6 +26,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "V20Modbus.h"
 
@@ -119,6 +121,67 @@ typedef struct
 // File-local variables
 
 static V20Context d;
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+static void put_word(uint8_t *dst, uint16_t word);
+static uint16_t get_word(const uint8_t *src);
+static size_t seal_frame(uint8_t *frame, size_t payload_size);
+static size_t build_read(uint8_t *dst, uint16_t address, uint16_t count);
+static size_t build_command(uint8_t *dst, uint16_t stw, uint16_t hsw);
+static uint16_t operation_register(V20Operation operation);
+static void advance_bootstrap(V20Operation completed_operation);
+static void record_error(V20CommError error, uint16_t actual, uint32_t exception_code);
+static uint16_t expected_pdu_address(V20Operation operation);
+static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual,
+                             uint32_t exception_code);
+static void accept_exception(int64_t now_us, uint32_t exception_code);
+static bool send_operation(V20Operation operation, bool run, float percent, int64_t now_us);
+static V20CommError verify_reply(uint32_t *exception_code);
+static void accept_reply(int64_t now_us);
+#if SIMULATION_MODE
+static void simulate_response(int64_t now_us);
+#endif
+static void receive_pending(int64_t now_us);
+static void restart_commissioning(void);
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
+
+///////////////////////////////////////////////////////////////////////////////
+// V20Modbus_Init()
+
+bool V20Modbus_Init(void)
+{
+    memset(&d, 0, sizeof(d));
+#if SIMULATION_MODE
+    d.uart_ok = true;
+#else
+    const uart_config_t cfg = {.baud_rate = MODBUS_BAUD,
+                               .data_bits = UART_DATA_8_BITS,
+                               .parity = MODBUS_PARITY,
+                               .stop_bits = MODBUS_STOP_BITS,
+                               .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+                               .source_clk = UART_SCLK_APB};
+    if (uart_param_config(MODBUS_UART_PORT, &cfg) != ESP_OK ||
+        uart_set_pin(MODBUS_UART_PORT, MODBUS_TX_PIN, MODBUS_RX_PIN, MODBUS_DE_PIN,
+                     UART_PIN_NO_CHANGE) != ESP_OK ||
+        uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 0, NULL, 0) != ESP_OK ||
+        uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK)
+    {
+        record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
+        return false;
+    }
+    d.uart_ok = true;
+#endif
+    restart_commissioning();
+    d.bus_quiet_until_us = esp_timer_get_time() + V20_FRAME_GAP_US;
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
 
 ///////////////////////////////////////////////////////////////////////////////
 // V20Modbus_Crc16()
@@ -302,6 +365,7 @@ static uint16_t expected_pdu_address(V20Operation operation)
 
 /* Preserve the current read in bootstrap mode so recovery can retry without
  * writes. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // fail_transaction()
 
@@ -376,6 +440,7 @@ static void accept_exception(int64_t now_us, uint32_t exception_code)
  * frame to leave the UART, while the control loop only handles completed RX.
  * Only this module accesses the UART; no second task may share the port.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // send_operation()
 
@@ -652,37 +717,6 @@ static void restart_commissioning(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// V20Modbus_Init()
-
-bool V20Modbus_Init(void)
-{
-    memset(&d, 0, sizeof(d));
-#if SIMULATION_MODE
-    d.uart_ok = true;
-#else
-    const uart_config_t cfg = {.baud_rate = MODBUS_BAUD,
-                               .data_bits = UART_DATA_8_BITS,
-                               .parity = MODBUS_PARITY,
-                               .stop_bits = MODBUS_STOP_BITS,
-                               .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-                               .source_clk = UART_SCLK_APB};
-    if (uart_param_config(MODBUS_UART_PORT, &cfg) != ESP_OK ||
-        uart_set_pin(MODBUS_UART_PORT, MODBUS_TX_PIN, MODBUS_RX_PIN, MODBUS_DE_PIN,
-                     UART_PIN_NO_CHANGE) != ESP_OK ||
-        uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 0, NULL, 0) != ESP_OK ||
-        uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK)
-    {
-        record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
-        return false;
-    }
-    d.uart_ok = true;
-#endif
-    restart_commissioning();
-    d.bus_quiet_until_us = esp_timer_get_time() + V20_FRAME_GAP_US;
-    return true;
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // V20Modbus_Arm()
 
 bool V20Modbus_Arm(void)
@@ -886,6 +920,7 @@ void V20Modbus_GetStatus(MotorStatus *status)
 }
 
 /* This is an operational STOP acknowledgement, not a safety function. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // V20Modbus_StopConfirmed()
 

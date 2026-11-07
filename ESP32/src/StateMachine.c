@@ -10,21 +10,42 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include <stddef.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "StateMachine.h"
 
 ///////////////////////////////////////////////////////////////////////////////
-// State and fault names
+// Function prototypes
+
+static void transition(StateMachine *m, SystemState_t s, uint32_t now);
+static bool safety_healthy(const MachineInputs *i);
+
+///////////////////////////////////////////////////////////////////////////////
+// Initialization
+
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Init()
+
+/* Starts disabled in INIT with the original initialization deadline. */
+void StateMachine_Init(StateMachine *m, uint32_t now)
+{
+    *m = (StateMachine){.state = STATE_INIT, .entered_ms = now, .boot_ms = now};
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Name()
 
 /*
  * Returns the existing state name used by telemetry.
  */
-///////////////////////////////////////////////////////////////////////////////
-// StateMachine_Name()
 
 const char *StateMachine_Name(SystemState_t s)
 {
@@ -35,6 +56,7 @@ const char *StateMachine_Name(SystemState_t s)
 /*
  * Returns the existing fault name used by telemetry.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // FaultReason_Name()
 
@@ -52,6 +74,7 @@ const char *FaultReason_Name(FaultReason_t f)
 /*
  * Records entry time and increments counters only when the state changes.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // transition()
 
@@ -64,20 +87,6 @@ static void transition(StateMachine *m, SystemState_t s, uint32_t now)
         m->transition_count++;
         m->epoch++;
     }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// Initialization
-
-/*
- * Starts disabled in INIT with the original initialization deadline.
- */
-///////////////////////////////////////////////////////////////////////////////
-// StateMachine_Init()
-
-void StateMachine_Init(StateMachine *m, uint32_t now)
-{
-    *m = (StateMachine){.state = STATE_INIT, .entered_ms = now, .boot_ms = now};
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -141,6 +150,7 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
 /*
  * Latches the first fault, allowing emergency stop to take priority.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // StateMachine_Fault()
 
@@ -169,6 +179,7 @@ void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
 /*
  * Checks physical feedback, commissioning and input freshness.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // safety_healthy()
 
@@ -188,6 +199,7 @@ static bool safety_healthy(const MachineInputs *i)
  * Evaluates faults and physical actions before applying the existing
  * transitions.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // StateMachine_Step()
 
@@ -222,8 +234,6 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     {
         if (!i->sensor_ok)
             StateMachine_Fault(m, FAULT_SENSOR, i->now_ms);
-        ///////////////////////////////////////////////////////////////////////////////
-        // Function prototypes
 
         else if (i->drive_fault)
             StateMachine_Fault(m, FAULT_VFD, i->now_ms);

@@ -9,8 +9,10 @@
  * The HMAC message is "WOTA1:<noncehex>:<bytes>:<sha256hex>".
  * OTA requires separate physical maintenance and motor isolation feedback.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "driver/gpio.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -30,6 +32,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "OtaSafety.h"
@@ -42,21 +45,44 @@
 
 #define OTA_PORT 5001
 #define OTA_CHUNK 1024
+
 ///////////////////////////////////////////////////////////////////////////////
 // File-local variables
 
 static atomic_bool active = false;
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+#if OTA_MAINTENANCE_ENABLED
+static bool maintenance_ok(void);
+#endif
+#if OTA_MAINTENANCE_ENABLED
+static bool recv_all(int fd, void *dest, size_t amount);
+#endif
+#if OTA_MAINTENANCE_ENABLED
+static bool line_read(int fd, char *s, size_t max);
+#endif
+#if OTA_MAINTENANCE_ENABLED
+static void reply(int fd, const char *s);
+#endif
+#if OTA_MAINTENANCE_ENABLED
+static void handle_client(int fd);
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
 ///////////////////////////////////////////////////////////////////////////////
 // OtaUpdate_Active()
 
 bool OtaUpdate_Active(void)
 {
-    ///////////////////////////////////////////////////////////////////////////////
-    // Function prototypes
 
     return atomic_load(&active);
 }
 #if OTA_MAINTENANCE_ENABLED
+
 ///////////////////////////////////////////////////////////////////////////////
 // maintenance_ok()
 
@@ -71,6 +97,7 @@ static bool maintenance_ok(void)
     return false;
 #endif
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // recv_all()
 
@@ -87,6 +114,7 @@ static bool recv_all(int fd, void *dest, size_t amount)
     }
     return true;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // line_read()
 
@@ -109,10 +137,15 @@ static bool line_read(int fd, char *s, size_t max)
     }
     return false;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // reply()
 
-static void reply(int fd, const char *s) { (void)send(fd, s, strlen(s), 0); }
+static void reply(int fd, const char *s)
+{
+    (void)send(fd, s, strlen(s), 0);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // handle_client()
 
@@ -245,6 +278,7 @@ static void handle_client(int fd)
 #endif
 }
 #endif /* OTA_MAINTENANCE_ENABLED */
+
 ///////////////////////////////////////////////////////////////////////////////
 // OtaUpdateTask()
 
@@ -292,6 +326,7 @@ void OtaUpdateTask(void *argument)
  * A factory USB image remains the recovery baseline; failed OTA images roll
  * back.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // OtaMarkValidTask()
 

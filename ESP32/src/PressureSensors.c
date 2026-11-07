@@ -10,17 +10,20 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_timer.h"
 #include <math.h>
 #include <string.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "I2CBus.h"
 #include "PressureSensors.h"
@@ -43,26 +46,8 @@ static float sim_drive, sim_velocity;
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// SensorLib_SetFilter()
+// Initialization
 
-void SensorLib_SetFilter(float hz)
-{
-    if (!isfinite(hz) || hz < 0.1f || hz > 10.0f)
-        return;
-    portENTER_CRITICAL(&config_lock);
-    filter_hz = hz;
-    portEXIT_CRITICAL(&config_lock);
-}
-///////////////////////////////////////////////////////////////////////////////
-// SensorLib_FilterHz()
-
-float SensorLib_FilterHz(void)
-{
-    portENTER_CRITICAL(&config_lock);
-    const float value = filter_hz;
-    portEXIT_CRITICAL(&config_lock);
-    return value;
-}
 ///////////////////////////////////////////////////////////////////////////////
 // SensorLib_Init()
 
@@ -82,6 +67,32 @@ bool SensorLib_Init(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_SetFilter()
+
+void SensorLib_SetFilter(float hz)
+{
+    if (!isfinite(hz) || hz < 0.1f || hz > 10.0f)
+        return;
+    portENTER_CRITICAL(&config_lock);
+    filter_hz = hz;
+    portEXIT_CRITICAL(&config_lock);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_FilterHz()
+
+float SensorLib_FilterHz(void)
+{
+    portENTER_CRITICAL(&config_lock);
+    const float value = filter_hz;
+    portEXIT_CRITICAL(&config_lock);
+    return value;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Simulation_SetOutput()
 
 void Simulation_SetOutput(float value)
@@ -97,6 +108,7 @@ void Simulation_SetOutput(float value)
 
 /* SensorTask only. Return true whenever a new valid 10-sample average exists.
  * Even during calibration, publish a fresh invalid sample to the queue. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // SensorLib_PitotStep()
 
@@ -220,6 +232,7 @@ bool SensorLib_PitotCommunicationOk(void)
  * The two TCA9548A multiplexers are selected in distinct transactions.
  * The 16 tap pressures are separate from the pitot/speed sensor.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // SensorLib_TapsStep()
 

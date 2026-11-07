@@ -66,6 +66,17 @@ class NativeHMITests(unittest.TestCase):
             self.assertEqual(window.setpoint_spin.maximum(), 40.0)
             self.assertTrue(panel.prepare_button.text())
             self.assertTrue(panel.reset_button.text())
+            self.assertEqual(panel.lambda_s.value(), 1.0)
+            panel.dynamic_transitions = [dict(K_ms_per_hz=0.8, tau_s=2, L_s=0.2,
+                candidate_pi=dict(kp=2.5, ti_s=2), warnings=['Candidate only'],
+                trace=[dict(time_s=0, actual_hz=10, measured_ms=8, model_ms=8),
+                       dict(time_s=1, actual_hz=12, measured_ms=9, model_ms=9.1)])]
+            panel.transition_select.addItem('20 Hz')
+            panel.show_dynamic_transition()
+            self.assertIn('Kp=2.5000', panel.dynamics_detail.text())
+            self.assertIn('Ti=2.0000', panel.dynamics_detail.text())
+            self.assertIn('Candidate only', panel.dynamics_detail.text())
+            self.assertFalse(panel.dynamic_plot.grab().isNull())
             window.close()
 
     def test_status_display_and_point_plot(self):

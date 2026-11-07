@@ -525,6 +525,26 @@ async def fan_run(identifier: str):
 async def fan_file(identifier: str, filename: str):
     return FileResponse(control().calibration.file(identifier, filename), filename=filename)
 
+
+@app.get('/api/calibration/fan/runs/{identifier}/dynamics')
+async def fan_dynamics(identifier: str, lambda_s: float = 1.0):
+    """Read offline fits and simulate candidate ISA tuning. Never sends a command."""
+    import json
+    from backend.fan_dynamics import simc_parameters, simulate_candidate
+    if not math.isfinite(lambda_s) or not 0.05 <= lambda_s <= 60:
+        raise ValueError('Lambda must lie within 0.05–60 s')
+    result = json.loads(control().calibration.file(identifier, 'dynamics.json').read_text(encoding='utf-8'))
+    def tune():
+        for item in result['transitions']:
+            if item.get('tau_s') and item.get('K_ms_per_hz', 0) > 0 and item.get('L_s') is not None:
+                args = (item['K_ms_per_hz'], item['tau_s'], item['L_s'])
+                item['candidate_pi'] = simc_parameters(*args, lambda_s)
+                item['simulation'] = simulate_candidate(*args, item['candidate_pi'])
+            elif item.get('tau_s'):
+                item.setdefault('warnings', []).append('Legacy fit has no delay estimate; refit raw data before tuning.')
+        return result
+    return await asyncio.to_thread(tune)
+
 @app.post('/api/calibration/fan/runs/{identifier}/deploy')
 async def deploy_fan(identifier: str):
     return await control().calibration.deploy(identifier)

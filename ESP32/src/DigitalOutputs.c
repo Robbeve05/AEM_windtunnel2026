@@ -2,18 +2,22 @@
 // File information
 
 /* Author: R.E. van Eekelen. One logical image, one serialized output writer. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "esp_log.h"
 #include <stddef.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "DigitalOutputs.h"
 #include "I2CBus.h"
@@ -41,6 +45,7 @@ _Static_assert(BOARD_DO_ACTIVE_LEVEL == 0 || BOARD_DO_ACTIVE_LEVEL == 1,
                "Invalid board output polarity");
 _Static_assert(VFD_ENABLE_ACTIVE_LEVEL == 0 || VFD_ENABLE_ACTIVE_LEVEL == 1,
                "Invalid VFD relay polarity");
+
 ///////////////////////////////////////////////////////////////////////////////
 // File-local variables
 
@@ -48,46 +53,17 @@ static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static SemaphoreHandle_t writer_lock;
 static DigitalOutputStatus state;
 static StatusIndicator status_indicators;
+
 ///////////////////////////////////////////////////////////////////////////////
-// set_output()
+// Function prototypes
 
-static void set_output(uint8_t *image, unsigned bit, bool active, int active_level)
-{
-    const uint8_t mask = OUTPUT_BIT(bit);
-    const bool high = active ? active_level != 0 : active_level == 0;
-    if (high)
-        *image |= mask;
-    else
-        *image &= (uint8_t)~mask;
-}
+static void set_output(uint8_t *image, unsigned bit, bool active, int active_level);
+static uint8_t compose(void);
+static bool write_image(uint8_t image);
+
 ///////////////////////////////////////////////////////////////////////////////
-// compose()
+// Initialization
 
-static uint8_t compose(void)
-{
-    uint8_t image = BOARD_DO_ACTIVE_LEVEL ? 0x00u : 0xffu;
-    set_output(&image, RED_INDICATOR_DO_BIT, status_indicators.red, BOARD_DO_ACTIVE_LEVEL);
-    set_output(&image, GREEN_INDICATOR_DO_BIT, status_indicators.green, BOARD_DO_ACTIVE_LEVEL);
-    set_output(&image, YELLOW_INDICATOR_DO_BIT, status_indicators.amber, BOARD_DO_ACTIVE_LEVEL);
-    set_output(&image, VFD_ENABLE_DO_BIT, state.vfd_requested, VFD_ENABLE_ACTIVE_LEVEL);
-    return image;
-}
-///////////////////////////////////////////////////////////////////////////////
-// write_image()
-
-static bool write_image(uint8_t image)
-{
-#if SIMULATION_MODE
-    (void)image;
-    return true;
-#else
-    const uint8_t data[] = {1, image};
-    ///////////////////////////////////////////////////////////////////////////////
-    // Function prototypes
-
-    return I2CBus_Write(BOARD_DO_I2C_ADDRESS, data, sizeof(data));
-#endif
-}
 ///////////////////////////////////////////////////////////////////////////////
 // DigitalOutputs_Init()
 
@@ -126,6 +102,51 @@ bool DigitalOutputs_Init(void)
                  "Inactive image/direction initialization failed; motor inhibited");
     return ok;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// set_output()
+
+static void set_output(uint8_t *image, unsigned bit, bool active, int active_level)
+{
+    const uint8_t mask = OUTPUT_BIT(bit);
+    const bool high = active ? active_level != 0 : active_level == 0;
+    if (high)
+        *image |= mask;
+    else
+        *image &= (uint8_t)~mask;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// compose()
+
+static uint8_t compose(void)
+{
+    uint8_t image = BOARD_DO_ACTIVE_LEVEL ? 0x00u : 0xffu;
+    set_output(&image, RED_INDICATOR_DO_BIT, status_indicators.red, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, GREEN_INDICATOR_DO_BIT, status_indicators.green, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, YELLOW_INDICATOR_DO_BIT, status_indicators.amber, BOARD_DO_ACTIVE_LEVEL);
+    set_output(&image, VFD_ENABLE_DO_BIT, state.vfd_requested, VFD_ENABLE_ACTIVE_LEVEL);
+    return image;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// write_image()
+
+static bool write_image(uint8_t image)
+{
+#if SIMULATION_MODE
+    (void)image;
+    return true;
+#else
+    const uint8_t data[] = {1, image};
+
+    return I2CBus_Write(BOARD_DO_I2C_ADDRESS, data, sizeof(data));
+#endif
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // DigitalOutputs_Set()
 
@@ -164,6 +185,7 @@ bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators)
     xSemaphoreGive(writer_lock);
     return ok;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // DigitalOutputs_GetStatus()
 

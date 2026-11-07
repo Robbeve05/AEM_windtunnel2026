@@ -18,7 +18,7 @@ Software and documentation for the Avans Aerospace wind tunnel project. The syst
 ## Functions
 
 - **MANUAL:** set V20 frequency (0–50 Hz) using a bounded fifth-order frequency profile.
-- **AUTO:** requested airspeed → fifth-order reference → torque PID and motor/fan model → V20 frequency; physical AUTO is not yet commissioned.
+- **AUTO:** requested airspeed → fifth-order reference → generic ISA/Tustin PID with selectable torque/frequency model → V20 frequency; physical AUTO is not yet commissioned.
 - **Measurements:** Pitot readings, recording, history, processing, exports and Cp-oriented analysis.
 - **Fan calibration:** frequency sweep and storage of a characteristic in ESP32 NVS.
 - **Diagnostics:** live machine state, sensor and drive conditions, communication, timing and fault information.

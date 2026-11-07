@@ -8,8 +8,10 @@
  *
  * Author: R.E. van Eekelen
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
+
 #include "driver/gptimer.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -20,25 +22,26 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
+
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
 #include "FanCalibration.h"
-#include "FrequencyPI.h"
-#include "MotorModel.h"
+#include "Regelaar.h"
+#include "TorqueModel.h"
+#include "FrequencyModel.h"
 #include "PiProtocol.h"
 #include "PressureSensors.h"
-#include "RegelaarDesign.h"
 #include "SafetyIO.h"
 #include "SetpointCurve.h"
 #include "TaskData.h"
-#include "TorqueLoadControl.h"
 #include "V20Modbus.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -65,14 +68,12 @@ typedef struct
 
 typedef struct
 {
+    Regelaar controller;
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
-    MotorModel motor_model;
-    TorqueLoadControl torque_controller;
-    TorqueLoadOutput torque_output;
+    TorqueModel torque_model;
     bool torque_model_ready;
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-    FrequencyPI frequency_controller;
-    float frequency_feedforward_hz;
+    FrequencyModel frequency_model;
     bool frequency_controller_ready;
 #endif
     SetpointCurve curve;
@@ -115,39 +116,9 @@ static ControlContext control;
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
 
-#if CONTROL_TYPE == CONTROL_TORQUE_PI
-static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request,
-                                MotorModelResult *result);
-
-///////////////////////////////////////////////////////////////////////////////
-// automatic_frequency()
-
-static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request,
-                                MotorModelResult *result)
-{
-    if (!MotorModel_TorqueToFrequency(&ctx->motor_model, request, result))
-        return false;
-    if (FanCalibration_IsValid())
-    {
-        MotorModelRequest stationary = {.rotor_rad_s = ctx->status.control_setpoint /
-                                                       ctx->motor_model.nominal_air_omega_gain};
-        MotorModelResult base;
-        if (!MotorModel_TorqueToFrequency(&ctx->motor_model, &stationary, &base))
-            return false;
-        float hz =
-            FanCalibration_GetBaseFrequency(ctx->status.control_setpoint, base.frequency_hz) +
-            ctx->motor_model.pole_pairs /
-                (6.28318530718f * ctx->motor_model.slip_gain_nm_per_rad_s) *
-                (ctx->torque_output.pid_nm + ctx->torque_output.acceleration_nm);
-        if (!isfinite(hz))
-            return false;
-        result->requested_frequency_hz = hz;
-        result->frequency_hz = fminf(V20_REFERENCE_HZ, fmaxf(0, hz));
-        result->saturated = hz != result->frequency_hz;
-    }
-    return true;
-}
-#endif
+static bool ControlClockInterrupt(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event,
+                                  void *argument);
+static void StartControlClock(void);
 static void Control_Init(ControlContext *ctx);
 static void Control_WaitForTasks(ControlContext *ctx);
 static void Control_HoldInitializationFault(ControlContext *ctx);
@@ -158,39 +129,15 @@ static void Control_CheckSafety(ControlContext *ctx);
 static void Control_UpdateStateMachine(ControlContext *ctx);
 static void Control_UpdateController(ControlContext *ctx);
 static void Control_UpdateMotor(ControlContext *ctx);
+static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned notifications);
+static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uint32_t service_us);
 static void Control_PublishStatus(ControlContext *ctx);
 static void Control_UpdateDiagnostics(ControlContext *ctx);
 static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications);
-static void StartControlClock(void);
-static bool ControlClockInterrupt(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event,
-                                  void *argument);
 
 ///////////////////////////////////////////////////////////////////////////////
-// Timer interrupt handling
+// Initialization
 
-/*
- * Notifies ControlTask once per GPTimer alarm; no EventGroup drives the clock.
- */
-///////////////////////////////////////////////////////////////////////////////
-// ControlClockInterrupt()
-
-static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
-                                            const gptimer_alarm_event_data_t *event, void *argument)
-{
-    (void)timer;
-    (void)event;
-    (void)argument;
-    BaseType_t wake = pdFALSE;
-    static bool sensor_phase = true;
-    vTaskNotifyGiveFromISR(sensor_phase ? sensor_task_handle : control_task_handle, &wake);
-    sensor_phase = !sensor_phase;
-    return wake == pdTRUE;
-}
-
-/*
- * Starts the alternating 5 ms sensor/control phase timer after startup
- * synchronization.
- */
 ///////////////////////////////////////////////////////////////////////////////
 // StartControlClock()
 
@@ -212,7 +159,7 @@ static void StartControlClock(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_Init(ControlContext *ctx)
+// Control_Init()
 
 /*
  * Initializes control, diagnostics and disabled motor commands before startup
@@ -223,45 +170,52 @@ static void Control_Init(ControlContext *ctx)
     *ctx = (ControlContext){0};
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    RegelaarParameters parameters = {0};
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
-    /* Design the one-mass torque PID; no parallel frequency PI exists. */
-    const RegelaarDesignInput design_input = {.jm = J_MOTOR_KGM2,
-                                              .jfan = J_FAN_KGM2,
-                                              .frequency_hz = DISTURBANCE_FREQUENCY_HZ,
-                                              .disturbance_ms = DISTURBANCE_AMPLITUDE_MS,
-                                              .error_ms = ALLOWABLE_ERROR_MS,
-                                              .nominal_rpm = DESIGN_NOMINAL_RPM,
-                                              .nominal_airspeed_ms = LUCHTSNELHEID_NOM,
-                                              .sample_s = CONTROL_CLOCK_PERIOD_S,
-                                              .minimum_pm_deg = DESIGN_MIN_PHASE_MARGIN_DEG};
-    RegelaarDesignOutput design = {0};
-    if (RegelaarDesign_Calculate(&design_input, &design) &&
-        TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S))
+    const TorqueDesignInput input = {.jm = J_MOTOR_KGM2,
+                                     .jfan = J_FAN_KGM2,
+                                     .frequency_hz = DISTURBANCE_FREQUENCY_HZ,
+                                     .disturbance_ms = DISTURBANCE_AMPLITUDE_MS,
+                                     .error_ms = ALLOWABLE_ERROR_MS,
+                                     .nominal_rpm = DESIGN_NOMINAL_RPM,
+                                     .nominal_airspeed_ms = LUCHTSNELHEID_NOM,
+                                     .sample_s = CONTROL_CLOCK_PERIOD_S,
+                                     .minimum_pm_deg = DESIGN_MIN_PHASE_MARGIN_DEG};
+    TorqueDesignOutput design = {0};
+    if (TorqueModel_Design(&input, &design))
     {
-        ctx->motor_model =
-            (MotorModel){.inertia_kgm2 = design.j,
-                         .slip_gain_nm_per_rad_s = MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S,
-                         .load_coeff_nm_per_rad_s2 = MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
-                         .pole_pairs = MOTOR_MODEL_POLE_PAIRS,
-                         .nominal_air_omega_gain = design.kv,
-                         .max_command_hz = MANUAL_MAX_HZ};
-        ctx->torque_model_ready = isfinite(ctx->motor_model.slip_gain_nm_per_rad_s) &&
-                                  ctx->motor_model.slip_gain_nm_per_rad_s > 0.0f &&
-                                  isfinite(ctx->motor_model.load_coeff_nm_per_rad_s2) &&
-                                  ctx->motor_model.load_coeff_nm_per_rad_s2 >= 0.0f;
-        if (ctx->torque_model_ready)
-            ESP_LOGI("TORQUE_PID", "J=%g Kp=%g Ki=%g Kd=%g Kv=%g, inverse VFD map unverified",
-                     (double)design.j, (double)design.kp, (double)design.ki, (double)design.kd,
-                     (double)design.kv);
+        ctx->torque_model =
+            (TorqueModel){.inertia_kgm2 = design.j,
+                          .slip_gain_nm_per_rad_s = MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S,
+                          .load_coeff_nm_per_rad_s2 = MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
+                          .pole_pairs = MOTOR_MODEL_POLE_PAIRS,
+                          .nominal_air_omega_gain = design.kv,
+                          .max_command_hz = MANUAL_MAX_HZ};
+        parameters = (RegelaarParameters){.kp = design.kp,
+                                          .ti_s = design.ti,
+                                          .td_s = design.td,
+                                          .tf_s = design.tf,
+                                          .sample_s = CONTROL_CLOCK_PERIOD_S,
+                                          .mode = (RegelaarMode)CONTROLLER_SETTING};
+        TorqueModelResult check;
+        const TorqueModelRequest zero = {0};
+        ctx->torque_model_ready = TorqueModel_Inverse(&ctx->torque_model, &zero, &check) &&
+                                  Regelaar_Init(&ctx->controller, &parameters);
+        ESP_LOGI("TORQUE_PID", "J=%g Kp=%g Ti=%g Td=%g Tf=%g; inverse map unverified",
+                 (double)design.j, (double)parameters.kp, (double)parameters.ti_s,
+                 (double)parameters.td_s, (double)parameters.tf_s);
     }
-    if (!ctx->torque_model_ready)
-        ESP_LOGW("TORQUE_PID", "AUTO inhibited: inertia, design or motor model invalid");
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    ctx->frequency_model = (FrequencyModel){.gain_mps_per_hz = FREQUENCY_MODEL_GAIN_MPS_PER_HZ,
+                                            .tau_s = FREQUENCY_MODEL_TAU_S,
+                                            .delay_s = FREQUENCY_MODEL_DELAY_S,
+                                            .lambda_s = FREQUENCY_MODEL_LAMBDA_S,
+                                            .max_hz = MANUAL_MAX_HZ,
+                                            .identified_valid = FREQUENCY_MODEL_VALIDATED,
+                                            .commissioned = FREQUENCY_MODEL_COMMISSIONED};
     ctx->frequency_controller_ready =
-        FrequencyPI_Init(&ctx->frequency_controller, FREQUENCY_PI_KP_HZ_PER_MPS,
-                         FREQUENCY_PI_KI_HZ_PER_MPS_S, CONTROL_CLOCK_PERIOD_S);
-    if (!ctx->frequency_controller_ready)
-        ESP_LOGW("FREQ_PI", "Frequency PI regulator initialization failed");
+        FrequencyModel_Design(&ctx->frequency_model, CONTROL_CLOCK_PERIOD_S, &parameters) &&
+        Regelaar_Init(&ctx->controller, &parameters);
 #endif
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
@@ -281,7 +235,35 @@ static void Control_Init(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_WaitForTasks(ControlContext *ctx)
+// Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// ControlClockInterrupt()
+
+/*
+ * Notifies ControlTask once per GPTimer alarm; no EventGroup drives the clock.
+ */
+
+static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
+                                            const gptimer_alarm_event_data_t *event, void *argument)
+{
+    (void)timer;
+    (void)event;
+    (void)argument;
+    BaseType_t wake = pdFALSE;
+    static bool sensor_phase = true;
+    vTaskNotifyGiveFromISR(sensor_phase ? sensor_task_handle : control_task_handle, &wake);
+    sensor_phase = !sensor_phase;
+    return wake == pdTRUE;
+}
+
+/*
+ * Starts the alternating 5 ms sensor/control phase timer after startup
+ * synchronization.
+ */
+
+///////////////////////////////////////////////////////////////////////////////
+// Control_WaitForTasks()
 
 /*
  * Waits within the existing initialization deadline; ready bits remain set.
@@ -313,7 +295,7 @@ static void Control_WaitForTasks(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_HoldInitializationFault(ControlContext *ctx)
+// Control_HoldInitializationFault()
 
 /*
  * Keeps failed startup disabled until reboot, without starting the control
@@ -339,7 +321,7 @@ static void Control_HoldInitializationFault(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static EventBits_t Control_ReadButtonEvents(void)
+// Control_ReadButtonEvents()
 
 /*
  * Consumes one-shot physical button notifications without waiting or reading
@@ -352,7 +334,7 @@ static EventBits_t Control_ReadButtonEvents(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_ReadInputs(ControlContext *ctx)
+// Control_ReadInputs()
 
 /*
  * Reads and validates latest queue values every cycle, even without advisory
@@ -383,8 +365,7 @@ static void Control_ReadInputs(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_ProcessCommands(ControlContext *ctx, EventBits_t
-// buttonBits)
+// Control_ProcessCommands()
 
 /*
  * Processes physical actions and at most sixteen queued commands, retaining all
@@ -424,13 +405,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
                 ctx->status.mode = (OperatingMode)(int)command.values[0];
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
                 ctx->frequency_running = ctx->curve_running = false;
-#if CONTROL_TYPE == CONTROL_TORQUE_PI
-                TorqueLoadControl_Reset(&ctx->torque_controller);
-                ctx->torque_output = (TorqueLoadOutput){0};
-#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-                FrequencyPI_Reset(&ctx->frequency_controller);
-                ctx->frequency_feedforward_hz = 0.0f;
-#endif
+                Regelaar_Reset(&ctx->controller);
                 ctx->start = false;
             }
             break;
@@ -445,8 +420,14 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
         case CMD_PID:
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
             if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
-                (void)TorqueLoadControl_SetGains(&ctx->torque_controller, command.values[0],
-                                                 command.values[1], command.values[2]);
+            {
+                RegelaarParameters parameters;
+                /* Wire protocol remains legacy Kp/Ki/Kd, converted at this boundary. */
+                if (Regelaar_FromLegacy(command.values[0], command.values[1], command.values[2],
+                                        ctx->controller.parameters.tf_s, CONTROL_CLOCK_PERIOD_S,
+                                        (RegelaarMode)CONTROLLER_SETTING, &parameters))
+                    (void)Regelaar_SetParameters(&ctx->controller, &parameters);
+            }
 #endif
             break;
         case CMD_STOP:
@@ -462,7 +443,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_CheckSafety(ControlContext *ctx)
+// Control_CheckSafety()
 
 /*
  * Builds state-machine inputs and preserves physical reset acknowledgement and
@@ -518,7 +499,7 @@ static void Control_CheckSafety(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_UpdateStateMachine(ControlContext *ctx)
+// Control_UpdateStateMachine()
 
 /*
  * Steps the existing state machine and performs its V20 recovery, arm and
@@ -544,7 +525,9 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             (!ctx->torque_model_ready || (!SIMULATION_MODE && !MOTOR_MODEL_TORQUE_TO_V20_ENABLED)))
             StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-        if (ctx->status.mode == MODE_AUTO && !ctx->frequency_controller_ready)
+        if (ctx->status.mode == MODE_AUTO &&
+            (!ctx->frequency_controller_ready || !FanCalibration_IsValid() ||
+             (!SIMULATION_MODE && !ctx->frequency_model.commissioned)))
             StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
 #endif
         else if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
@@ -561,7 +544,7 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_UpdateController(ControlContext *ctx)
+// Control_UpdateController()
 
 /*
  * Runs one fixed-period profile and PI step; faults disarm before motor
@@ -607,72 +590,67 @@ static void Control_UpdateController(ControlContext *ctx)
             bool valid = ctx->curve_running &&
                          SetpointCurve_Step(&ctx->curve, ctx->status.setpoint,
                                             CONTROL_CLOCK_PERIOD_S, &ctx->status.control_setpoint);
+            RegelaarOutput correction = {0};
+            const bool fresh_feedback =
+                ctx->motor.ok && ctx->motor.status_valid && isfinite(ctx->motor.actual_hz) &&
+                ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
+                (TickType_t)(ctx->now_tick - ctx->motor.tick) <
+                    pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
-            /* Sole AUTO loop: airspeed torque PID -> inverse motor model -> V20 Hz.
-             * Physical AUTO remains locked until motor/VFD model validation. */
             valid = valid && ctx->torque_model_ready &&
                     (SIMULATION_MODE || MOTOR_MODEL_TORQUE_TO_V20_ENABLED);
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+            valid = valid && ctx->frequency_controller_ready &&
+                    (SIMULATION_MODE || ctx->frequency_model.commissioned);
+#endif
+            valid = valid && isfinite(ctx->sample.value) && ctx->sample.value >= 0.0f &&
+                    Regelaar_Step(&ctx->controller, ctx->status.control_setpoint, ctx->sample.value,
+                                  &correction);
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
             if (valid)
             {
-                const float reference_accel_ms2 =
+                const float acceleration =
                     (ctx->status.control_setpoint - ctx->previous_ff_setpoint) /
                     CONTROL_CLOCK_PERIOD_S;
-                valid = TorqueLoadControl_Step(
-                    &ctx->torque_controller, ctx->status.control_setpoint, ctx->sample.value,
-                    reference_accel_ms2, ctx->motor_model.load_coeff_nm_per_rad_s2,
-                    &ctx->torque_output);
+                TorqueModelResult result;
+                valid =
+                    TorqueModel_Apply(&ctx->torque_model, ctx->status.control_setpoint,
+                                      ctx->sample.value, acceleration, correction.value, &result);
+                if (valid &&
+                    TorqueModel_RejectIntegration(&result, ctx->torque_model.max_command_hz,
+                                                  correction.integral_increment, fresh_feedback,
+                                                  ctx->motor.actual_hz))
+                {
+                    valid = Regelaar_RejectLatestIntegration(&ctx->controller, &correction) &&
+                            TorqueModel_Apply(&ctx->torque_model, ctx->status.control_setpoint,
+                                              ctx->sample.value, acceleration, correction.value,
+                                              &result);
+                }
                 if (valid)
                 {
-                    MotorModelRequest request = {.rotor_rad_s = ctx->torque_output.omega_est_rad_s,
-                                                 .reference_accel_ms2 = reference_accel_ms2,
-                                                 .pid_torque_nm = ctx->torque_output.pid_nm};
-                    MotorModelResult result = {0};
-                    valid = automatic_frequency(ctx, &request, &result);
-                    if (valid &&
-                        ((result.saturated &&
-                          ((ctx->status.control_setpoint > ctx->sample.value &&
-                            result.requested_frequency_hz > ctx->motor_model.max_command_hz) ||
-                           (ctx->status.control_setpoint < ctx->sample.value &&
-                            result.requested_frequency_hz < 0.0f))) ||
-                         (FanCalibration_IsValid() &&
-                          ((ctx->status.control_setpoint > ctx->sample.value &&
-                            result.frequency_hz > ctx->motor.actual_hz + 0.2f) ||
-                           (ctx->status.control_setpoint < ctx->sample.value &&
-                            result.frequency_hz < ctx->motor.actual_hz - 0.2f)))))
-                    {
-                        /* Reject only integration that worsens output saturation. */
-                        TorqueLoadControl_RejectLatestIntegration(&ctx->torque_controller,
-                                                                  &ctx->torque_output);
-                        request.pid_torque_nm = ctx->torque_output.pid_nm;
-                        valid = automatic_frequency(ctx, &request, &result);
-                    }
-                    if (valid)
-                    {
-                        ctx->status.applied_hz = result.frequency_hz;
-                        ctx->status.output = 100.0f * result.frequency_hz / V20_REFERENCE_HZ;
-                    }
+                    ctx->status.applied_hz = result.frequency_hz;
+                    ctx->status.output = 100 * result.frequency_hz / V20_REFERENCE_HZ;
                 }
             }
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-            valid = valid && ctx->frequency_controller_ready;
             if (valid)
             {
-                float feedforward_hz = 0.0f;
-                if (FanCalibration_IsValid())
+                FrequencyModelOutput result;
+                valid = FrequencyModel_Apply(&ctx->frequency_model, ctx->status.control_setpoint,
+                                             correction.value, &result);
+                if (valid && FrequencyModel_RejectIntegration(&result, ctx->frequency_model.max_hz,
+                                                              correction.integral_increment,
+                                                              fresh_feedback, ctx->motor.actual_hz))
                 {
-                    feedforward_hz = FanCalibration_GetBaseFrequency(ctx->status.control_setpoint,
-                                                                     ctx->sample.value);
-                    if (!isfinite(feedforward_hz))
-                        feedforward_hz = 0.0f;
+                    valid =
+                        Regelaar_RejectLatestIntegration(&ctx->controller, &correction) &&
+                        FrequencyModel_Apply(&ctx->frequency_model, ctx->status.control_setpoint,
+                                             correction.value, &result);
                 }
-                ctx->frequency_feedforward_hz = feedforward_hz;
-                FrequencyPIOutput output = {0};
-                valid = FrequencyPI_Step(&ctx->frequency_controller, ctx->status.control_setpoint,
-                                         ctx->sample.value, feedforward_hz, &output);
                 if (valid)
                 {
-                    ctx->status.applied_hz = output.output_hz;
-                    ctx->status.output = 100.0f * output.output_hz / V20_REFERENCE_HZ;
+                    ctx->status.applied_hz = result.frequency_hz;
+                    ctx->status.output = 100 * result.frequency_hz / V20_REFERENCE_HZ;
                 }
             }
 #endif
@@ -693,13 +671,7 @@ static void Control_UpdateController(ControlContext *ctx)
         ctx->previous_ff_setpoint = ctx->sample.value;
         ctx->status.control_setpoint = ctx->sample.value;
         ctx->status.output = 0.0f;
-#if CONTROL_TYPE == CONTROL_TORQUE_PI
-        TorqueLoadControl_Reset(&ctx->torque_controller);
-        ctx->torque_output = (TorqueLoadOutput){0};
-#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-        FrequencyPI_Reset(&ctx->frequency_controller);
-        ctx->frequency_feedforward_hz = 0.0f;
-#endif
+        Regelaar_Reset(&ctx->controller);
     }
 
     if (ctx->machine.state == STATE_RUNNING && (ctx->motor.status & 0x0040u) != 0 &&
@@ -711,7 +683,7 @@ static void Control_UpdateController(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_UpdateMotor(ControlContext *ctx)
+// Control_UpdateMotor()
 
 /*
  * Services the latest motor request without blocking, then publishes refreshed
@@ -738,10 +710,12 @@ static void Control_UpdateMotor(ControlContext *ctx)
 
 ///////////////////////////////////////////////////////////////////////////////
 // File-local timing accounting
+
 /*
  * Accounts for jitter and missed notifications without replaying PI steps.
  * Execution and Modbus service budgets retain their original strict limits.
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // ControlTiming_Tick()
 
@@ -790,6 +764,7 @@ static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned
     }
     return FAULT_NONE;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // ControlTiming_Execution()
 
@@ -808,7 +783,7 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_PublishStatus(ControlContext *ctx)
+// Control_PublishStatus()
 
 /*
  * Publishes current state and motor demand to the existing overwrite queues.
@@ -918,7 +893,7 @@ static void Control_PublishStatus(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_UpdateDiagnostics(ControlContext *ctx)
+// Control_UpdateDiagnostics()
 
 /*
  * Accounts for execution time and faults immediately on overruns or lost drive
@@ -947,7 +922,7 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
+// Control_BeginCycle()
 
 /*
  * Records the timer wakeup, refreshes the watchdog and latches missed deadlines
@@ -980,7 +955,7 @@ static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// void ControlTask(void *argument)
+// ControlTask()
 
 /*
  * Coordinates initialization and the ordered 100 Hz control cycle on Core 1.

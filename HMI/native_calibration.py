@@ -23,7 +23,8 @@ from PySide6.QtCore import QUrl, QSaveFile
 RED = "#c8291e"
 INK = "#181818"
 MUTED = "#747474"
-FILES = ("calibration.json", "raw_samples.csv", "characteristic.csv", "inverse_lookup.csv")
+FILES = ("calibration.json", "raw_samples.csv", "characteristic.csv", "inverse_lookup.csv",
+         "dynamics.json", "dynamic_transitions.csv")
 RUN_ID = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{8}$")
 
 
@@ -99,6 +100,54 @@ class FanCharacteristicPlot(QWidget):
         painter.setBrush(QColor(RED))
         for x, y in coords:
             painter.drawEllipse(int(x - 3), int(y - 3), 6, 6)
+
+
+class DynamicResponsePlot(QWidget):
+    """Time series, with separate airspeed and measured-frequency panels."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.transition = {}
+        self.setMinimumHeight(370)
+
+    def set_transition(self, transition):
+        self.transition = transition
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        trace = self.transition.get("trace", [])
+        simulation = self.transition.get("simulation", {}).get("trace", [])
+        painter.setPen(QColor(INK))
+        painter.drawText(12, 19, "Measured airspeed (red), fitted model (blue), unit-step simulation (green)")
+        if not trace:
+            painter.drawText(20, 65, "No identifiable dynamic transition available")
+            return
+        panels = ((35, 140, ((trace, "measured_ms", RED), (trace, "model_ms", "#285ea8"),
+                             (simulation, "airspeed_ms", "#288548")), "m/s"),
+                  (215, 110, ((trace, "actual_hz", RED), (simulation, "actual_hz", "#288548")), "Hz"))
+        for top, height, series, unit in panels:
+            maximum = max(1.0, *(float(row.get(key, 0)) for data, key, _ in series for row in data))
+            end = max(1.0, *(float(row["time_s"]) for data, _, _ in series for row in data))
+            left, width = 58, max(10, self.width()-80)
+            painter.setPen(QColor(MUTED))
+            painter.drawText(5, top+12, f"{maximum:.1f}")
+            painter.drawText(5, top+height, f"0 {unit}")
+            painter.drawText(left, top+height+20, "0")
+            painter.drawText(left, top+height+4, width, 20,
+                             Qt.AlignmentFlag.AlignHCenter, "Time (s)")
+            painter.drawText(left, top+height+4, width, 20,
+                             Qt.AlignmentFlag.AlignRight, f"{end:.1f}")
+            painter.drawRect(left, top, width, height)
+            for data, key, color in series:
+                painter.setPen(QPen(QColor(color), 2))
+                for a, b in zip(data, data[1:]):
+                    painter.drawLine(int(left+float(a['time_s'])/end*width),
+                                     int(top+height-float(a[key])/maximum*height),
+                                     int(left+float(b['time_s'])/end*width),
+                                     int(top+height-float(b[key])/maximum*height))
 
 
 class CalibrationPanel(QWidget):
@@ -233,6 +282,31 @@ class CalibrationPanel(QWidget):
         self.refresh_button.clicked.connect(self.refresh_runs)
         row.addWidget(self.refresh_button)
         history.addLayout(row)
+
+        dynamics = self._card(self.content, "Dynamic response and candidate ISA PI")
+        self.lambda_s = QDoubleSpinBox()
+        self.lambda_s.setRange(0.05, 60)
+        self.lambda_s.setDecimals(2)
+        self.lambda_s.setValue(1.0)
+        self.lambda_s.setSuffix(" s")
+        self.lambda_s.editingFinished.connect(self.refresh_dynamics)
+        dynamics.addWidget(QLabel("SIMC lambda (offline simulation only)"))
+        dynamics.addWidget(self.lambda_s)
+        self.transition_select = QComboBox()
+        self.transition_select.currentIndexChanged.connect(self.show_dynamic_transition)
+        dynamics.addWidget(self.transition_select)
+        self.dynamics_detail = QLabel("Select a saved run to inspect dynamic response")
+        self.dynamics_detail.setWordWrap(True)
+        dynamics.addWidget(self.dynamics_detail)
+        self.dynamic_plot = DynamicResponsePlot(self)
+        dynamics.addWidget(self.dynamic_plot)
+        row = QHBoxLayout()
+        for filename, title in (("dynamics.json", "Dynamics JSON"),
+                                ("dynamic_transitions.csv", "Transitions CSV")):
+            button = QPushButton(title)
+            button.clicked.connect(lambda checked=False, name=filename: self.download(name))
+            row.addWidget(button)
+        dynamics.addLayout(row)
         self.history_detail = QLabel("No calibration runs loaded")
         self.history_detail.setWordWrap(True)
         history.addWidget(self.history_detail)
@@ -388,6 +462,46 @@ class CalibrationPanel(QWidget):
             if run else "No calibration runs available"
         )
         self._update_controls()
+        self.refresh_dynamics()
+
+    def refresh_dynamics(self):
+        identifier = self.run_select.currentData()
+        if not identifier or not RUN_ID.fullmatch(identifier):
+            self.dynamic_transitions = []
+            self.transition_select.clear()
+            self.show_dynamic_transition()
+            return
+        requested_lambda = self.lambda_s.value()
+        def done(data, error):
+            if self.run_select.currentData() != identifier or self.lambda_s.value() != requested_lambda:
+                return
+            self.dynamic_transitions = data.get("transitions", []) if not error and isinstance(data, dict) else []
+            self.transition_select.blockSignals(True)
+            self.transition_select.clear()
+            for item in self.dynamic_transitions:
+                self.transition_select.addItem(f"{number(item.get('target_hz'))} Hz · {item.get('status')}")
+            self.transition_select.blockSignals(False)
+            self.show_dynamic_transition()
+            if error:
+                self.dynamics_detail.setText("Dynamics unavailable for this historical run: " + str(error))
+        self.hmi._get(f"calibration/fan/runs/{identifier}/dynamics?lambda_s={requested_lambda}", done)
+
+    def show_dynamic_transition(self, *args):
+        index = self.transition_select.currentIndex()
+        items = getattr(self, "dynamic_transitions", [])
+        item = items[index] if 0 <= index < len(items) else {}
+        pi = item.get("candidate_pi", {})
+        self.dynamics_detail.setText(
+            f"K={number(item.get('K_ms_per_hz'), 4)} (m/s)/Hz · tau={number(item.get('tau_s'), 4)} s · "
+            f"L={number(item.get('L_s'), 4)} s\n"
+            f"RMSE={number(item.get('rmse_ms'), 4)} m/s · R²={number(item.get('r2'), 4)} · "
+            f"Completeness={number(100*item.get('data_completeness', 0), 1)}%\n"
+            f"Candidate Kp={number(pi.get('kp'), 4)} Hz/(m/s) · Ti={number(pi.get('ti_s'), 4)} s\n"
+            f"Simulation final error={number(item.get('simulation', {}).get('final_error_ms'), 4)} m/s\n"
+            + "\n".join(item.get("warnings", []))
+            + "\nUncommissioned. No controller gains are sent to the ESP32."
+        )
+        self.dynamic_plot.set_transition(item)
 
     def download(self, filename):
         identifier = self.run_select.currentData()

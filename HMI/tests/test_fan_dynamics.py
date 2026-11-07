@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,8 @@ from backend.fan_dynamics import (
     estimate_frequency_response,
     identify,
     identify_fan_dynamics,
+    simc_parameters,
+    simulate_candidate,
 )
 
 
@@ -89,6 +92,47 @@ class OfflineIdentificationTests(unittest.TestCase):
             saved = json.loads((folder / "dynamics.json").read_text(encoding="utf-8"))
             self.assertEqual(saved, result)
             self.assertTrue(saved["advisory_only"])
+            self.assertTrue((folder / "dynamic_transitions.csv").is_file())
+
+    def test_measured_ramp_and_delay_are_identified_without_approving_tuning(self):
+        start = datetime(2026, 11, 7, tzinfo=timezone.utc)
+        points = [dict(target_hz=10, mean_actual_hz=10, mean_pv=8),
+                  dict(target_hz=20, mean_actual_hz=20, mean_pv=16)]
+        frequencies = [min(20, 10+i*0.5) for i in range(200)]
+        rows = []
+        measured = 8.0
+        for i, frequency in enumerate(frequencies):
+            if i:
+                delayed_frequency = frequencies[i-5] if i >= 5 else 10
+                equilibrium = 8+0.8*(delayed_frequency-10)
+                measured = equilibrium+(measured-equilibrium)*math.exp(-0.1/0.8)
+            rows.append(dict(timestamp=(start+timedelta(seconds=i*0.1)).isoformat(),
+                             valid=True, actual_hz=frequency, pv=measured,
+                             target_hz=20, phase="RAMPING"))
+        transition = identify(rows, points)['transitions'][1]
+        self.assertAlmostEqual(transition['tau_s'], 0.8, delta=0.15)
+        self.assertAlmostEqual(transition['L_s'], 0.4, delta=0.16)
+        self.assertGreater(transition['r2'], 0.99)
+        self.assertFalse(transition['model_valid'])
+        self.assertFalse(transition['hardware_commissioned'])
+        self.assertIn('ti_s', transition['candidate_pi'])
+        self.assertNotIn('ki', transition['candidate_pi'])
+        incomplete = identify(rows[::10], points)['transitions'][1]
+        self.assertIn('warnings', incomplete)
+
+    def test_simc_units_validation_and_simulation(self):
+        pi = simc_parameters(0.8, 2, 0.2, 0.8)
+        self.assertAlmostEqual(pi['kp'], 2.5)
+        self.assertEqual(pi['ti_s'], 2)
+        self.assertEqual(pi['td_s'], 0)
+        for args in ((0, 2, 0, 1), (1, 0, 0, 1), (1, 2, -1, 1),
+                     (1, 2, 0, 0), (1, math.nan, 0, 1)):
+            with self.assertRaises(ValueError):
+                simc_parameters(*args)
+        simulation = simulate_candidate(0.8, 2, 0.2, pi)
+        self.assertTrue(simulation['advisory_only'])
+        self.assertLess(abs(simulation['final_error_ms']), 0.02)
+        self.assertTrue(all(0 <= row['actual_hz'] <= 50 for row in simulation['trace']))
 
 
 if __name__ == "__main__":

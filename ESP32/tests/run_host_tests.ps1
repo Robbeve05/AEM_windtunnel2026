@@ -1,5 +1,7 @@
 # Author: R.E. van Eekelen
 # Compile current production sources; host mocks never enter the firmware build.
+param([string[]]$Case = @())
+
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -20,31 +22,42 @@ $cases = @(
     @{ Name = 'ota_safety'; Sources = @('tests\test_ota_safety.c'); Flags = '' },
     @{ Name = 'sensors'; Sources = @('tests\test_sensors.c', 'src\PressureSensors.c'); Flags = '/DPRESSURE_TAPS_ENABLED=1 /DABP2_ADDRESS=0x29 /DABP2_MIN_PA=0 /DABP2_MAX_PA=1000 /DABP2_OUTPUT_MIN=1677722 /DABP2_OUTPUT_MAX=15099494' },
     @{ Name = 'core'; Sources = @('tests\test_core.c', 'src\PiProtocol.c'); Flags = '' },
-    @{ Name = 'torque'; Sources = @('tests\test_torque_load_control.c', 'src\TorqueLoadControl.c'); Flags = '' },
-    @{ Name = 'motor_model'; Sources = @('tests\test_motor_model.c', 'src\MotorModel.c'); Flags = '' },
-    @{ Name = 'torque_design'; Sources = @('tests\test_regelaar_design.c', 'src\RegelaarDesign.c'); Flags = '' },
+    @{ Name = 'regulator'; Sources = @('tests\test_regelaar.c', 'src\Regelaar.c'); Flags = '' },
+    @{ Name = 'models'; Sources = @('tests\test_models.c', 'tests\host\calibration_stub.c', 'src\Regelaar.c', 'src\TorqueModel.c', 'src\FrequencyModel.c'); Flags = '' },
+    @{ Name = 'motor_model'; Sources = @('tests\test_torque_inverse.c', 'src\TorqueModel.c', 'tests\host\calibration_stub.c'); Flags = '' },
+    @{ Name = 'torque_design'; Sources = @('tests\test_torque_design.c', 'src\TorqueModel.c', 'tests\host\calibration_stub.c'); Flags = '' },
     @{ Name = 'curve'; Sources = @('tests\test_curve.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'v20'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },
     @{ Name = 'v20_inhibited'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=0' },
     @{ Name = 'startup'; Sources = @('tests\test_startup.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1' },
-    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\RegelaarDesign.c', 'src\TorqueLoadControl.c', 'src\MotorModel.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' }
+    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1' },
+    @{ Name = 'control_frequency'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\FrequencyModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=1' }
 )
-$lines = @('@echo off', ('call "' + $vcvars + '" >nul'), 'if errorlevel 1 exit /b 1',
-           ('pushd "' + $output + '"'), 'if errorlevel 1 exit /b 1')
-foreach ($case in $cases) {
-    $sources = ($case.Sources | ForEach-Object { '"' + (Join-Path $project $_) + '"' }) -join ' '
-    $lines += 'cl /nologo /W4 /WX /std:c11 /I"' + (Join-Path $project 'tests\host') + '" /I"' +
-              (Join-Path $project 'include') + '" ' + $case.Flags + ' ' + $sources +
-              ' /Fe:' + $case.Name + '_tests.exe'
-    $lines += 'if errorlevel 1 exit /b 1'
-    $lines += $case.Name + '_tests.exe'
-    $lines += 'if errorlevel 1 exit /b 1'
+if ($Case.Count) {
+    $unknown = @($Case | Where-Object { $_ -notin $cases.Name })
+    if ($unknown.Count) { throw ('Unknown test cases: ' + ($unknown -join ', ')) }
+    $cases = @($cases | Where-Object { $_.Name -in $Case })
 }
-$lines += @('popd', 'exit /b 0')
-$batch = Join-Path $output 'run-tests.cmd'
-$lines | Set-Content -LiteralPath $batch -Encoding ascii
-Push-Location $output
-try {
+$failed = @()
+foreach ($testCase in $cases) {
+    $sources = ($testCase.Sources | ForEach-Object { '"' + (Join-Path $project $_) + '"' }) -join ' '
+    $lines = @('@echo off', ('call "' + $vcvars + '" >nul'), 'if errorlevel 1 exit /b 1',
+               ('pushd "' + $output + '"'), 'if errorlevel 1 exit /b 1')
+    $lines += 'cl /nologo /W4 /WX /std:c11 /I"' + (Join-Path $project 'tests\host') + '" /I"' +
+              (Join-Path $project 'include') + '" ' + $testCase.Flags + ' ' + $sources +
+              ' /Fe:' + $testCase.Name + '_tests.exe'
+    $lines += 'if errorlevel 1 exit /b 1'
+    $lines += $testCase.Name + '_tests.exe'
+    $lines += 'exit /b %errorlevel%'
+    $batch = Join-Path $output ($testCase.Name + '.cmd')
+    $lines | Set-Content -LiteralPath $batch -Encoding ascii
     & cmd.exe /d /s /c ('call "' + $batch + '"')
-    if ($LASTEXITCODE -ne 0) { throw 'Host regression tests failed.' }
-} finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) {
+        $failed += $testCase.Name
+        Write-Host ('FAIL ' + $testCase.Name + ' (compile or execution; exit ' + $LASTEXITCODE + ')')
+    } else {
+        Write-Host ('PASS executable ' + $testCase.Name)
+    }
+}
+Write-Host (($cases.Count - $failed.Count).ToString() + '/' + $cases.Count + ' host executables passed.')
+if ($failed.Count) { throw ('Host regression tests failed or could not execute: ' + ($failed -join ', ')) }

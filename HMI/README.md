@@ -27,3 +27,11 @@ Remote START/RESET are unavailable. ESP32 operational interlocks, drive commissi
 ## API
 
 The local API endpoints remain for Qt, including `/api/status`, `/api/config`, `/api/measurement/*`, `/api/storage/*` and `/api/calibration/fan/*`. These are backend interfaces, not a second browser HMI.
+
+## Offline dynamic identification
+
+Saving calibration also exports `dynamics.json` and `dynamic_transitions.csv`. Settings → Calibration shows measured V20 frequency, filtered Pitot airspeed versus fitted response, K/tau/L, fit quality, residual warnings, data completeness and candidate ISA PI **Kp/Ti**. Lambda is configurable for advisory simulation; it never sends controller gains. The fitted effective plant includes the existing pressure-filter dynamics, so no additional measurement filter is introduced. Unit-step simulation assumes 0–50 Hz limits and a 2 Hz/s drive ramp, which requires physical verification.
+
+The read-only `/api/calibration/fan/runs/{id}/dynamics?lambda_s=1.0` endpoint recalculates candidate tuning/simulation without editing the saved identification or activating hardware. Numerical fit acceptance, independent model validation and hardware commissioning remain separate. Historical runs without dynamics exports still open. See [controller design](../docs/control/TORQUE-CONTROL.md).
+
+Run `python -m unittest discover -s tests -v` with `requirements-desktop.txt` installed to include native Qt tests.

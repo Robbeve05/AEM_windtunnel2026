@@ -7,7 +7,8 @@ The root README provides the project overview. The ESP32 and HMI folders each co
 - [Project overview](../README.md)
 - [ESP32 firmware](../ESP32/README.md)
 - [Native HMI](../HMI/README.md)
-- [Torque control](control/TORQUE-CONTROL.md)
+- [ISA controller and torque/frequency plants](control/TORQUE-CONTROL.md)
+- [Refactor validation](control/REFACTOR-VALIDATION.md)
 - [Siemens V20 Modbus](hardware/V20_MODBUS.md)
 - [Machine I/O](hardware/MACHINE-IO.md) — new schematic mapping; verify against actual firmware and hardware
 - [OTA setup](deployment/OTA-SETUP.md) — maintenance-gated, not commissioned

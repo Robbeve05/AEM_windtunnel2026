@@ -7,12 +7,15 @@
  *
  * Author: R.E. van Eekelen
  */
+
 ///////////////////////////////////////////////////////////////////////////////
 // Include guard
+
 #pragma once
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -36,6 +39,7 @@
 #define EVT_SENSOR_UPDATED (1U << 1)
 
 /* InputHandlerTask produces physical actions; ControlTask alone consumes them. */
+
 ///////////////////////////////////////////////////////////////////////////////
 // Public declarations
 

@@ -234,10 +234,12 @@ class FanCharacteristicCalibrator:
                                  ('inverse_lookup.csv',[dict(velocity_mmps=v,frequency_mhz=f) for v,f in lookup_points(self.points)] if self.state=='COMPLETED' else [],['velocity_mmps','frequency_mhz'])]:
             with (folder/name).open('w',newline='',encoding='utf-8') as f:
                 w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(rows)
+        from .fan_dynamics import analyze_calibration_folder
+        analyze_calibration_folder(folder)
         (folder/'calibration.json').write_text(json.dumps(self.metadata,indent=2),encoding='utf-8')
 
     def file(self,identifier,name='calibration.json'):
-        if not re.fullmatch(r'[0-9]{8}T[0-9]{6}-[0-9a-f]{8}',identifier) or name not in ('calibration.json','raw_samples.csv','characteristic.csv','inverse_lookup.csv'):
+        if not re.fullmatch(r'[0-9]{8}T[0-9]{6}-[0-9a-f]{8}',identifier) or name not in ('calibration.json','raw_samples.csv','characteristic.csv','inverse_lookup.csv','dynamics.json','dynamic_transitions.csv'):
             raise ValueError('Invalid calibration file')
         p=self.directory/identifier/name
         if not p.is_file(): raise ValueError('Calibration file not found')
