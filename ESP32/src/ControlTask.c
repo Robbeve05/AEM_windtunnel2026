@@ -37,6 +37,7 @@
 #include "FanCalibration.h"
 #include "RegelaarDesign.h"
 #include "TorqueLoadControl.h"
+#include "FrequencyPI.h"
 #include "esp_log.h"
 #include "SetpointCurve.h"
 #include "V20Modbus.h"
@@ -67,10 +68,16 @@ typedef struct
 
 typedef struct
 {
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
     MotorModel motor_model;
     TorqueLoadControl torque_controller;
     TorqueLoadOutput torque_output;
     bool torque_model_ready;
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    FrequencyPI frequency_controller;
+    float frequency_feedforward_hz;
+    bool frequency_controller_ready;
+#endif
     SetpointCurve curve;
     SetpointCurve frequency_curve;
     bool frequency_running;
@@ -111,6 +118,7 @@ static ControlContext control;
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
 
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
 static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request, MotorModelResult *result) {
     if(!MotorModel_TorqueToFrequency(&ctx->motor_model,request,result)) return false;
     if(FanCalibration_IsValid()) {
@@ -127,6 +135,7 @@ static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *re
     }
     return true;
 }
+#endif
 static void Control_Init(ControlContext *ctx);
 static void Control_WaitForTasks(ControlContext *ctx);
 static void Control_HoldInitializationFault(ControlContext *ctx);
@@ -197,6 +206,7 @@ static void Control_Init(ControlContext *ctx)
     *ctx = (ControlContext){0};
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
     /* Design the one-mass torque PID; no parallel frequency PI exists. */
     const RegelaarDesignInput design_input = {
         .jm=J_MOTOR_KGM2, .jfan=J_FAN_KGM2,
@@ -231,6 +241,15 @@ static void Control_Init(ControlContext *ctx)
     }
     if (!ctx->torque_model_ready)
         ESP_LOGW("TORQUE_PID", "AUTO inhibited: inertia, design or motor model invalid");
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    ctx->frequency_controller_ready =
+        FrequencyPI_Init(&ctx->frequency_controller,
+                         FREQUENCY_PI_KP_HZ_PER_MPS,
+                         FREQUENCY_PI_KI_HZ_PER_MPS_S,
+                         CONTROL_CLOCK_PERIOD_S);
+    if (!ctx->frequency_controller_ready)
+        ESP_LOGW("FREQ_PI", "Frequency PI regulator initialization failed");
+#endif
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
     StateMachine_Init(&ctx->machine, ctx->now_ms);
@@ -387,8 +406,13 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
                 ctx->status.mode = (OperatingMode)(int)command.values[0];
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
                 ctx->frequency_running = ctx->curve_running = false;
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
                 TorqueLoadControl_Reset(&ctx->torque_controller);
                 ctx->torque_output = (TorqueLoadOutput){0};
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+                FrequencyPI_Reset(&ctx->frequency_controller);
+                ctx->frequency_feedforward_hz = 0.0f;
+#endif
                 ctx->start = false;
             }
             break;
@@ -401,9 +425,11 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
             ctx->status.setpoint = command.values[0];
             break;
         case CMD_PID:
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
             if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
                 (void)TorqueLoadControl_SetGains(&ctx->torque_controller, command.values[0],
                                                  command.values[1], command.values[2]);
+#endif
             break;
         case CMD_STOP:
             ctx->stop = true;
@@ -494,9 +520,14 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             isfinite(ctx->motor.actual_hz) && ctx->motor.actual_hz >= 0 &&
             ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
             (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
         if (ctx->status.mode == MODE_AUTO &&
             (!ctx->torque_model_ready || (!SIMULATION_MODE && !MOTOR_MODEL_TORQUE_TO_V20_ENABLED)))
             StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+        if (ctx->status.mode == MODE_AUTO && !ctx->frequency_controller_ready)
+            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+#endif
         else if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
         else if (!V20Modbus_Arm())
@@ -549,6 +580,7 @@ static void Control_UpdateController(ControlContext *ctx)
             bool valid = ctx->curve_running &&
                 SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
                                    &ctx->status.control_setpoint);
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
             /* Sole AUTO loop: airspeed torque PID -> inverse motor model -> V20 Hz.
              * Physical AUTO remains locked until motor/VFD model validation. */
             valid = valid && ctx->torque_model_ready &&
@@ -588,6 +620,26 @@ static void Control_UpdateController(ControlContext *ctx)
                     }
                 }
             }
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+            valid = valid && ctx->frequency_controller_ready;
+            if (valid) {
+                float feedforward_hz = 0.0f;
+                if (FanCalibration_IsValid()) {
+                    feedforward_hz = FanCalibration_GetBaseFrequency(ctx->status.control_setpoint,
+                                                                      ctx->sample.value);
+                    if (!isfinite(feedforward_hz))
+                        feedforward_hz = 0.0f;
+                }
+                ctx->frequency_feedforward_hz = feedforward_hz;
+                FrequencyPIOutput output = {0};
+                valid = FrequencyPI_Step(&ctx->frequency_controller,
+                    ctx->status.control_setpoint, ctx->sample.value, feedforward_hz, &output);
+                if (valid) {
+                    ctx->status.applied_hz = output.output_hz;
+                    ctx->status.output = 100.0f * output.output_hz / V20_REFERENCE_HZ;
+                }
+            }
+#endif
             if (!valid) {
                 StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
                 V20Modbus_Disarm();
@@ -604,8 +656,13 @@ static void Control_UpdateController(ControlContext *ctx)
         ctx->previous_ff_setpoint = ctx->sample.value;
         ctx->status.control_setpoint = ctx->sample.value;
         ctx->status.output = 0.0f;
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
         TorqueLoadControl_Reset(&ctx->torque_controller);
         ctx->torque_output = (TorqueLoadOutput){0};
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+        FrequencyPI_Reset(&ctx->frequency_controller);
+        ctx->frequency_feedforward_hz = 0.0f;
+#endif
     }
 
     if (ctx->machine.state == STATE_RUNNING && (ctx->motor.status & 0x0040u) != 0 &&

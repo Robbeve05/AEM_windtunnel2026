@@ -166,7 +166,25 @@
 #define MANUAL_MAX_JERK_HZ_PER_S3 0.5f
 
 ///////////////////////////////////////////////////////////////////////////////
-// 06. AUTOMATIC AIRSPEED TORQUE PID
+// 06. AUTOMATIC CONTROLLER SELECTION
+///////////////////////////////////////////////////////////////////////////////
+// Compile-time selection between the validated torque PI path and the frequency PI path.
+// The user only changes CONTROL_TYPE between the two values below; runtime mode selection
+// remains separate and is not affected by this choice.
+#define CONTROL_TORQUE_PI      0
+#define CONTROL_FREQUENCY_PI   1
+
+#ifndef CONTROL_TYPE
+#define CONTROL_TYPE CONTROL_TORQUE_PI
+#endif
+
+#if CONTROL_TYPE != CONTROL_TORQUE_PI && \
+    CONTROL_TYPE != CONTROL_FREQUENCY_PI
+#error "Invalid automatic controller type"
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+// 07. AUTOMATIC AIRSPEED TORQUE PID
 ///////////////////////////////////////////////////////////////////////////////
 // AUTO shapes an airspeed setpoint in m/s with a fifth-order SetpointCurve,
 // then uses the torque PID and inverse motor model to determine V20 Hz. These derivative
@@ -186,6 +204,15 @@
 #if CONTROLLER_SETTING != CONTROLLER_NONE && CONTROLLER_SETTING != CONTROLLER_P && \
     CONTROLLER_SETTING != CONTROLLER_PI && CONTROLLER_SETTING != CONTROLLER_PID
 #error "Invalid CONTROLLER_SETTING: use CONTROLLER_NONE, CONTROLLER_P, CONTROLLER_PI or CONTROLLER_PID"
+#endif
+
+// [Hz/(m/s), adjustable] Frequency PI tuning for CONTROL_FREQUENCY_PI.
+#ifndef FREQUENCY_PI_KP_HZ_PER_MPS
+#define FREQUENCY_PI_KP_HZ_PER_MPS 0.75f
+#endif
+
+#ifndef FREQUENCY_PI_KI_HZ_PER_MPS_S
+#define FREQUENCY_PI_KI_HZ_PER_MPS_S 0.35f
 #endif
 
 // [m/s, safety-critical] Maximum requested airspeed; raising it requires validated tunnel
