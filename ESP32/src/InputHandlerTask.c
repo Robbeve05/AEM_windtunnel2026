@@ -1,20 +1,29 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * InputHandlerTask.c
  * Physical input validation and operational VFD-enable relay management.
  *
  * Author: R.E. van Eekelen
  */
-#include "ApplicationTasks.h"
-#include "AppConfig.h"
-#include "TaskData.h"
-#include "SafetyIO.h"
-#include "I2CBus.h"
-#include "StatusOutput.h"
-#include "esp_task_wdt.h"
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
+
 ///////////////////////////////////////////////////////////////////////////////
-// File-local button state
+// Application includes
+#include "AppConfig.h"
+#include "ApplicationTasks.h"
+#include "I2CBus.h"
+#include "SafetyIO.h"
+#include "StatusOutput.h"
+#include "TaskData.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// File-local data structures
 
 typedef struct
 {
@@ -93,8 +102,8 @@ static void Buttons_Update(Buttons *b, SafetySnapshot *s, uint32_t now)
 ///////////////////////////////////////////////////////////////////////////////
 // void InputHandlerTask(void *argument)
 /*
- * Owns button validation and VFD-enable relay updates. Publishes notifications only
- * after the matching sequence and timestamp are visible in safety_status.
+ * Owns button validation and VFD-enable relay updates. Publishes notifications
+ * only after the matching sequence and timestamp are visible in safety_status.
  */
 void InputHandlerTask(void *argument)
 {
@@ -125,12 +134,17 @@ void InputHandlerTask(void *argument)
         previous = s;
         if (!initialized)
         {
-            /* Only a successful first output initialization pass publishes readiness. */
+            /* Only a successful first output initialization pass publishes readiness.
+             */
             initialized = true;
-            if (s.outputs_ok) {
-                ESP_LOGI("InputHandler", "Input/output task initialized; initial output write successful");
+            if (s.outputs_ok)
+            {
+                ESP_LOGI("InputHandler",
+                         "Input/output task initialized; initial output write successful");
                 xEventGroupSetBits(handle_ThreadEventGroup, EVT_INPUT_TASK_READY);
-            } else {
+            }
+            else
+            {
                 ESP_LOGE("InputHandler", "Output initialization failed; startup remains inhibited");
             }
         }

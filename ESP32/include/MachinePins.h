@@ -1,6 +1,15 @@
-#pragma once
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /* Author: R.E. van Eekelen. Physical assignments only. */
+///////////////////////////////////////////////////////////////////////////////
+// Include guard
+#pragma once
+
 // DIGITAL INPUTS - Waveshare DI1..DI8 map in order to GPIO4..GPIO11.
+///////////////////////////////////////////////////////////////////////////////
+// Public definitions
+
 #define ESTOP_PRESSED_GPIO 4
 #define RESET_BUTTON_GPIO 5
 #define START_BUTTON_GPIO 6
@@ -9,7 +18,7 @@
 #define VFD_FAULT_DI_GPIO 9
 #define CONTACTOR_FEEDBACK_GPIO 10
 #define SPARE_DI_GPIO 11
-#define BOARD_DI_PINS {4,5,6,7,8,9,10,11}
+#define BOARD_DI_PINS {4, 5, 6, 7, 8, 9, 10, 11}
 // DIGITAL OUTPUTS - zero-based expander bits, NOT ESP32 GPIOs
 // DO1 drives relay 11K3; its contact supplies the VFD In1 Enable signal.
 #define VFD_ENABLE_DO_BIT 0

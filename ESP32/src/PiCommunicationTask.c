@@ -1,3 +1,6 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * PiCommunicationTask.c
  * Exchanges commands, heartbeat and telemetry with the Raspberry Pi.
@@ -5,33 +8,43 @@
  * Author: R.E. van Eekelen
  */
 ///////////////////////////////////////////////////////////////////////////////
-// Includes
+// System includes
+#include "esp_err.h"
+#include "esp_log.h"
+#include "lwip/sockets.h"
+#include <errno.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 
-#include "ApplicationTasks.h"
-#include "TaskData.h"
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
 #include "AppConfig.h"
+#include "ApplicationTasks.h"
+#include "DigitalOutputs.h"
+#include "Ethernet.h"
+#include "FanCalibration.h"
 #include "PiProtocol.h"
 #include "PressureSensors.h"
 #include "SafetyIO.h"
 #include "StatusOutput.h"
-#include "DigitalOutputs.h"
-#include "FanCalibration.h"
-#include "Ethernet.h"
-#include <math.h>
-#include "lwip/sockets.h"
-#include <errno.h>
-#include <unistd.h>
-#include "freertos/task.h"
-#include "esp_err.h"
-#include "esp_log.h"
-#include <stdio.h>
-#include <string.h>
+#include "TaskData.h"
 
 ///////////////////////////////////////////////////////////////////////////////
-// Local interfaces and connection state
+// File-local variables
 
 static int client = -1;
-typedef struct {
+///////////////////////////////////////////////////////////////////////////////
+// File-local data structures
+
+typedef struct
+{
     uint32_t mask;
     const char *name;
 } WaitBlockerLabel;
@@ -61,31 +74,42 @@ static const WaitBlockerLabel wait_blocker_labels[] = {
     {WAIT_BLOCK_V20_OPERATION_INHIBITED, "v20_operation_inhibited"},
 };
 
+///////////////////////////////////////////////////////////////////////////////
+// format_wait_blockers()
+
 static void format_wait_blockers(uint32_t reasons, char *buffer, size_t size)
 {
-    if (buffer == NULL || size == 0) return;
+    if (buffer == NULL || size == 0)
+        return;
     buffer[0] = '\0';
     size_t used = 0;
     uint32_t known = 0;
-    for (size_t i = 0; i < sizeof(wait_blocker_labels) / sizeof(wait_blocker_labels[0]); ++i) {
+    for (size_t i = 0; i < sizeof(wait_blocker_labels) / sizeof(wait_blocker_labels[0]); ++i)
+    {
         known |= wait_blocker_labels[i].mask;
-        if ((reasons & wait_blocker_labels[i].mask) == 0) continue;
-        const int written = snprintf(buffer + used, size - used, "%s%s",
-                                     used == 0 ? "" : ",", wait_blocker_labels[i].name);
-        if (written < 0 || (size_t)written >= size - used) {
+        if ((reasons & wait_blocker_labels[i].mask) == 0)
+            continue;
+        const int written = snprintf(buffer + used, size - used, "%s%s", used == 0 ? "" : ",",
+                                     wait_blocker_labels[i].name);
+        if (written < 0 || (size_t)written >= size - used)
+        {
             buffer[size - 1] = '\0';
             return;
         }
         used += (size_t)written;
     }
     const uint32_t unknown = reasons & ~known;
-    if (unknown != 0 && used < size) {
-        (void)snprintf(buffer + used, size - used, "%sunknown_0x%08lx",
-                       used == 0 ? "" : ",", (unsigned long)unknown);
+    if (unknown != 0 && used < size)
+    {
+        (void)snprintf(buffer + used, size - used, "%sunknown_0x%08lx", used == 0 ? "" : ",",
+                       (unsigned long)unknown);
     }
     if (used == 0 && reasons == 0)
         (void)snprintf(buffer, size, "none");
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// disconnect_client()
 
 static void disconnect_client(void)
 {
@@ -101,6 +125,9 @@ static void disconnect_client(void)
     xEventGroupSetBits(events, STOP_REQUEST);
     xQueueReset(commands);
 }
+///////////////////////////////////////////////////////////////////////////////
+// reply()
+
 static void reply(const char *text)
 {
     size_t remaining = strlen(text);
@@ -116,6 +143,9 @@ static void reply(const char *text)
         text += n;
     }
 }
+///////////////////////////////////////////////////////////////////////////////
+// process()
+
 static void process(const char *line)
 {
 #if SIMULATION_MODE
@@ -127,12 +157,19 @@ static void process(const char *line)
         return;
     }
 #endif
-    if (!strncmp(line,"CAL_",4)) {
-        Telemetry t={0}; MotorStatus m={0}; char response[256];
-        bool ready=xQueuePeek(telemetry,&t,0)==pdTRUE && t.state==STATE_READY;
-        bool stopped=xQueuePeek(motor_status,&m,0)==pdTRUE && m.ready && m.ok &&
-            (TickType_t)(xTaskGetTickCount()-m.tick)<pdMS_TO_TICKS(SENSOR_TIMEOUT_MS) && fabsf(m.actual_hz)<=0.2f;
-        FanCalibration_HandleCommand(line,ready,stopped,response,sizeof(response));reply(response);return;
+    if (!strncmp(line, "CAL_", 4))
+    {
+        Telemetry t = {0};
+        MotorStatus m = {0};
+        char response[256];
+        bool ready = xQueuePeek(telemetry, &t, 0) == pdTRUE && t.state == STATE_READY;
+        bool stopped =
+            xQueuePeek(motor_status, &m, 0) == pdTRUE && m.ready && m.ok &&
+            (TickType_t)(xTaskGetTickCount() - m.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS) &&
+            fabsf(m.actual_hz) <= 0.2f;
+        FanCalibration_HandleCommand(line, ready, stopped, response, sizeof(response));
+        reply(response);
+        return;
     }
     PiCommand c;
     if (!PiProtocol_Parse(line, &c))
@@ -161,12 +198,16 @@ static void process(const char *line)
         reply("ERR RANGE\n");
         return;
     }
-    if (c.type == CMD_MODE || c.type == CMD_FREQ) {
+    if (c.type == CMD_MODE || c.type == CMD_FREQ)
+    {
         Telemetry current = {0};
         if (xQueuePeek(telemetry, &current, 0) != pdTRUE ||
-            (c.type == CMD_MODE && (current.state == STATE_RUNNING || current.state == STATE_STOP)) ||
-            (c.type == CMD_FREQ && current.mode != MODE_MANUAL)) {
-            reply("ERR MODE_OR_STATE\n"); return;
+            (c.type == CMD_MODE &&
+             (current.state == STATE_RUNNING || current.state == STATE_STOP)) ||
+            (c.type == CMD_FREQ && current.mode != MODE_MANUAL))
+        {
+            reply("ERR MODE_OR_STATE\n");
+            return;
         }
     }
     if (c.type == CMD_FILTER)
@@ -297,41 +338,49 @@ void PiCommunicationTask(void *argument)
                 char buffer[1024];
                 int length = snprintf(
                     buffer, sizeof(buffer),
-                    "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f out=%.3f reason=%s "
+                    "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f "
+                    "out=%.3f reason=%s "
                     "sim=%d sp_ramp=%.3f"
                     " mode=%s manual_hz=%.3f applied_hz=%.3f"
-                    " pressure_pa=%.3f temperature_c=%.3f actual_hz=%.3f desired_hz=%.3f "
+                    " pressure_pa=%.3f temperature_c=%.3f actual_hz=%.3f "
+                    "desired_hz=%.3f "
                     "drive_status=%u drive_fault=%d"
-                    " control_hz=%.2f execution_us=%lu max_jitter_us=%lu missed_deadlines=%lu "
+                    " control_hz=%.2f execution_us=%lu max_jitter_us=%lu "
+                    "missed_deadlines=%lu "
                     "overruns=%lu"
-                    " sensor_errors=%lu modbus_errors=%lu modbus_timeouts=%lu ethernet=%d "
+                    " sensor_errors=%lu modbus_errors=%lu modbus_timeouts=%lu "
+                    "ethernet=%d "
                     "ethernet_link=%d ipv4_configured=%d pi_tcp_connected=1 "
                     "pi_heartbeat_received=%d pi_heartbeat_fresh=%d "
                     "stack_control=%lu stack_ethernet=%u"
                     " taps_valid=%u filter_hz=%.2f sample_seq=%lu"
-                    " state=%s fault=%s last_fault=%s estop=%d relay=%d reset_required=%d stop=%d "
+                    " state=%s fault=%s last_fault=%s estop=%d relay=%d "
+                    "reset_required=%d stop=%d "
                     "inputs_valid=%d pi=%d commissioned=%d"
-                    " estop_pressed=%d safety_relay_ok=%d stop_button_ok=%d pi_connected=%d "
+                    " estop_pressed=%d safety_relay_ok=%d stop_button_ok=%d "
+                    "pi_connected=%d "
                     "sensor_age_ms=%lu"
-                    " raw_di=%lu start=%d reset=%d vfd_fault_available=%d contactor_available=%d "
+                    " raw_di=%lu start=%d reset=%d vfd_fault_available=%d "
+                    "contactor_available=%d "
                     "contactor=%d"
-                    " control_period_us=%u service_us=%lu service_max_us=%lu rtt_median_us=%lu "
-                    "rtt_p95_us=%lu rtt_max_us=%lu request_id=%lu modbus_hz=%.2f transitions=%lu "
+                    " control_period_us=%u service_us=%lu service_max_us=%lu "
+                    "rtt_median_us=%lu "
+                    "rtt_p95_us=%lu rtt_max_us=%lu request_id=%lu modbus_hz=%.2f "
+                    "transitions=%lu "
                     "remote_start=%d crc_errors=%lu exceptions=%lu exception_code=%lu "
                     "late_replies=%lu",
                     t.running,
                     (sample.valid &&
                      xTaskGetTickCount() - sample.tick < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS)),
                     t.motor_ok, t.setpoint, sample.value, t.output, t.reason, SIMULATION_MODE,
-                    t.control_setpoint, t.mode == MODE_MANUAL ? "MANUAL" : "AUTO",
-                    t.manual_hz, t.applied_hz, sample.pressure_pa, sample.temperature_c, motor.actual_hz,
+                    t.control_setpoint, t.mode == MODE_MANUAL ? "MANUAL" : "AUTO", t.manual_hz,
+                    t.applied_hz, sample.pressure_pa, sample.temperature_c, motor.actual_hz,
                     t.applied_hz, motor.status, !!(motor.status & 8), t.control_hz,
                     (unsigned long)t.execution_us, (unsigned long)t.max_jitter_us,
                     (unsigned long)t.missed_deadlines, (unsigned long)t.overruns,
                     (unsigned long)sample.errors, (unsigned long)motor.errors,
-                    (unsigned long)motor.timeouts, ethernet_link, ethernet_link,
-                    ipv4_configured, heartbeat_received, heartbeat_fresh,
-                    (unsigned long)t.stack_free,
+                    (unsigned long)motor.timeouts, ethernet_link, ethernet_link, ipv4_configured,
+                    heartbeat_received, heartbeat_fresh, (unsigned long)t.stack_free,
                     (unsigned)uxTaskGetStackHighWaterMark(NULL), sample.taps_valid,
                     SensorLib_FilterHz(), (unsigned long)sample.sequence,
                     StateMachine_Name(t.state), FaultReason_Name(t.fault),
@@ -349,47 +398,65 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.transitions, ALLOW_REMOTE_START, (unsigned long)t.crc_errors,
                     (unsigned long)t.exceptions, (unsigned long)t.exception_code,
                     (unsigned long)t.late_replies);
-                const StatusIndicator indication=StatusOutput_Get(&t,true,
-                    (uint32_t)(now*portTICK_PERIOD_MS));
-                if(length>0 && length<(int)sizeof(buffer)-256) {
-                    length+=snprintf(buffer+length,sizeof(buffer)-length,
-                        " led_green=%d led_yellow=%d led_red=%d status_text=",
-                        indication.green,indication.amber,indication.red);
-                    // Encode spaces so the existing key=value token protocol is unchanged.
-                    for(const char *p=indication.text; *p && length<(int)sizeof(buffer)-4; ++p) {
-                        if(*p==' ') { memcpy(buffer+length,"%20",3); length+=3; }
-                        else buffer[length++]=*p;
+                const StatusIndicator indication =
+                    StatusOutput_Get(&t, true, (uint32_t)(now * portTICK_PERIOD_MS));
+                if (length > 0 && length < (int)sizeof(buffer) - 256)
+                {
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                                       " led_green=%d led_yellow=%d led_red=%d status_text=",
+                                       indication.green, indication.amber, indication.red);
+                    // Encode spaces so the existing key=value token protocol is
+                    // unchanged.
+                    for (const char *p = indication.text; *p && length < (int)sizeof(buffer) - 4;
+                         ++p)
+                    {
+                        if (*p == ' ')
+                        {
+                            memcpy(buffer + length, "%20", 3);
+                            length += 3;
+                        }
+                        else
+                            buffer[length++] = *p;
                     }
-                    buffer[length]=0;
+                    buffer[length] = 0;
                 }
-                FanCalibrationStatus cal;FanCalibration_GetStatus(&cal);
-                if(length>0 && length<(int)sizeof(buffer)-160)
-                    length+=snprintf(buffer+length,sizeof(buffer)-length,
-                        " air_density=%.4f cal_valid=%d cal_active=%d cal_points=%u cal_crc=%lu cal_version=%u cal_source=%s",
-                        AIR_DENSITY,cal.valid,cal.valid,cal.points,(unsigned long)cal.crc,cal.version,cal.valid?"CALIBRATED":"DEFAULT");
+                FanCalibrationStatus cal;
+                FanCalibration_GetStatus(&cal);
+                if (length > 0 && length < (int)sizeof(buffer) - 160)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                                       " air_density=%.4f cal_valid=%d cal_active=%d "
+                                       "cal_points=%u cal_crc=%lu cal_version=%u cal_source=%s",
+                                       AIR_DENSITY, cal.valid, cal.valid, cal.points,
+                                       (unsigned long)cal.crc, cal.version,
+                                       cal.valid ? "CALIBRATED" : "DEFAULT");
                 DigitalOutputStatus outputs;
                 DigitalOutputs_GetStatus(&outputs);
-                if(length>0 && length<(int)sizeof(buffer)-192)
-                    length+=snprintf(buffer+length,sizeof(buffer)-length,
-                        " outputs_ok=%d output_write_errors=%lu output_image=%u output_ack_image=%u"
-                        " output_ack_valid=%d external_leds_enabled=%d",
-                        outputs.initialized && outputs.confirmed_valid,
-                        (unsigned long)outputs.write_errors,outputs.requested_image,
-                        outputs.confirmed_image,outputs.confirmed_valid,EXTERNAL_STATUS_LEDS_ENABLED);
+                if (length > 0 && length < (int)sizeof(buffer) - 192)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                                       " outputs_ok=%d output_write_errors=%lu output_image=%u "
+                                       "output_ack_image=%u"
+                                       " output_ack_valid=%d external_leds_enabled=%d",
+                                       outputs.initialized && outputs.confirmed_valid,
+                                       (unsigned long)outputs.write_errors, outputs.requested_image,
+                                       outputs.confirmed_image, outputs.confirmed_valid,
+                                       EXTERNAL_STATUS_LEDS_ENABLED);
                 const ReadyDiagnostics *diag = &t.ready_diag;
                 if (length > 0 && length < (int)sizeof(buffer) - 1152)
                     length += snprintf(
                         buffer + length, sizeof(buffer) - length,
                         " diag_blockers=%lu diag_estop_released=%d diag_stop_ok=%d"
-                        " diag_reset_detected=%d diag_reset_accepted=%d diag_reset_pending=%d"
+                        " diag_reset_detected=%d diag_reset_accepted=%d "
+                        "diag_reset_pending=%d"
                         " diag_safety_inputs_valid=%d diag_safety_inputs_fresh=%d"
                         " diag_safety_commissioned=%d diag_safety_relay_ok=%d"
                         " diag_safety_outputs_healthy=%d"
-                        " diag_digital_outputs_initialized=%d diag_digital_outputs_healthy=%d"
+                        " diag_digital_outputs_initialized=%d "
+                        "diag_digital_outputs_healthy=%d"
                         " diag_do1_requested=%d diag_do1_acknowledged=%d"
                         " diag_do1_ack_valid=%d diag_11k3_feedback_ok=%d"
                         " diag_modbus_initialized=%d diag_modbus_response_received=%d"
-                        " diag_v20_status_word=%u diag_v20_status_healthy=%d diag_v20_ready=%d"
+                        " diag_v20_status_word=%u diag_v20_status_healthy=%d "
+                        "diag_v20_ready=%d"
                         " diag_v20_ready_to_switch_on=%d diag_v20_ready_to_operate=%d"
                         " diag_v20_operation_enabled=%d"
                         " diag_v20_off2_active=%d diag_v20_off3_active=%d"
@@ -400,11 +467,13 @@ void PiCommunicationTask(void *argument)
                         " diag_v20_control_word_acknowledged_valid=%d"
                         " diag_drive_communication_ok=%d diag_modbus_errors=%lu"
                         " diag_modbus_timeouts=%lu diag_v20_run_commissioned=%d"
-                        " diag_drive_fault_free=%d diag_operational_ready=%d diag_run_authorized=%d"
+                        " diag_drive_fault_free=%d diag_operational_ready=%d "
+                        "diag_run_authorized=%d"
                         " diag_v20_diagnostics_complete=%d diag_v20_reference_valid=%d"
                         " diag_v20_reference_config_valid=%d diag_v20_reference_value=%u"
                         " diag_v20_watchdog_valid=%d diag_v20_watchdog_config_known=%d"
-                        " diag_v20_watchdog_config_valid=%d diag_v20_watchdog_register_value=%u"
+                        " diag_v20_watchdog_config_valid=%d "
+                        "diag_v20_watchdog_register_value=%u"
                         " diag_v20_watchdog_parameter_expected_value=%u"
                         " diag_v20_last_error=%u diag_v20_last_operation=%u"
                         " diag_v20_last_error_register=%u diag_v20_last_error_expected=%u"
@@ -421,31 +490,26 @@ void PiCommunicationTask(void *argument)
                         diag->safety_outputs_healthy, outputs.initialized,
                         outputs.initialized && outputs.confirmed_valid, diag->do1_requested,
                         diag->do1_acknowledged, diag->do1_ack_valid, diag->relay_feedback_ok,
-                        diag->modbus_initialized, diag->modbus_response_received, diag->v20_status_word,
-                        diag->v20_status_healthy, diag->v20_ready,
+                        diag->modbus_initialized, diag->modbus_response_received,
+                        diag->v20_status_word, diag->v20_status_healthy, diag->v20_ready,
                         diag->v20_ready_to_switch_on, diag->v20_ready_to_operate,
-                        diag->v20_operation_enabled,
-                        diag->v20_off2_active, diag->v20_off3_active,
+                        diag->v20_operation_enabled, diag->v20_off2_active, diag->v20_off3_active,
                         diag->v20_switch_on_inhibited, diag->v20_control_word_requested,
-                        diag->v20_control_word_requested_valid,
-                        diag->v20_control_word_acknowledged,
-                        diag->v20_control_word_acknowledged_valid,
-                        diag->drive_communication_ok, (unsigned long)diag->modbus_errors,
-                        (unsigned long)diag->modbus_timeouts, diag->v20_run_commissioned,
-                        diag->drive_fault_free, diag->operational_ready, diag->run_authorized,
-                        diag->diagnostics_complete, diag->reference_valid,
-                        diag->reference_config_valid, diag->reference_value,
-                        diag->watchdog_valid, diag->watchdog_config_known,
-                        diag->watchdog_config_valid, diag->watchdog_register_value,
-                        diag->watchdog_parameter_expected_value, diag->modbus_last_error,
-                        diag->modbus_last_operation, diag->modbus_last_error_register,
-                        diag->modbus_last_error_expected, diag->modbus_last_error_actual,
-                        (unsigned long)diag->modbus_exception_code,
-                        (unsigned long)diag->modbus_last_success_age_ms,
-                        t.init_deadline_exceeded,
+                        diag->v20_control_word_requested_valid, diag->v20_control_word_acknowledged,
+                        diag->v20_control_word_acknowledged_valid, diag->drive_communication_ok,
+                        (unsigned long)diag->modbus_errors, (unsigned long)diag->modbus_timeouts,
+                        diag->v20_run_commissioned, diag->drive_fault_free, diag->operational_ready,
+                        diag->run_authorized, diag->diagnostics_complete, diag->reference_valid,
+                        diag->reference_config_valid, diag->reference_value, diag->watchdog_valid,
+                        diag->watchdog_config_known, diag->watchdog_config_valid,
+                        diag->watchdog_register_value, diag->watchdog_parameter_expected_value,
+                        diag->modbus_last_error, diag->modbus_last_operation,
+                        diag->modbus_last_error_register, diag->modbus_last_error_expected,
+                        diag->modbus_last_error_actual, (unsigned long)diag->modbus_exception_code,
+                        (unsigned long)diag->modbus_last_success_age_ms, t.init_deadline_exceeded,
                         diag->pitot_communication_ok, diag->sensor_data_valid,
-                        diag->sensor_data_fresh, diag->sensor_ok, ethernet_link,
-                        heartbeat_received, heartbeat_fresh, diag->pi_ok);
+                        diag->sensor_data_fresh, diag->sensor_ok, ethernet_link, heartbeat_received,
+                        heartbeat_fresh, diag->pi_ok);
                 for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 32;
                      tap++)
                     length += snprintf(buffer + length, sizeof(buffer) - length, " p%d=%.3f", tap,
@@ -456,19 +520,21 @@ void PiCommunicationTask(void *argument)
                     buffer[length] = 0;
                 }
                 reply(buffer);
-                if (t.state == STATE_WAIT &&
-                    (diagnostic_state != STATE_WAIT || previous_blockers != diag->blocking_reasons ||
-                     (TickType_t)(now - last_wait_log) >=
-                         pdMS_TO_TICKS(WAIT_DIAGNOSTICS_INTERVAL_MS)))
+                if (t.state == STATE_WAIT && (diagnostic_state != STATE_WAIT ||
+                                              previous_blockers != diag->blocking_reasons ||
+                                              (TickType_t)(now - last_wait_log) >=
+                                                  pdMS_TO_TICKS(WAIT_DIAGNOSTICS_INTERVAL_MS)))
                 {
                     char blocker_names[256];
                     format_wait_blockers(diag->blocking_reasons, blocker_names,
                                          sizeof(blocker_names));
                     ESP_LOGI(
                         "WaitDiag",
-                        "WAIT READY blocked=0x%08lx blockers=%s state=%s fault=%s reset_pending=%d"
+                        "WAIT READY blocked=0x%08lx blockers=%s state=%s fault=%s "
+                        "reset_pending=%d"
                         " reset_accepted=%d estop_released=%d stop_ok=%d safety_valid=%d"
-                        " safety_fresh=%d safety_commissioned=%d relay_ok=%d safety_outputs_ok=%d"
+                        " safety_fresh=%d safety_commissioned=%d relay_ok=%d "
+                        "safety_outputs_ok=%d"
                         " digital_outputs_initialized=%d digital_outputs_healthy=%d"
                         " modbus_initialized=%d modbus_response=%d v20_status=0x%04x"
                         " v20_status_healthy=%d v20_ready=%d drive_comm_ok=%d"
@@ -480,7 +546,8 @@ void PiCommunicationTask(void *argument)
                         " operational_ready=%d run_authorized=%d"
                         " v20_run_commissioned=%d diagnostics_complete=%d"
                         " reference_valid=%d reference_config_valid=%d reference_value=%u"
-                        " watchdog_valid=%d watchdog_config_known=%d watchdog_config_valid=%d"
+                        " watchdog_valid=%d watchdog_config_known=%d "
+                        "watchdog_config_valid=%d"
                         " watchdog_register=%u watchdog_parameter_expected_ms=%u"
                         " last_error=%u last_operation=%u last_error_register=%u"
                         " last_error_expected=%u last_error_actual=%u exception_code=%lu"
@@ -488,36 +555,32 @@ void PiCommunicationTask(void *argument)
                         " do1_requested=%d do1_acknowledged=%d do1_ack_valid=%d"
                         " relay_feedback_ok=%d modbus_errors=%lu modbus_timeouts=%lu"
                         " pitot_comm=%d sensor_valid=%d sensor_fresh=%d sensor_ok=%d"
-                        " ethernet=%d pi_heartbeat_received=%d pi_heartbeat_fresh=%d pi_ok=%d",
+                        " ethernet=%d pi_heartbeat_received=%d pi_heartbeat_fresh=%d "
+                        "pi_ok=%d",
                         (unsigned long)diag->blocking_reasons, blocker_names,
-                        StateMachine_Name(t.state),
-                        FaultReason_Name(t.last_fault), diag->reset_pending, diag->reset_accepted,
-                        diag->estop_released, diag->stop_ok, diag->safety_inputs_valid,
-                        diag->safety_inputs_fresh, diag->safety_commissioned,
-                        diag->safety_relay_ok, diag->safety_outputs_healthy, outputs.initialized,
+                        StateMachine_Name(t.state), FaultReason_Name(t.last_fault),
+                        diag->reset_pending, diag->reset_accepted, diag->estop_released,
+                        diag->stop_ok, diag->safety_inputs_valid, diag->safety_inputs_fresh,
+                        diag->safety_commissioned, diag->safety_relay_ok,
+                        diag->safety_outputs_healthy, outputs.initialized,
                         outputs.initialized && outputs.confirmed_valid, diag->modbus_initialized,
                         diag->modbus_response_received, diag->v20_status_word,
                         diag->v20_status_healthy, diag->v20_ready, diag->drive_communication_ok,
                         diag->drive_fault_free, diag->v20_ready_to_switch_on,
                         diag->v20_ready_to_operate, diag->v20_operation_enabled,
-                        diag->v20_off2_active,
-                        diag->v20_off3_active, diag->v20_switch_on_inhibited,
-                        diag->v20_control_word_requested,
-                        diag->v20_control_word_requested_valid,
+                        diag->v20_off2_active, diag->v20_off3_active, diag->v20_switch_on_inhibited,
+                        diag->v20_control_word_requested, diag->v20_control_word_requested_valid,
                         diag->v20_control_word_acknowledged,
-                        diag->v20_control_word_acknowledged_valid,
-                        diag->operational_ready, diag->run_authorized,
-                        diag->v20_run_commissioned, diag->diagnostics_complete,
-                        diag->reference_valid, diag->reference_config_valid,
-                        diag->reference_value, diag->watchdog_valid,
+                        diag->v20_control_word_acknowledged_valid, diag->operational_ready,
+                        diag->run_authorized, diag->v20_run_commissioned,
+                        diag->diagnostics_complete, diag->reference_valid,
+                        diag->reference_config_valid, diag->reference_value, diag->watchdog_valid,
                         diag->watchdog_config_known, diag->watchdog_config_valid,
                         diag->watchdog_register_value, diag->watchdog_parameter_expected_value,
                         diag->modbus_last_error, diag->modbus_last_operation,
                         diag->modbus_last_error_register, diag->modbus_last_error_expected,
-                        diag->modbus_last_error_actual,
-                        (unsigned long)diag->modbus_exception_code,
-                        (unsigned long)diag->modbus_last_success_age_ms,
-                        t.init_deadline_exceeded,
+                        diag->modbus_last_error_actual, (unsigned long)diag->modbus_exception_code,
+                        (unsigned long)diag->modbus_last_success_age_ms, t.init_deadline_exceeded,
                         diag->do1_requested, diag->do1_acknowledged, diag->do1_ack_valid,
                         diag->relay_feedback_ok, (unsigned long)diag->modbus_errors,
                         (unsigned long)diag->modbus_timeouts, diag->pitot_communication_ok,

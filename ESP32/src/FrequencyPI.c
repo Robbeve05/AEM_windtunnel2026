@@ -1,16 +1,26 @@
-#include "FrequencyPI.h"
-#include "AppConfig.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
+/* Frequency PI controller implementation. */
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <math.h>
 #include <string.h>
 
-bool FrequencyPI_Init(FrequencyPI *controller,
-                      float kp_hz_per_mps,
-                      float ki_hz_per_mps_s,
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "FrequencyPI.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// FrequencyPI_Init()
+
+bool FrequencyPI_Init(FrequencyPI *controller, float kp_hz_per_mps, float ki_hz_per_mps_s,
                       float sample_s)
 {
     if (!controller || !isfinite(kp_hz_per_mps) || !isfinite(ki_hz_per_mps_s) ||
-        !isfinite(sample_s) || sample_s <= 0.0f ||
-        kp_hz_per_mps < 0.0f || ki_hz_per_mps_s < 0.0f)
+        !isfinite(sample_s) || sample_s <= 0.0f || kp_hz_per_mps < 0.0f || ki_hz_per_mps_s < 0.0f)
         return false;
 
     memset(controller, 0, sizeof(*controller));
@@ -21,6 +31,9 @@ bool FrequencyPI_Init(FrequencyPI *controller,
     controller->valid = true;
     return true;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// FrequencyPI_Reset()
 
 void FrequencyPI_Reset(FrequencyPI *controller)
 {
@@ -33,13 +46,13 @@ void FrequencyPI_Reset(FrequencyPI *controller)
     controller->valid = controller->ready;
 }
 
-bool FrequencyPI_SetGains(FrequencyPI *controller,
-                          float kp_hz_per_mps,
-                          float ki_hz_per_mps_s)
+///////////////////////////////////////////////////////////////////////////////
+// FrequencyPI_SetGains()
+
+bool FrequencyPI_SetGains(FrequencyPI *controller, float kp_hz_per_mps, float ki_hz_per_mps_s)
 {
     if (!controller || !isfinite(kp_hz_per_mps) || !isfinite(ki_hz_per_mps_s) ||
-        kp_hz_per_mps < 0.0f || ki_hz_per_mps_s < 0.0f ||
-        controller->sample_s <= 0.0f)
+        kp_hz_per_mps < 0.0f || ki_hz_per_mps_s < 0.0f || controller->sample_s <= 0.0f)
         return false;
 
     controller->kp_hz_per_mps = kp_hz_per_mps;
@@ -48,15 +61,15 @@ bool FrequencyPI_SetGains(FrequencyPI *controller,
     return true;
 }
 
-bool FrequencyPI_Step(FrequencyPI *controller,
-                      float setpoint_mps,
-                      float measured_mps,
-                      float feedforward_hz,
-                      FrequencyPIOutput *output)
+///////////////////////////////////////////////////////////////////////////////
+// FrequencyPI_Step()
+
+bool FrequencyPI_Step(FrequencyPI *controller, float setpoint_mps, float measured_mps,
+                      float feedforward_hz, FrequencyPIOutput *output)
 {
     if (!controller || !output || !controller->ready || !isfinite(setpoint_mps) ||
-        !isfinite(measured_mps) || !isfinite(feedforward_hz) ||
-        controller->sample_s <= 0.0f || measured_mps < 0.0f)
+        !isfinite(measured_mps) || !isfinite(feedforward_hz) || controller->sample_s <= 0.0f ||
+        measured_mps < 0.0f)
         return false;
 
     output->feedforward_hz = feedforward_hz;
@@ -69,9 +82,10 @@ bool FrequencyPI_Step(FrequencyPI *controller,
         return false;
 
     controller->integral_before_step_hz = controller->integral_hz;
-    const float integral_term = controller->previous_valid ?
-        controller->ki_hz_per_mps_s * controller->sample_s * 0.5f *
-            (error + controller->previous_error_mps) : 0.0f;
+    const float integral_term = controller->previous_valid
+                                    ? controller->ki_hz_per_mps_s * controller->sample_s * 0.5f *
+                                          (error + controller->previous_error_mps)
+                                    : 0.0f;
     const float next_integral = controller->integral_hz + integral_term;
 
     if (!isfinite(next_integral))
@@ -98,8 +112,10 @@ bool FrequencyPI_Step(FrequencyPI *controller,
     return true;
 }
 
-void FrequencyPI_RejectLatestIntegration(FrequencyPI *controller,
-                                        FrequencyPIOutput *output)
+///////////////////////////////////////////////////////////////////////////////
+// FrequencyPI_RejectLatestIntegration()
+
+void FrequencyPI_RejectLatestIntegration(FrequencyPI *controller, FrequencyPIOutput *output)
 {
     if (!controller || !output || !controller->previous_valid)
         return;

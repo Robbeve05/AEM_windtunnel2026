@@ -1,3 +1,6 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * V20Modbus.h
  *
@@ -6,14 +9,25 @@
  *
  * Author: R.E. van Eekelen
  */
+///////////////////////////////////////////////////////////////////////////////
+// Include guard
 #pragma once
 
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <stdbool.h>
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
 #include "TaskData.h"
 
-typedef enum {
+///////////////////////////////////////////////////////////////////////////////
+// Public enumerations
+
+typedef enum
+{
     V20_COMM_NONE,
     V20_COMM_UART_INIT_FAILED,
     V20_COMM_UART_TX_FAILED,
@@ -26,7 +40,8 @@ typedef enum {
     V20_COMM_STALE_RESPONSE
 } V20CommError;
 
-typedef enum {
+typedef enum
+{
     V20_OP_NONE,
     V20_OP_READ_STATUS,
     V20_OP_READ_REFERENCE,
@@ -35,6 +50,9 @@ typedef enum {
 } V20Operation;
 
 /* Initialise UART once. Does not transmit a RUN command. */
+///////////////////////////////////////////////////////////////////////////////
+// Function declarations
+
 bool V20Modbus_Init(void);
 
 /*

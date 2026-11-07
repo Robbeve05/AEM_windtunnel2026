@@ -1,30 +1,51 @@
-/* Author: R.E. van Eekelen. These interrupts do not implement hardware safety. */
-#include "SafetyIO.h"
-#include "ApplicationTasks.h"
-#include "AppConfig.h"
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
+/* Author: R.E. van Eekelen. These interrupts do not implement hardware safety.
+ */
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
 #include "esp_timer.h"
 #include <string.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "ApplicationTasks.h"
+#include "SafetyIO.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// File-local variables
+
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool emergency_latch, relay_latch, stop_latch;
 static volatile uint32_t unsafe_generation;
-static bool valid_active_level(int level)
-{
-    return level == 0 || level == 1;
-}
+///////////////////////////////////////////////////////////////////////////////
+// valid_active_level()
+
+static bool valid_active_level(int level) { return level == 0 || level == 1; }
 
 #if !SIMULATION_MODE
+///////////////////////////////////////////////////////////////////////////////
+// input_level()
+
 static int input_level(const SafetySnapshot *snapshot, unsigned gpio)
 {
     return (int)((snapshot->raw_levels >> (gpio - 4u)) & 1u);
 }
 #endif
 
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_InterpretLevel()
+
 bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active)
 {
-    if (!active || (raw_level != 0 && raw_level != 1) ||
-        !valid_active_level(active_level))
+    if (!active || (raw_level != 0 && raw_level != 1) || !valid_active_level(active_level))
         return false;
     *active = raw_level == active_level;
     return true;
@@ -34,6 +55,9 @@ bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active)
 static SafetySnapshot simulated = {
     .valid = true, .commissioned = true, .relay_ok = true, .stop_ok = true, .outputs_ok = true};
 #else
+///////////////////////////////////////////////////////////////////////////////
+// input_isr()
+
 static void IRAM_ATTR input_isr(void *arg)
 {
     (void)arg;
@@ -56,6 +80,9 @@ static void IRAM_ATTR input_isr(void *arg)
     portEXIT_CRITICAL_ISR(&lock);
 }
 #endif
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Init()
+
 void SafetyIO_Init(void)
 {
     /* Central installation precedes both input handlers and Ethernet startup. */
@@ -74,6 +101,9 @@ void SafetyIO_Init(void)
     (void)SafetyIO_Read();
 #endif
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Read()
+
 SafetySnapshot SafetyIO_Read(void)
 {
     SafetySnapshot s = {0};
@@ -91,20 +121,20 @@ SafetySnapshot SafetyIO_Read(void)
               valid_active_level(RESET_BUTTON_ACTIVE_LEVEL);
     s.commissioned = SAFETY_IO_COMMISSIONED;
     bool interpreted = false;
-    if (SafetyIO_InterpretLevel(input_level(&s, ESTOP_PRESSED_GPIO),
-                                ESTOP_PRESSED_ACTIVE_LEVEL, &interpreted))
+    if (SafetyIO_InterpretLevel(input_level(&s, ESTOP_PRESSED_GPIO), ESTOP_PRESSED_ACTIVE_LEVEL,
+                                &interpreted))
         s.estop_pressed = interpreted;
-    if (SafetyIO_InterpretLevel(input_level(&s, SAFETY_RELAY_OK_GPIO),
-                                SAFETY_RELAY_OK_ACTIVE_LEVEL, &interpreted))
+    if (SafetyIO_InterpretLevel(input_level(&s, SAFETY_RELAY_OK_GPIO), SAFETY_RELAY_OK_ACTIVE_LEVEL,
+                                &interpreted))
         s.relay_ok = interpreted;
-    if (SafetyIO_InterpretLevel(input_level(&s, STOP_BUTTON_OK_GPIO),
-                                STOP_BUTTON_OK_ACTIVE_LEVEL, &interpreted))
+    if (SafetyIO_InterpretLevel(input_level(&s, STOP_BUTTON_OK_GPIO), STOP_BUTTON_OK_ACTIVE_LEVEL,
+                                &interpreted))
         s.stop_ok = interpreted;
-    if (SafetyIO_InterpretLevel(input_level(&s, START_BUTTON_GPIO),
-                                START_BUTTON_ACTIVE_LEVEL, &interpreted))
+    if (SafetyIO_InterpretLevel(input_level(&s, START_BUTTON_GPIO), START_BUTTON_ACTIVE_LEVEL,
+                                &interpreted))
         s.start_pressed = interpreted;
-    if (SafetyIO_InterpretLevel(input_level(&s, RESET_BUTTON_GPIO),
-                                RESET_BUTTON_ACTIVE_LEVEL, &interpreted))
+    if (SafetyIO_InterpretLevel(input_level(&s, RESET_BUTTON_GPIO), RESET_BUTTON_ACTIVE_LEVEL,
+                                &interpreted))
         s.reset_pressed = interpreted;
     s.vfd_fault_available = VFD_FAULT_DI_FITTED;
     s.vfd_fault = s.vfd_fault_available &&
@@ -135,6 +165,9 @@ SafetySnapshot SafetyIO_Read(void)
     portEXIT_CRITICAL(&lock);
     return s;
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Fault()
+
 FaultReason_t SafetyIO_Fault(void)
 {
     portENTER_CRITICAL(&lock);
@@ -144,6 +177,9 @@ FaultReason_t SafetyIO_Fault(void)
     portEXIT_CRITICAL(&lock);
     return f;
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Stop()
+
 bool SafetyIO_Stop(void)
 {
     portENTER_CRITICAL(&lock);
@@ -152,6 +188,9 @@ bool SafetyIO_Stop(void)
     portEXIT_CRITICAL(&lock);
     return value;
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Acknowledge()
+
 void SafetyIO_Acknowledge(void)
 {
     portENTER_CRITICAL(&lock);
@@ -170,12 +209,18 @@ void SafetyIO_Acknowledge(void)
     /* Recheck levels to capture an edge concurrent with acknowledgement. */
     (void)SafetyIO_Read();
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Inhibited()
+
 bool SafetyIO_Inhibited(void)
 {
     SafetySnapshot s = SafetyIO_Read();
     return !s.valid || !s.commissioned || s.estop_pressed || !s.relay_ok ||
            SafetyIO_Fault() != FAULT_NONE;
 }
+///////////////////////////////////////////////////////////////////////////////
+// SafetyIO_Simulate()
+
 bool SafetyIO_Simulate(const char *name, bool active)
 {
 #if SIMULATION_MODE

@@ -1,16 +1,32 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /* Author: R.E. van Eekelen.
  * Pitot ASPD-4525 and taps are owned only by SensorTask (Core 0).
  * One bounded I2C transaction every 10 ms, 5-point batch average.
  * Pressure tap acquisition is separately owned by SensorTask (Core 0).
  * Hardware I2C latency is NOT hard real-time: verify overruns on target.
  */
-#include "AppConfig.h"
-#include "PressureSensors.h"
-#include "I2CBus.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include "esp_timer.h"
-#include "freertos/portmacro.h"
 #include <math.h>
 #include <string.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "I2CBus.h"
+#include "PressureSensors.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// File-local variables
 
 static portMUX_TYPE config_lock = portMUX_INITIALIZER_UNLOCKED;
 static float filter_hz = PITOT_FILTER_HZ;
@@ -26,13 +42,20 @@ static bool sample_valid;
 static float sim_drive, sim_velocity;
 #endif
 
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_SetFilter()
+
 void SensorLib_SetFilter(float hz)
 {
-    if (!isfinite(hz) || hz < 0.1f || hz > 10.0f) return;
+    if (!isfinite(hz) || hz < 0.1f || hz > 10.0f)
+        return;
     portENTER_CRITICAL(&config_lock);
     filter_hz = hz;
     portEXIT_CRITICAL(&config_lock);
 }
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_FilterHz()
+
 float SensorLib_FilterHz(void)
 {
     portENTER_CRITICAL(&config_lock);
@@ -40,6 +63,9 @@ float SensorLib_FilterHz(void)
     portEXIT_CRITICAL(&config_lock);
     return value;
 }
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_Init()
+
 bool SensorLib_Init(void)
 {
     error_count = sequence_count = zero_samples = samples_in_window = 0;
@@ -55,6 +81,9 @@ bool SensorLib_Init(void)
     return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// Simulation_SetOutput()
+
 void Simulation_SetOutput(float value)
 {
 #if SIMULATION_MODE
@@ -68,9 +97,13 @@ void Simulation_SetOutput(float value)
 
 /* SensorTask only. Return true whenever a new valid 10-sample average exists.
  * Even during calibration, publish a fresh invalid sample to the queue. */
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_PitotStep()
+
 bool SensorLib_PitotStep(Sample *out)
 {
-    if (out == NULL) return false;
+    if (out == NULL)
+        return false;
     float p = 0.0f, temp = 0.0f;
     bool valid_read = false;
 #if SIMULATION_MODE
@@ -83,11 +116,14 @@ bool SensorLib_PitotStep(Sample *out)
     valid_read = true;
 #else
     uint8_t raw[4];
-    if (I2CBus_TryRead(PITOT_ADDRESS, raw, sizeof(raw)) && !(raw[0] >> 6)) {
+    if (I2CBus_TryRead(PITOT_ADDRESS, raw, sizeof(raw)) && !(raw[0] >> 6))
+    {
         const uint32_t count = (((uint32_t)raw[0] & 0x3fu) << 8) | raw[1];
-        if (count >= 1638u && count <= 14746u) {
-            p = ((float)count - 0.1f * 16383.0f) *
-                (PITOT_MAX_PA - PITOT_MIN_PA) / (0.8f * 16383.0f) + PITOT_MIN_PA;
+        if (count >= 1638u && count <= 14746u)
+        {
+            p = ((float)count - 0.1f * 16383.0f) * (PITOT_MAX_PA - PITOT_MIN_PA) /
+                    (0.8f * 16383.0f) +
+                PITOT_MIN_PA;
             temp = 200.0f * ((raw[2] << 3) | (raw[3] >> 5)) / 2047.0f - 50.0f;
             valid_read = isfinite(p) && isfinite(temp);
         }
@@ -96,7 +132,8 @@ bool SensorLib_PitotStep(Sample *out)
     /* A single missed I2C slot must not restart the averaging window
      * average. A prolonged absence makes the last queued sample stale and
      * ControlTask faults through SENSOR_TIMEOUT_MS. */
-    if (!valid_read) {
+    if (!valid_read)
+    {
         portENTER_CRITICAL(&config_lock);
         pitot_communication_ok = false;
         portEXIT_CRITICAL(&config_lock);
@@ -113,22 +150,28 @@ bool SensorLib_PitotStep(Sample *out)
         return false;
 
     /* Five 100 Hz sensor slots per published 20 Hz average. */
-    if (valid_read) {
+    if (valid_read)
+    {
         p = window_pressure / PITOT_AVERAGE_SAMPLES;
         temperature_c = window_temperature / PITOT_AVERAGE_SAMPLES;
         window_pressure = window_temperature = 0.0f;
         samples_in_window = 0;
 #if !SIMULATION_MODE
-        if (zero_samples < PITOT_ZERO_SAMPLES) {
+        if (zero_samples < PITOT_ZERO_SAMPLES)
+        {
             zero_sum += p * PITOT_AVERAGE_SAMPLES;
             zero_samples += PITOT_AVERAGE_SAMPLES;
             zero_pressure = (float)(zero_sum / zero_samples);
             sample_valid = false;
-        } else {
+        }
+        else
+        {
             p -= zero_pressure;
             int64_t now_us = esp_timer_get_time();
-            if (!previous_us) filtered_pressure = p;
-            else {
+            if (!previous_us)
+                filtered_pressure = p;
+            else
+            {
                 const float dt = (float)(now_us - previous_us) / 1000000.0f;
                 const float coefficient = 1.0f - expf(-6.283185307f * SensorLib_FilterHz() * dt);
                 filtered_pressure += coefficient * (p - filtered_pressure);
@@ -158,6 +201,9 @@ bool SensorLib_PitotStep(Sample *out)
     return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_PitotCommunicationOk()
+
 bool SensorLib_PitotCommunicationOk(void)
 {
     portENTER_CRITICAL(&config_lock);
@@ -174,17 +220,23 @@ bool SensorLib_PitotCommunicationOk(void)
  * The two TCA9548A multiplexers are selected in distinct transactions.
  * The 16 tap pressures are separate from the pitot/speed sensor.
  */
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_TapsStep()
+
 bool SensorLib_TapsStep(Sample *out)
 {
-    if (out == NULL) return false;
+    if (out == NULL)
+        return false;
 #if PRESSURE_TAPS_ENABLED && !SIMULATION_MODE
     static Sample aggregate;
     static unsigned channel;
     static uint8_t stage;
     static int64_t conversion_started_us;
     static bool initialized;
-    if (!initialized) {
-        for (unsigned i = 0; i < 16; ++i) aggregate.taps[i] = NAN;
+    if (!initialized)
+    {
+        for (unsigned i = 0; i < 16; ++i)
+            aggregate.taps[i] = NAN;
         initialized = true;
     }
     const uint8_t off = 0;
@@ -192,18 +244,21 @@ bool SensorLib_TapsStep(Sample *out)
     const uint8_t trigger[] = {0xAA, 0, 0};
     uint8_t data[4];
     bool success = false;
-    switch(stage) {
+    switch (stage)
+    {
     case 0: /* Disarm first multiplexer. */
-        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1)) return false;
+        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1))
+            return false;
         stage = 1;
         return false;
     case 1: /* Disarm second multiplexer. */
-        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1)) return false;
+        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1))
+            return false;
         stage = 2;
         return false;
     case 2: /* Select exactly one channel. */
-        if (!I2CBus_TryWrite(channel < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS,
-                             &mask, 1)) {
+        if (!I2CBus_TryWrite(channel < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS, &mask, 1))
+        {
             aggregate.errors++;
             aggregate.taps[channel] = NAN;
             aggregate.taps_valid &= (uint16_t)~(1u << channel);
@@ -213,7 +268,8 @@ bool SensorLib_TapsStep(Sample *out)
         stage = 3;
         return false;
     case 3: /* Start conversion. */
-        if (!I2CBus_TryWrite(ABP2_ADDRESS, trigger, sizeof(trigger))) {
+        if (!I2CBus_TryWrite(ABP2_ADDRESS, trigger, sizeof(trigger)))
+        {
             aggregate.errors++;
             aggregate.taps[channel] = NAN;
             aggregate.taps_valid &= (uint16_t)~(1u << channel);
@@ -229,19 +285,22 @@ bool SensorLib_TapsStep(Sample *out)
         success = I2CBus_TryRead(ABP2_ADDRESS, data, sizeof(data));
         if (success)
             success = !(data[0] & 0x25u) && (data[0] & 0x40u);
-        if (success) {
-            const uint32_t raw = ((uint32_t)data[1] << 16) |
-                ((uint32_t)data[2] << 8) | data[3];
+        if (success)
+        {
+            const uint32_t raw = ((uint32_t)data[1] << 16) | ((uint32_t)data[2] << 8) | data[3];
             success = raw >= ABP2_OUTPUT_MIN && raw <= ABP2_OUTPUT_MAX;
-            if (success) {
+            if (success)
+            {
                 aggregate.taps[channel] = ((float)raw - ABP2_OUTPUT_MIN) *
-                    (ABP2_MAX_PA - ABP2_MIN_PA) /
-                    (ABP2_OUTPUT_MAX - ABP2_OUTPUT_MIN) + ABP2_MIN_PA;
+                                              (ABP2_MAX_PA - ABP2_MIN_PA) /
+                                              (ABP2_OUTPUT_MAX - ABP2_OUTPUT_MIN) +
+                                          ABP2_MIN_PA;
                 aggregate.tap_ticks[channel] = xTaskGetTickCount();
                 aggregate.taps_valid |= (uint16_t)(1u << channel);
             }
         }
-        if (!success) {
+        if (!success)
+        {
             aggregate.errors++;
             aggregate.taps[channel] = NAN;
             aggregate.taps_valid &= (uint16_t)~(1u << channel);
@@ -249,11 +308,13 @@ bool SensorLib_TapsStep(Sample *out)
         stage = 5;
         return false;
     case 5: /* Reset first mux before publishing anything. */
-        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1)) return false;
+        if (!I2CBus_TryWrite(MUX_0_ADDRESS, &off, 1))
+            return false;
         stage = 6;
         return false;
     case 6: /* Reset second mux before advancing. */
-        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1)) return false;
+        if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1))
+            return false;
         channel = (channel + 1u) % 16u;
         stage = 0;
         aggregate.tick = xTaskGetTickCount();

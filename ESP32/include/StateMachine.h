@@ -1,18 +1,55 @@
-/* Author: R.E. van Eekelen. Operational software, not a hardware safety function. */
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
+/* Author: R.E. van Eekelen. Operational software, not a hardware safety
+ * function. */
+///////////////////////////////////////////////////////////////////////////////
+// Include guard
 #pragma once
+
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <stdbool.h>
 #include <stdint.h>
-typedef enum { STATE_INIT, STATE_WAIT, STATE_READY, STATE_RUNNING, STATE_STOP, STATE_FAULT } SystemState_t;
-typedef enum { FAULT_NONE, FAULT_EMERGENCY_STOP, FAULT_SAFETY_FEEDBACK, FAULT_VFD,
-    FAULT_MODBUS, FAULT_SENSOR, FAULT_PI_CONNECTION, FAULT_CONTROL_OVERRUN,
-    FAULT_CLOCK_TIMEOUT, FAULT_INTERLOCK, FAULT_INTERNAL } FaultReason_t;
-typedef struct {
+
+///////////////////////////////////////////////////////////////////////////////
+// Public enumerations
+
+typedef enum
+{
+    STATE_INIT,
+    STATE_WAIT,
+    STATE_READY,
+    STATE_RUNNING,
+    STATE_STOP,
+    STATE_FAULT
+} SystemState_t;
+typedef enum
+{
+    FAULT_NONE,
+    FAULT_EMERGENCY_STOP,
+    FAULT_SAFETY_FEEDBACK,
+    FAULT_VFD,
+    FAULT_MODBUS,
+    FAULT_SENSOR,
+    FAULT_PI_CONNECTION,
+    FAULT_CONTROL_OVERRUN,
+    FAULT_CLOCK_TIMEOUT,
+    FAULT_INTERLOCK,
+    FAULT_INTERNAL
+} FaultReason_t;
+///////////////////////////////////////////////////////////////////////////////
+// Public data structures
+
+typedef struct
+{
     bool valid, commissioned, estop_pressed, relay_ok, stop_ok, outputs_ok;
     bool vfd_fault_available, vfd_fault, contactor_available, contactor_ok;
     bool start_pressed, reset_pressed;
     uint32_t tick_ms, raw_levels, start_sequence, reset_sequence, start_ms, reset_ms;
 } SafetySnapshot;
-typedef struct {
+typedef struct
+{
     uint32_t now_ms;
     SafetySnapshot safety;
     bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
@@ -23,7 +60,8 @@ typedef struct {
     FaultReason_t urgent_fault, timing_fault;
 } MachineInputs;
 
-typedef enum {
+typedef enum
+{
     WAIT_BLOCK_ESTOP_PRESSED = 1u << 0,
     WAIT_BLOCK_STOP_INPUT = 1u << 1,
     WAIT_BLOCK_SAFETY_INPUT_INVALID = 1u << 2,
@@ -48,13 +86,17 @@ typedef enum {
     WAIT_BLOCK_V20_OPERATION_INHIBITED = 1u << 21
 } WaitBlockingReason;
 
-typedef struct {
+typedef struct
+{
     SystemState_t state;
     SystemState_t fault_from;
     FaultReason_t fault, last_fault;
     uint32_t entered_ms, boot_ms, reset_until_ms, epoch, transition_count;
     bool reset_pending, reset_accepted, recovery_requested, permissive;
 } StateMachine;
+///////////////////////////////////////////////////////////////////////////////
+// Function declarations
+
 void StateMachine_Init(StateMachine *m, uint32_t now_ms);
 void StateMachine_Fault(StateMachine *m, FaultReason_t fault, uint32_t now_ms);
 void StateMachine_Step(StateMachine *m, const MachineInputs *in);

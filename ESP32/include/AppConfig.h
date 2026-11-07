@@ -1,7 +1,17 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /* Author: R.E. van Eekelen */
-// Configuration defaults; classifications identify settings requiring validation.
+///////////////////////////////////////////////////////////////////////////////
+// Include guard
 #pragma once
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
 #include "BoardConfig.h"
+
+// Configuration defaults; classifications identify settings requiring
+// validation.
 #ifdef __has_include
 #if __has_include("OtaLocalConfig.h")
 #include "OtaLocalConfig.h"
@@ -9,62 +19,74 @@
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 01. GENERAL SYSTEM CONFIGURATION
+// Public definitions
+
 ///////////////////////////////////////////////////////////////////////////////
 // System-wide operating mode. Physical GPIO and DO assignments belong in
 // MachinePins.h (included through BoardConfig.h), not in this file.
 
 #ifndef SIMULATION_MODE
-// [Fixed build flag] 0 uses hardware; 1 selects simulated operation for testing.
+// [Fixed build flag] 0 uses hardware; 1 selects simulated operation for
+// testing.
+
+///////////////////////////////////////////////////////////////////////////////
+// 01. GENERAL SYSTEM CONFIGURATION
 #define SIMULATION_MODE 0
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 02. FREERTOS & CONTROL TASK TIMING
-///////////////////////////////////////////////////////////////////////////////
-// Control clock and sensor phase timing; keep the period and frequency consistent.
-// Task priorities and task allocation are defined elsewhere and are unchanged.
+// Control clock and sensor phase timing; keep the period and frequency
+// consistent. Task priorities and task allocation are defined elsewhere and are
+// unchanged.
 
-// [Hz, adjustable safety-critical] Control-loop rate; changing it changes sampling and requires
-// controller and hardware timing validation.
+// [Hz, adjustable safety-critical] Control-loop rate; changing it changes
+// sampling and requires controller and hardware timing validation.
+///////////////////////////////////////////////////////////////////////////////
+// 02. FREERTOS & CONTROL TASK TIMING
 #define CONTROL_FREQUENCY_HZ 100
 
-// [Hz, fixed derived] Control clock follows CONTROL_FREQUENCY_HZ; keep them synchronized.
+// [Hz, fixed derived] Control clock follows CONTROL_FREQUENCY_HZ; keep them
+// synchronized.
 #define CONTROL_CLOCK_HZ CONTROL_FREQUENCY_HZ
 
-// [s, fixed derived] Controller sample interval; a higher clock rate reduces this interval.
+// [s, fixed derived] Controller sample interval; a higher clock rate reduces
+// this interval.
 #define CONTROL_CLOCK_PERIOD_S (1.0f / CONTROL_CLOCK_HZ)
 
 // [us, fixed] Control deadline period; must agree with CONTROL_FREQUENCY_HZ.
 #define CONTROL_PERIOD_US 10000u
 
-// [us, fixed derived] Half-period clock phase; sensor and control are notified alternately.
+// [us, fixed derived] Half-period clock phase; sensor and control are notified
+// alternately.
 #define SENSOR_PHASE_US 5000u
 
-// [ms, safety-critical] Maximum wait for the control clock; increasing delays clock-failure
-// detection.
+// [ms, safety-critical] Maximum wait for the control clock; increasing delays
+// clock-failure detection.
 #define CONTROL_CLOCK_TIMEOUT_MS 50
 
-// [ticks, adjustable safety-critical] Consecutive missed 100 Hz clock ticks tolerated before
-// latching CONTROL_OVERRUN. 0 is strict; 1 tolerates one isolated missed tick.
+// [ticks, adjustable safety-critical] Consecutive missed 100 Hz clock ticks
+// tolerated before latching CONTROL_OVERRUN. 0 is strict; 1 tolerates one
+// isolated missed tick.
 #ifndef CONTROL_CLOCK_MISSED_TICKS_ALLOWED
 #define CONTROL_CLOCK_MISSED_TICKS_ALLOWED 1u
 #endif
 
-// [us, fixed] V20 service execution budget; increasing leaves less time within the control
-// deadline.
+// [us, fixed] V20 service execution budget; increasing leaves less time within
+// the control deadline.
 #define V20_SERVICE_BUDGET_US 1000u
 
 ///////////////////////////////////////////////////////////////////////////////
-// 03. SIEMENS V20 MODBUS COMMUNICATION
-///////////////////////////////////////////////////////////////////////////////
-// RTU framing, service cadence and drive verification. Match settings to the V20.
-// Retained legacy timing constants are documented even where no source uses them.
+// RTU framing, service cadence and drive verification. Match settings to the
+// V20. Retained legacy timing constants are documented even where no source
+// uses them.
 
 // [Fixed] RTU slave ID; changing it targets a different drive address.
+///////////////////////////////////////////////////////////////////////////////
+// 03. SIEMENS V20 MODBUS COMMUNICATION
 #define MODBUS_SLAVE_ADDRESS 1
 
-// [bit/s, fixed] UART baud rate; a mismatch prevents communication with the V20.
+// [bit/s, fixed] UART baud rate; a mismatch prevents communication with the
+// V20.
 #define MODBUS_BAUD 115200
 
 // [Fixed] UART parity; must match the drive or frames will be rejected.
@@ -73,45 +95,53 @@
 // [Fixed] UART stop-bit format; must match the drive framing.
 #define MODBUS_STOP_BITS UART_STOP_BITS_1
 
-// [ms, adjustable] Default response wait; increasing tolerates slower replies but delays
-// timeout detection.
+// [ms, adjustable] Default response wait; increasing tolerates slower replies
+// but delays timeout detection.
 #define MODBUS_RESPONSE_TIMEOUT_MS 80
 
-// [ms, safety-critical] Maximum status age; increasing permits older drive feedback.
+// [ms, safety-critical] Maximum status age; increasing permits older drive
+// feedback.
 #define MOTOR_STATUS_TIMEOUT_MS 600
 
-// [us, fixed legacy] Retained status-period setting; currently unused by production sources.
+// [us, fixed legacy] Retained status-period setting; currently unused by
+// production sources.
 #define VFD_STATUS_PERIOD_US 100000u
 
-// [us, fixed] RTU inter-frame silence; reducing risks frame-boundary violations.
+// [us, fixed] RTU inter-frame silence; reducing risks frame-boundary
+// violations.
 #define MODBUS_SILENCE_US 1750u
 
-// [ms, fixed legacy] Retained watchdog setting; currently unused by production sources.
+// [ms, fixed legacy] Retained watchdog setting; currently unused by production
+// sources.
 #define MODBUS_WATCHDOG_MS 500u
 
 #ifndef V20_STATUS_PERIOD_MS
-// [ms, adjustable] Status polling interval; reducing increases bus traffic and feedback freshness.
+// [ms, adjustable] Status polling interval; reducing increases bus traffic and
+// feedback freshness.
 #define V20_STATUS_PERIOD_MS 100
 #endif
 
 #ifndef V20_COMMAND_PERIOD_MS
-// [ms, adjustable] Running command interval; reducing increases command traffic.
+// [ms, adjustable] Running command interval; reducing increases command
+// traffic.
 #define V20_COMMAND_PERIOD_MS 10
 #endif
 
 #ifndef V20_STOP_HEARTBEAT_MS
-// [ms, safety-critical] Stopped command heartbeat interval; increasing reduces watchdog margin.
+// [ms, safety-critical] Stopped command heartbeat interval; increasing reduces
+// watchdog margin.
 #define V20_STOP_HEARTBEAT_MS 150
 #endif
 
 #ifndef V20_EXPECTED_WATCHDOG_PARAMETER_MS
-// [ms, safety-critical] Expected P2014[0] parameter value; this is not assumed to be holding
-// register 40001.
+// [ms, safety-critical] Expected P2014[0] parameter value; this is not assumed
+// to be holding register 40001.
 #define V20_EXPECTED_WATCHDOG_PARAMETER_MS 500u
 #endif
 
 #ifndef V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED
-// [boolean, safety-critical] Set only after verifying holding register 40001 maps to P2014[0].
+// [boolean, safety-critical] Set only after verifying holding register 40001
+// maps to P2014[0].
 #define V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED 0
 #endif
 
@@ -120,45 +150,46 @@
 #endif
 
 #ifndef V20_EXPECTED_REFERENCE_CENTIHZ
-// [0.01 Hz, fixed] Expected drive reference register value; mismatch fails verification (50 Hz
-// required).
+// [0.01 Hz, fixed] Expected drive reference register value; mismatch fails
+// verification (50 Hz required).
 #define V20_EXPECTED_REFERENCE_CENTIHZ 5000
 #endif
 
 #ifndef V20_RESPONSE_TIMEOUT_MS
-// [ms, adjustable] Driver response timeout, defaults to the RTU timeout; increasing delays
-// failed-reply detection.
+// [ms, adjustable] Driver response timeout, defaults to the RTU timeout;
+// increasing delays failed-reply detection.
 #define V20_RESPONSE_TIMEOUT_MS MODBUS_RESPONSE_TIMEOUT_MS
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// 04. MOTOR & FAN SPECIFICATIONS
 ///////////////////////////////////////////////////////////////////////////////
 // Installed fan: Ruck EL 710 D4 02, article 146531.
 // Earlier softstarter testing measured approximately 40 m/s at 50 Hz; this is
 // not a guaranteed operating point. See section 07 for the preliminary model.
 // No additional nameplate values are assumed here.
 
-// [Hz, fixed] Reference for Modbus frequency scaling; must match the V20 reference or demands
-// scale incorrectly.
+// [Hz, fixed] Reference for Modbus frequency scaling; must match the V20
+// reference or demands scale incorrectly.
+///////////////////////////////////////////////////////////////////////////////
+// 04. MOTOR & FAN SPECIFICATIONS
 #define V20_REFERENCE_HZ 50.0f
 
-///////////////////////////////////////////////////////////////////////////////
-// 05. MANUAL FREQUENCY CONTROL
 ///////////////////////////////////////////////////////////////////////////////
 // MANUAL commands motor frequency directly through the V20. Its fifth-order
 // SetpointCurve limits frequency derivatives independently of the automatic
 // airspeed curve; it does not regulate measured airspeed.
 
-// [Hz, safety-critical] Maximum manual frequency; raising it requires validated motor and fan
-// operating limits.
+// [Hz, safety-critical] Maximum manual frequency; raising it requires validated
+// motor and fan operating limits.
+///////////////////////////////////////////////////////////////////////////////
+// 05. MANUAL FREQUENCY CONTROL
 #define MANUAL_MAX_HZ 50.0f
 
-// [Hz/s, adjustable] Maximum first derivative of frequency; lowering slows manual transitions.
+// [Hz/s, adjustable] Maximum first derivative of frequency; lowering slows
+// manual transitions.
 #define MANUAL_MAX_SLEW_HZ_PER_S 2.0f
 
-// [Hz/s^2, adjustable] Maximum second derivative of frequency; lowering smooths changes in
-// frequency slope.
+// [Hz/s^2, adjustable] Maximum second derivative of frequency; lowering smooths
+// changes in frequency slope.
 #define MANUAL_MAX_ACCEL_HZ_PER_S2 0.5f
 
 // [Hz/s^3, adjustable] Maximum third derivative of frequency; lowering further
@@ -166,44 +197,44 @@
 #define MANUAL_MAX_JERK_HZ_PER_S3 0.5f
 
 ///////////////////////////////////////////////////////////////////////////////
-// 06. AUTOMATIC CONTROLLER SELECTION
+// Compile-time selection between the validated torque PI path and the frequency
+// PI path. The user only changes CONTROL_TYPE between the two values below;
+// runtime mode selection remains separate and is not affected by this choice.
 ///////////////////////////////////////////////////////////////////////////////
-// Compile-time selection between the validated torque PI path and the frequency PI path.
-// The user only changes CONTROL_TYPE between the two values below; runtime mode selection
-// remains separate and is not affected by this choice.
-#define CONTROL_TORQUE_PI      0
-#define CONTROL_FREQUENCY_PI   1
+// 06. AUTOMATIC CONTROLLER SELECTION
+#define CONTROL_TORQUE_PI 0
+#define CONTROL_FREQUENCY_PI 1
 
 #ifndef CONTROL_TYPE
 #define CONTROL_TYPE CONTROL_TORQUE_PI
 #endif
 
-#if CONTROL_TYPE != CONTROL_TORQUE_PI && \
-    CONTROL_TYPE != CONTROL_FREQUENCY_PI
+#if CONTROL_TYPE != CONTROL_TORQUE_PI && CONTROL_TYPE != CONTROL_FREQUENCY_PI
 #error "Invalid automatic controller type"
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 07. AUTOMATIC AIRSPEED TORQUE PID
-///////////////////////////////////////////////////////////////////////////////
 // AUTO shapes an airspeed setpoint in m/s with a fifth-order SetpointCurve,
-// then uses the torque PID and inverse motor model to determine V20 Hz. These derivative
-// limits apply to airspeed, not to the manual frequency trajectory.
+// then uses the torque PID and inverse motor model to determine V20 Hz. These
+// derivative limits apply to airspeed, not to the manual frequency trajectory.
 
 // [Compile-time] Select the feedback action used by AUTO torque control.
 // NONE keeps model-based acceleration and fan-load feedforward, but disables
 // proportional/integral/derivative feedback. MANUAL Hz mode is unaffected.
 // This selection NEVER overrides motor-model or safety commissioning gates.
+///////////////////////////////////////////////////////////////////////////////
+// 07. AUTOMATIC AIRSPEED TORQUE PID
 #define CONTROLLER_NONE 0
-#define CONTROLLER_P    1
-#define CONTROLLER_PI   2
-#define CONTROLLER_PID  3
+#define CONTROLLER_P 1
+#define CONTROLLER_PI 2
+#define CONTROLLER_PID 3
 #ifndef CONTROLLER_SETTING
 #define CONTROLLER_SETTING CONTROLLER_PI
 #endif
-#if CONTROLLER_SETTING != CONTROLLER_NONE && CONTROLLER_SETTING != CONTROLLER_P && \
+#if CONTROLLER_SETTING != CONTROLLER_NONE && CONTROLLER_SETTING != CONTROLLER_P &&                 \
     CONTROLLER_SETTING != CONTROLLER_PI && CONTROLLER_SETTING != CONTROLLER_PID
-#error "Invalid CONTROLLER_SETTING: use CONTROLLER_NONE, CONTROLLER_P, CONTROLLER_PI or CONTROLLER_PID"
+#error                                                                                             \
+    "Invalid CONTROLLER_SETTING: use CONTROLLER_NONE, CONTROLLER_P, CONTROLLER_PI or CONTROLLER_PID"
 #endif
 
 // [Hz/(m/s), adjustable] Frequency PI tuning for CONTROL_FREQUENCY_PI.
@@ -215,37 +246,39 @@
 #define FREQUENCY_PI_KI_HZ_PER_MPS_S 0.35f
 #endif
 
-// [m/s, safety-critical] Maximum requested airspeed; raising it requires validated tunnel
-// operating limits.
+// [m/s, safety-critical] Maximum requested airspeed; raising it requires
+// validated tunnel operating limits.
 #define MAX_SETPOINT 40.0f
 
-// [%, safety-critical] Controller output ceiling used when applying PID settings; raising
-// permits higher motor demand.
+// [%, safety-critical] Controller output ceiling used when applying PID
+// settings; raising permits higher motor demand.
 #define MAX_OUTPUT 100.0f
 
-// [s, adjustable] Requested minimum airspeed transition duration; derivative limits may extend it.
+// [s, adjustable] Requested minimum airspeed transition duration; derivative
+// limits may extend it.
 #define SETPOINT_TRANSITION_TIME_S 5.0f
 
-// [m/s^2, adjustable] Maximum airspeed slope (dv/dt); lowering slows automatic setpoint changes.
+// [m/s^2, adjustable] Maximum airspeed slope (dv/dt); lowering slows automatic
+// setpoint changes.
 #define SETPOINT_MAX_ACCELERATION_MPS2 2.0f
 
-// [m/s^3, adjustable] Maximum airspeed second derivative; lowering smooths changes in airspeed
-// slope.
+// [m/s^3, adjustable] Maximum airspeed second derivative; lowering smooths
+// changes in airspeed slope.
 #define SETPOINT_MAX_JERK_MPS3 2.0f
 
-///////////////////////////////////////////////////////////////////////////////
-// 07. TORQUE PID & FAN/MOTOR MODEL
 ///////////////////////////////////////////////////////////////////////////////
 // One-mass torque PID. Physical inverse-model actuation must remain disabled
 // until inertia, motor rating, slip model and V20 response are verified.
 
-// [m/s, measured reference] Approximately 40 m/s in earlier softstarter testing; not guaranteed
-// at 50 Hz. Sets model gain.
-#define LUCHTSNELHEID_NOM    (40.0f)
+// [m/s, measured reference] Approximately 40 m/s in earlier softstarter
+// testing; not guaranteed at 50 Hz. Sets model gain.
+///////////////////////////////////////////////////////////////////////////////
+// 07. TORQUE PID & FAN/MOTOR MODEL
+#define LUCHTSNELHEID_NOM (40.0f)
 
-// [Hz, preliminary model reference] Frequency corresponding to nominal airspeed and 100%
-// output; changes model/scaling gain.
-#define FREQUENTIE_NOM      (50.0f)
+// [Hz, preliminary model reference] Frequency corresponding to nominal airspeed
+// and 100% output; changes model/scaling gain.
+#define FREQUENTIE_NOM (50.0f)
 
 // 07A. THEORETICAL ONE-MASS CONTROLLER DESIGN (NOT V20 GAINS)
 // Verified rotating inertias for RUCK EL 710 D4 02, article 146531.
@@ -275,16 +308,16 @@
 #define MOTOR_MODEL_RATED_POWER_W (4000.0f)
 #define MOTOR_MODEL_RATED_RPM (1450.0f)
 // [Nm/(rad/s)] Calculated from the rated slip and rated shaft torque.
-#define MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S \
- ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) / \
- ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_FREQUENCY_HZ / MOTOR_MODEL_POLE_PAIRS) - \
-  (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
+#define MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S                                                         \
+    ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) /       \
+     ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_FREQUENCY_HZ / MOTOR_MODEL_POLE_PAIRS) -          \
+      (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
 // [Nm] Simplified fan load T_load = Kload*omega*abs(omega).
 // Derived only from rated motor torque and speed; operating-point assumption.
-#define MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2 \
- ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) / \
- ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f) * \
-  (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
+#define MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2                                                         \
+    ((MOTOR_MODEL_RATED_POWER_W / (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)) /       \
+     ((2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f) *                                    \
+      (2.0f * 3.14159265359f * MOTOR_MODEL_RATED_RPM / 60.0f)))
 // Physical AUTO gate. Keep 0 until motor/V20 are experimentally validated.
 #ifndef MOTOR_MODEL_TORQUE_TO_V20_ENABLED
 #define MOTOR_MODEL_TORQUE_TO_V20_ENABLED (0)
@@ -293,160 +326,177 @@
 #define DESIGN_MIN_PHASE_MARGIN_DEG (45.0f)
 
 ///////////////////////////////////////////////////////////////////////////////
-// 08. PITOT SENSOR
-///////////////////////////////////////////////////////////////////////////////
 // Pressure conversion, averaging and zero calibration for the upstream pitot.
-// Pressure range must match the installed sensor; filtering adds measurement lag.
+// Pressure range must match the installed sensor; filtering adds measurement
+// lag.
 
-// [Hz, fixed legacy] Nominal sensor reporting rate used to derive SENSOR_PERIOD_MS; acquisition
-// uses the control clock.
+// [Hz, fixed legacy] Nominal sensor reporting rate used to derive
+// SENSOR_PERIOD_MS; acquisition uses the control clock.
+///////////////////////////////////////////////////////////////////////////////
+// 08. PITOT SENSOR
 #define SENSOR_FREQUENCY_HZ 20
 
-// [ms, fixed derived legacy] Nominal reporting period; currently unused by production sources.
+// [ms, fixed derived legacy] Nominal reporting period; currently unused by
+// production sources.
 #define SENSOR_PERIOD_MS (1000 / SENSOR_FREQUENCY_HZ)
 
-// [samples, adjustable] Raw samples per averaging window; increasing reduces noise and slows
-// measurement updates.
+// [samples, adjustable] Raw samples per averaging window; increasing reduces
+// noise and slows measurement updates.
 #define PITOT_AVERAGE_SAMPLES 5
 
-// [ms, safety-critical] Maximum pitot sample age; increasing allows older airspeed feedback.
+// [ms, safety-critical] Maximum pitot sample age; increasing allows older
+// airspeed feedback.
 #define SENSOR_TIMEOUT_MS 150
 
-// [7-bit I2C address, fixed] Upstream pitot device address; changing selects a different device.
+// [7-bit I2C address, fixed] Upstream pitot device address; changing selects a
+// different device.
 #define PITOT_ADDRESS 0x28
 
-// [kg/m^3, preliminary engineering assumption] Density for pressure-to-speed conversion; higher
-// density gives lower calculated speed.
+// [kg/m^3, preliminary engineering assumption] Density for pressure-to-speed
+// conversion; higher density gives lower calculated speed.
 #define AIR_DENSITY 1.225f
 
-// [Pa, fixed] Sensor lower pressure endpoint; changing alters calibrated pressure conversion.
+// [Pa, fixed] Sensor lower pressure endpoint; changing alters calibrated
+// pressure conversion.
 #define PITOT_MIN_PA (-6894.757f)
 
-// [Pa, fixed] Sensor upper pressure endpoint; changing alters calibrated pressure conversion.
+// [Pa, fixed] Sensor upper pressure endpoint; changing alters calibrated
+// pressure conversion.
 #define PITOT_MAX_PA 6894.757f
 
-// [samples, adjustable] Samples accumulated for zero calibration; increasing extends
-// calibration averaging time.
+// [samples, adjustable] Samples accumulated for zero calibration; increasing
+// extends calibration averaging time.
 #define PITOT_ZERO_SAMPLES 200
 
-// [Hz, adjustable] Default low-pass cutoff; increasing responds faster but passes more noise.
+// [Hz, adjustable] Default low-pass cutoff; increasing responds faster but
+// passes more noise.
 #define PITOT_FILTER_HZ 1.0f
 
-// [Pa, adjustable] Near-zero pressure deadband; increasing suppresses more small pressure readings.
+// [Pa, adjustable] Near-zero pressure deadband; increasing suppresses more
+// small pressure readings.
 #define PITOT_DEADBAND_PA 5.0f
 
-///////////////////////////////////////////////////////////////////////////////
-// 09. PRESSURE TAP SENSORS
 ///////////////////////////////////////////////////////////////////////////////
 // Optional ABP2 sensors behind TCA9548A multiplexers. Enabling requires the
 // ordered sensor range/output calibration and a non-conflicting I2C address.
 
 #ifndef PRESSURE_TAPS_ENABLED
-// [Fixed feature flag] 0 disables tap acquisition; 1 enables it after address/calibration
-// validation.
+// [Fixed feature flag] 0 disables tap acquisition; 1 enables it after
+// address/calibration validation.
+///////////////////////////////////////////////////////////////////////////////
+// 09. PRESSURE TAP SENSORS
 #define PRESSURE_TAPS_ENABLED 0
 #endif
 
-// [ms, adjustable] Maximum pressure-tap data age; increasing tolerates older tap readings.
+// [ms, adjustable] Maximum pressure-tap data age; increasing tolerates older
+// tap readings.
 #define TAP_TIMEOUT_MS 2000
 
-// [7-bit I2C address, fixed] First multiplexer address; must match wiring and differ from
-// MUX_1_ADDRESS.
+// [7-bit I2C address, fixed] First multiplexer address; must match wiring and
+// differ from MUX_1_ADDRESS.
 #define MUX_0_ADDRESS 0x70
 
-// [7-bit I2C address, fixed] Second multiplexer address; must match wiring and differ from
-// MUX_0_ADDRESS.
+// [7-bit I2C address, fixed] Second multiplexer address; must match wiring and
+// differ from MUX_0_ADDRESS.
 #define MUX_1_ADDRESS 0x71
 
 #ifndef ABP2_ADDRESS
-// [7-bit I2C address, fixed] Tap sensor address; enabling taps requires an address distinct
-// from the upstream pitot.
+// [7-bit I2C address, fixed] Tap sensor address; enabling taps requires an
+// address distinct from the upstream pitot.
 #define ABP2_ADDRESS 0x28
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 10. I2C COMMUNICATION
-///////////////////////////////////////////////////////////////////////////////
 // Shared bus speed, transaction timeout and onboard device addresses.
 // Physical SDA/SCL pin assignments remain in MachinePins.h.
 
-// [Hz, fixed] I2C bus clock; increasing shortens transfers but requires all devices/wiring to
-// support it.
+// [Hz, fixed] I2C bus clock; increasing shortens transfers but requires all
+// devices/wiring to support it.
+///////////////////////////////////////////////////////////////////////////////
+// 10. I2C COMMUNICATION
 #define SENSOR_I2C_HZ 100000
 
-// [ms, adjustable] Bus transaction timeout; increasing can block longer on an unresponsive device.
+// [ms, adjustable] Bus transaction timeout; increasing can block longer on an
+// unresponsive device.
 #define I2C_TIMEOUT_MS 10
 
-// [7-bit I2C address, fixed] Output expander address; changing selects a different bus device.
+// [7-bit I2C address, fixed] Output expander address; changing selects a
+// different bus device.
 #define BOARD_DO_I2C_ADDRESS 0x20
 
-// [7-bit I2C address, fixed] RTC device address; changing must match the installed hardware.
+// [7-bit I2C address, fixed] RTC device address; changing must match the
+// installed hardware.
 #define BOARD_RTC_I2C_ADDRESS 0x51
 
-///////////////////////////////////////////////////////////////////////////////
-// 11. PHYSICAL INPUT POLARITIES
 ///////////////////////////////////////////////////////////////////////////////
 // Safety-critical commissioning values: -1 means unknown/unverified, 0 means
 // active low, and 1 means active high. Physically measure each input before
 // setting its level. Commissioning flags are grouped in section 13.
 
 #ifndef SAFETY_RELAY_OK_ACTIVE_LEVEL
-// [Logic level, safety-critical] Provisional observed active-low healthy safety feedback.
+// [Logic level, safety-critical] Provisional observed active-low healthy safety
+// feedback.
+///////////////////////////////////////////////////////////////////////////////
+// 11. PHYSICAL INPUT POLARITIES
 #define SAFETY_RELAY_OK_ACTIVE_LEVEL 0
 #endif
 
 #ifndef ESTOP_PRESSED_ACTIVE_LEVEL
-// [Logic level, safety-critical] NC E-stop signal loss indicates pressed (GPIO high).
+// [Logic level, safety-critical] NC E-stop signal loss indicates pressed (GPIO
+// high).
 #define ESTOP_PRESSED_ACTIVE_LEVEL 1
 #endif
 
 #ifndef STOP_BUTTON_OK_ACTIVE_LEVEL
-// [Logic level, safety-critical] Provisional observed active-low healthy stop circuit.
+// [Logic level, safety-critical] Provisional observed active-low healthy stop
+// circuit.
 #define STOP_BUTTON_OK_ACTIVE_LEVEL 0
 #endif
 
 #ifndef START_BUTTON_ACTIVE_LEVEL
-// [Logic level, safety-critical] Provisional observed active-low physical START.
+// [Logic level, safety-critical] Provisional observed active-low physical
+// START.
 #define START_BUTTON_ACTIVE_LEVEL 0
 #endif
 
 #ifndef RESET_BUTTON_ACTIVE_LEVEL
-// [Logic level, safety-critical] Provisional observed active-low physical RESET.
+// [Logic level, safety-critical] Provisional observed active-low physical
+// RESET.
 #define RESET_BUTTON_ACTIVE_LEVEL 0
 #endif
 
 #ifndef VFD_FAULT_DI_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating optional drive fault; verify before enabling
-// the fitted flag.
+// [Logic level, safety-critical] Level indicating optional drive fault; verify
+// before enabling the fitted flag.
 #define VFD_FAULT_DI_ACTIVE_LEVEL (-1)
 #endif
 
 #ifndef CONTACTOR_OK_ACTIVE_LEVEL
-// [Logic level, safety-critical] Level indicating optional contactor feedback is healthy;
-// verify before enabling its fitted flag.
+// [Logic level, safety-critical] Level indicating optional contactor feedback
+// is healthy; verify before enabling its fitted flag.
 #define CONTACTOR_OK_ACTIVE_LEVEL (-1)
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 12. OUTPUT CONFIGURATION
-///////////////////////////////////////////////////////////////////////////////
-// Operational VFD-enable relay output polarity; physical DO bit is in MachinePins.h.
-// Software GPIO control is not a certified emergency-stop function.
+// Operational VFD-enable relay output polarity; physical DO bit is in
+// MachinePins.h. Software GPIO control is not a certified emergency-stop
+// function.
 
 #ifndef BOARD_DO_ACTIVE_LEVEL
-// [Logic level, hardware-specific] The board's DO indicators and stack lights were
-// observed on with an expander image of 0x00; keep its outputs inactive at logic high.
+// [Logic level, hardware-specific] The board's DO indicators and stack lights
+// were observed on with an expander image of 0x00; keep its outputs inactive at
+// logic high.
+///////////////////////////////////////////////////////////////////////////////
+// 12. OUTPUT CONFIGURATION
 #define BOARD_DO_ACTIVE_LEVEL 0
 #endif
 
 #ifndef VFD_ENABLE_ACTIVE_LEVEL
-// [Logic level, safety-critical] Expander level that activates the DO1/11K3 relay.
-// Defaults to the board output polarity; inhibited until commissioning.
+// [Logic level, safety-critical] Expander level that activates the DO1/11K3
+// relay. Defaults to the board output polarity; inhibited until commissioning.
 #define VFD_ENABLE_ACTIVE_LEVEL BOARD_DO_ACTIVE_LEVEL
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// 13. SAFETY & COMMISSIONING
 ///////////////////////////////////////////////////////////////////////////////
 // A commissioning flag of 0 means NOT commissioned. Never enable these flags
 // automatically. Verify real relay/input polarity, OFF2 hardware path and V20
@@ -454,86 +504,100 @@
 // must be measured (section 11); software does not replace a certified E-stop.
 
 #ifndef SAFETY_IO_COMMISSIONED
-// [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1 permits operation
-// only after physical safety I/O verification.
+// [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1
+// permits operation only after physical safety I/O verification.
+///////////////////////////////////////////////////////////////////////////////
+// 13. SAFETY & COMMISSIONING
 #define SAFETY_IO_COMMISSIONED 0
 #endif
 
 #ifndef V20_RUN_COMMISSIONED
-// [Safety-critical flag] 0 suppresses V20 control writes and blocks READY; 1 permits the
-// non-running OFF1 heartbeat, while RUN still requires commissioning and physical START.
+// [Safety-critical flag] 0 suppresses V20 control writes and blocks READY; 1
+// permits the non-running OFF1 heartbeat, while RUN still requires
+// commissioning and physical START.
 #define V20_RUN_COMMISSIONED 0
 #endif
 
 #ifndef VFD_FAULT_DI_FITTED
-// [Safety-critical feature flag] 0 omits optional fault input; 1 uses it and requires a
-// verified polarity.
+// [Safety-critical feature flag] 0 omits optional fault input; 1 uses it and
+// requires a verified polarity.
 #define VFD_FAULT_DI_FITTED 0
 #endif
 
 #ifndef CONTACTOR_FEEDBACK_FITTED
-// [Safety-critical feature flag] 0 omits optional feedback; 1 uses independent contactor
-// feedback with verified polarity.
+// [Safety-critical feature flag] 0 omits optional feedback; 1 uses independent
+// contactor feedback with verified polarity.
 #define CONTACTOR_FEEDBACK_FITTED 0
 #endif
 
-// [ms, safety-critical] Maximum input snapshot age; increasing delays stale-input fault detection.
+// [ms, safety-critical] Maximum input snapshot age; increasing delays
+// stale-input fault detection.
 #define INPUT_TIMEOUT_MS 100u
 
-// [ms, adjustable] WAIT diagnostics are emitted on entry/change and at this interval.
+// [ms, adjustable] WAIT diagnostics are emitted on entry/change and at this
+// interval.
 #define WAIT_DIAGNOSTICS_INTERVAL_MS 2000u
 
-// [ms, adjustable] Required stable button time; increasing rejects longer glitches but delays
-// button response.
+// [ms, adjustable] Required stable button time; increasing rejects longer
+// glitches but delays button response.
 #define BUTTON_DEBOUNCE_MS 30u
 
-// [ms, safety-critical] Allowed feedback recovery window after reset; increasing waits longer
-// before failure.
+// [ms, safety-critical] Allowed feedback recovery window after reset;
+// increasing waits longer before failure.
 #define RESET_FEEDBACK_WINDOW_MS 5000u
 
-// [ms, safety-critical] Initialization timeout; increasing allows a longer startup before faulting.
+// [ms, safety-critical] Initialization timeout; increasing allows a longer
+// startup before faulting.
 #define INIT_TIMEOUT_MS 15000u
 
-// [ms, safety-critical] Maximum normal-stop wait; increasing delays stop-timeout faulting.
+// [ms, safety-critical] Maximum normal-stop wait; increasing delays
+// stop-timeout faulting.
 #define NORMAL_STOP_TIMEOUT_MS 30000u
 
-// [Hz, safety-critical] Frequency threshold for confirmed stop; increasing accepts more
-// residual rotation.
+// [Hz, safety-critical] Frequency threshold for confirmed stop; increasing
+// accepts more residual rotation.
 #define STOP_CONFIRM_HZ 0.1f
 
 ///////////////////////////////////////////////////////////////////////////////
-// 14. RASPBERRY PI COMMUNICATION
-///////////////////////////////////////////////////////////////////////////////
 // HMI transport, telemetry and heartbeat policy. Remote START is prohibited;
-// starting requires the physical button. The prohibition check is in section 18.
+// starting requires the physical button. The prohibition check is in
+// section 18.
 
-// [TCP port, fixed] HMI listening port; changing requires matching Raspberry Pi configuration.
+// [TCP port, fixed] HMI listening port; changing requires matching Raspberry Pi
+// configuration.
+///////////////////////////////////////////////////////////////////////////////
+// 14. RASPBERRY PI COMMUNICATION
 #define PI_TCP_PORT 5000
 
-// [ms, safety-critical] Pi heartbeat freshness limit; increasing delays communication-loss
-// detection.
+// [ms, safety-critical] Pi heartbeat freshness limit; increasing delays
+// communication-loss detection.
 #define COMMAND_TIMEOUT_MS 2000
 
-// [ms, adjustable] Telemetry transmission interval; lowering sends updates more frequently.
+// [ms, adjustable] Telemetry transmission interval; lowering sends updates more
+// frequently.
 #define TELEMETRY_PERIOD_MS 20
 
 #ifndef PI_HEARTBEAT_REQUIRED
-// [Safety-critical flag] 1 requires a fresh Pi heartbeat; 0 removes that communication permissive.
+// [Safety-critical flag] 1 requires a fresh Pi heartbeat; 0 removes that
+// communication permissive.
 #define PI_HEARTBEAT_REQUIRED 1
 #endif
 
 #ifndef ALLOW_REMOTE_START
-// [Safety-critical fixed flag] Must remain 0; any nonzero override is rejected at compile time.
+// [Safety-critical fixed flag] Must remain 0; any nonzero override is rejected
+// at compile time.
 #define ALLOW_REMOTE_START 0
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 15. ETHERNET CONFIGURATION
-///////////////////////////////////////////////////////////////////////////////
-// Addressing for the wired HMI link; match static settings to the local network.
+// Addressing for the wired HMI link; match static settings to the local
+// network.
 
 #ifndef ETH_STATIC_IP_ENABLED
-// [Network configuration] The isolated Raspberry Pi Ethernet link uses static addressing.
+// [Network configuration] The isolated Raspberry Pi Ethernet link uses static
+// addressing.
+///////////////////////////////////////////////////////////////////////////////
+// 15. ETHERNET CONFIGURATION
 #define ETH_STATIC_IP_ENABLED 1
 #endif
 
@@ -548,80 +612,84 @@
 #endif
 
 #ifndef ETH_STATIC_GATEWAY
-// [IPv4 address] No gateway is needed on the isolated Raspberry Pi Ethernet link.
+// [IPv4 address] No gateway is needed on the isolated Raspberry Pi Ethernet
+// link.
 #define ETH_STATIC_GATEWAY "0.0.0.0"
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
-// 16. STATUS LED CONFIGURATION
-///////////////////////////////////////////////////////////////////////////////
 // External lamps use proposed wiring and remain disabled until verified.
-// External indicator assignments are descriptive only; status remains on onboard RGB.
+// External indicator assignments are descriptive only; status remains on
+// onboard RGB.
 
 #ifndef EXTERNAL_STATUS_LEDS_ENABLED
-// [Commissioning feature flag] 0 disables external lamps; set 1 only after physically verifying
-// proposed wiring.
+// [Commissioning feature flag] 0 disables external lamps; set 1 only after
+// physically verifying proposed wiring.
+///////////////////////////////////////////////////////////////////////////////
+// 16. STATUS LED CONFIGURATION
 #define EXTERNAL_STATUS_LEDS_ENABLED 0
 #endif
 
 #ifndef STATUS_LED_ACTIVE_LEVEL
-// [Logic level, fixed after verification] 1 energizes lamps with high outputs; 0 inverts lamp
-// polarity.
+// [Logic level, fixed after verification] 1 energizes lamps with high outputs;
+// 0 inverts lamp polarity.
 #define STATUS_LED_ACTIVE_LEVEL 1
 #endif
 
 // [ms, adjustable] Full status blink cycle; increasing slows blinking.
 #define STATUS_LED_BLINK_PERIOD_MS 1000u
 
-// [ms, adjustable] Indicator refresh interval; increasing delays visible status changes.
+// [ms, adjustable] Indicator refresh interval; increasing delays visible status
+// changes.
 #define STATUS_LED_UPDATE_PERIOD_MS 100u
 
-// [ms, adjustable] Onboard RGB transmission wait; increasing allows longer blocking on
-// transmission.
+// [ms, adjustable] Onboard RGB transmission wait; increasing allows longer
+// blocking on transmission.
 #define STATUS_RGB_TX_TIMEOUT_MS 25u
 
 ///////////////////////////////////////////////////////////////////////////////
-// 17. OTA FIRMWARE UPDATES
-///////////////////////////////////////////////////////////////////////////////
 // OtaLocalConfig.h is optionally included BEFORE all defaults to preserve
-// existing override ordering; keep secrets outside Git. OTA requires two verified
-// physical maintenance/isolation inputs plus independent commissioned feedback.
-// The GPIO defaults below are retained unassigned sentinels, not pin assignments.
-// Keep physical assignments in MachinePins.h; never derive these inputs in software.
+// existing override ordering; keep secrets outside Git. OTA requires two
+// verified physical maintenance/isolation inputs plus independent commissioned
+// feedback. The GPIO defaults below are retained unassigned sentinels, not pin
+// assignments. Keep physical assignments in MachinePins.h; never derive these
+// inputs in software.
 
 #ifndef OTA_MAINTENANCE_ENABLED
-// [Safety-critical commissioning flag] 0 disables OTA; 1 permits maintenance OTA only after all
-// physical prerequisites are verified.
+// [Safety-critical commissioning flag] 0 disables OTA; 1 permits maintenance
+// OTA only after all physical prerequisites are verified.
+///////////////////////////////////////////////////////////////////////////////
+// 17. OTA FIRMWARE UPDATES
 #define OTA_MAINTENANCE_ENABLED 0
 #endif
 
 #ifndef OTA_MAINTENANCE_GPIO
-// [GPIO sentinel, safety-critical] -1 means unassigned; a verified physical input is required
-// to enable OTA.
+// [GPIO sentinel, safety-critical] -1 means unassigned; a verified physical
+// input is required to enable OTA.
 #define OTA_MAINTENANCE_GPIO (-1)
 #endif
 
 #ifndef OTA_MAINTENANCE_ACTIVE_LEVEL
-// [Logic level, safety-critical] -1 is unverified; measured 0/1 selects the maintenance input's
-// active polarity.
+// [Logic level, safety-critical] -1 is unverified; measured 0/1 selects the
+// maintenance input's active polarity.
 #define OTA_MAINTENANCE_ACTIVE_LEVEL (-1)
 #endif
 
 #ifndef OTA_MOTOR_ISOLATED_GPIO
-// [GPIO sentinel, safety-critical] -1 means unassigned; OTA requires a distinct verified
-// motor-isolation input.
+// [GPIO sentinel, safety-critical] -1 means unassigned; OTA requires a distinct
+// verified motor-isolation input.
 #define OTA_MOTOR_ISOLATED_GPIO (-1)
 #endif
 
 #ifndef OTA_MOTOR_ISOLATED_ACTIVE_LEVEL
-// [Logic level, safety-critical] -1 is unverified; measured 0/1 selects the isolation input's
-// active polarity.
+// [Logic level, safety-critical] -1 is unverified; measured 0/1 selects the
+// isolation input's active polarity.
 #define OTA_MOTOR_ISOLATED_ACTIVE_LEVEL (-1)
 #endif
 
 #ifndef OTA_SHARED_SECRET
-// [Secret bytes, safety-critical] Empty disables usable authentication; provision at least 32
-// bytes outside Git to authorize OTA.
+// [Secret bytes, safety-critical] Empty disables usable authentication;
+// provision at least 32 bytes outside Git to authorize OTA.
 #define OTA_SHARED_SECRET ""
 #endif
 
@@ -629,9 +697,11 @@
 // 18. PARAMETER VALIDATION
 ///////////////////////////////////////////////////////////////////////////////
 // Existing address, commissioning, remote-start and OTA checks are preserved.
-// All defaults precede validation; invalid enabled configurations fail to build.
+// All defaults precede validation; invalid enabled configurations fail to
+// build.
 
-#if MUX_0_ADDRESS == MUX_1_ADDRESS || MUX_0_ADDRESS < 0x70 || MUX_0_ADDRESS > 0x77 || MUX_1_ADDRESS < 0x70 || MUX_1_ADDRESS > 0x77
+#if MUX_0_ADDRESS == MUX_1_ADDRESS || MUX_0_ADDRESS < 0x70 || MUX_0_ADDRESS > 0x77 ||              \
+    MUX_1_ADDRESS < 0x70 || MUX_1_ADDRESS > 0x77
 #error Invalid or duplicate TCA9548A addresses
 #endif
 
@@ -648,11 +718,18 @@
 #error Remote START is prohibited; use the physical button
 #endif
 
-#if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL < 0 || ESTOP_PRESSED_ACTIVE_LEVEL < 0 || STOP_BUTTON_OK_ACTIVE_LEVEL < 0 || START_BUTTON_ACTIVE_LEVEL < 0 || RESET_BUTTON_ACTIVE_LEVEL < 0 || VFD_ENABLE_DO_BIT < 0 || VFD_ENABLE_DO_BIT > 7 || VFD_ENABLE_ACTIVE_LEVEL < 0)
+#if SAFETY_IO_COMMISSIONED &&                                                                      \
+    (SAFETY_RELAY_OK_ACTIVE_LEVEL < 0 || ESTOP_PRESSED_ACTIVE_LEVEL < 0 ||                         \
+     STOP_BUTTON_OK_ACTIVE_LEVEL < 0 || START_BUTTON_ACTIVE_LEVEL < 0 ||                           \
+     RESET_BUTTON_ACTIVE_LEVEL < 0 || VFD_ENABLE_DO_BIT < 0 || VFD_ENABLE_DO_BIT > 7 ||            \
+     VFD_ENABLE_ACTIVE_LEVEL < 0)
 #error Commission all input levels and the non-safety VFD-enable relay before enabling hardware
 #endif
 
-#if SAFETY_IO_COMMISSIONED && (SAFETY_RELAY_OK_ACTIVE_LEVEL > 1 || ESTOP_PRESSED_ACTIVE_LEVEL > 1 || STOP_BUTTON_OK_ACTIVE_LEVEL > 1 || START_BUTTON_ACTIVE_LEVEL > 1 || RESET_BUTTON_ACTIVE_LEVEL > 1 || VFD_ENABLE_ACTIVE_LEVEL > 1)
+#if SAFETY_IO_COMMISSIONED &&                                                                      \
+    (SAFETY_RELAY_OK_ACTIVE_LEVEL > 1 || ESTOP_PRESSED_ACTIVE_LEVEL > 1 ||                         \
+     STOP_BUTTON_OK_ACTIVE_LEVEL > 1 || START_BUTTON_ACTIVE_LEVEL > 1 ||                           \
+     RESET_BUTTON_ACTIVE_LEVEL > 1 || VFD_ENABLE_ACTIVE_LEVEL > 1)
 #error Active levels must be zero or one
 #endif
 
@@ -664,7 +741,9 @@
 #error Commission the optional contactor feedback polarity before fitting it
 #endif
 
-#if OTA_MAINTENANCE_ENABLED && (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 || OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0)
+#if OTA_MAINTENANCE_ENABLED &&                                                                     \
+    (OTA_MAINTENANCE_GPIO < 0 || OTA_MOTOR_ISOLATED_GPIO < 0 ||                                    \
+     OTA_MAINTENANCE_ACTIVE_LEVEL < 0 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL < 0)
 #error OTA requires two wired physical inputs
 #endif
 
@@ -676,7 +755,8 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #if !CONTACTOR_FEEDBACK_FITTED || !SAFETY_IO_COMMISSIONED
 #error OTA requires commissioned independent contactor and safety feedback
 #endif
-#if OTA_MAINTENANCE_GPIO == OTA_MOTOR_ISOLATED_GPIO || OTA_MAINTENANCE_ACTIVE_LEVEL > 1 || OTA_MOTOR_ISOLATED_ACTIVE_LEVEL > 1
+#if OTA_MAINTENANCE_GPIO == OTA_MOTOR_ISOLATED_GPIO || OTA_MAINTENANCE_ACTIVE_LEVEL > 1 ||         \
+    OTA_MOTOR_ISOLATED_ACTIVE_LEVEL > 1
 #error OTA requires distinct physical inputs and binary polarities
 #endif
 #endif

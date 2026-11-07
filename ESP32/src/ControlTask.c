@@ -10,39 +10,36 @@
  */
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
-
-#include <stdint.h>
-#include <math.h>
 #include "driver/gptimer.h"
-#include "esp_timer.h"
-#include "esp_task_wdt.h"
 #include "esp_err.h"
+#include "esp_log.h"
+#include "esp_task_wdt.h"
+#include "esp_timer.h"
+#include <math.h>
+#include <stdint.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Application includes
-
-#include "ApplicationTasks.h"
-#include "TaskData.h"
 #include "AppConfig.h"
-#include "PiProtocol.h"
-#include "MotorModel.h"
+#include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
 #include "FanCalibration.h"
-#include "RegelaarDesign.h"
-#include "TorqueLoadControl.h"
 #include "FrequencyPI.h"
-#include "esp_log.h"
-#include "SetpointCurve.h"
-#include "V20Modbus.h"
-#include "SafetyIO.h"
+#include "MotorModel.h"
+#include "PiProtocol.h"
 #include "PressureSensors.h"
+#include "RegelaarDesign.h"
+#include "SafetyIO.h"
+#include "SetpointCurve.h"
+#include "TaskData.h"
+#include "TorqueLoadControl.h"
+#include "V20Modbus.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Local definitions
@@ -119,19 +116,34 @@ static ControlContext control;
 // Function prototypes
 
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
-static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request, MotorModelResult *result) {
-    if(!MotorModel_TorqueToFrequency(&ctx->motor_model,request,result)) return false;
-    if(FanCalibration_IsValid()) {
-        MotorModelRequest stationary={.rotor_rad_s=ctx->status.control_setpoint/ctx->motor_model.nominal_air_omega_gain};
+static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request,
+                                MotorModelResult *result);
+
+///////////////////////////////////////////////////////////////////////////////
+// automatic_frequency()
+
+static bool automatic_frequency(ControlContext *ctx, const MotorModelRequest *request,
+                                MotorModelResult *result)
+{
+    if (!MotorModel_TorqueToFrequency(&ctx->motor_model, request, result))
+        return false;
+    if (FanCalibration_IsValid())
+    {
+        MotorModelRequest stationary = {.rotor_rad_s = ctx->status.control_setpoint /
+                                                       ctx->motor_model.nominal_air_omega_gain};
         MotorModelResult base;
-        if(!MotorModel_TorqueToFrequency(&ctx->motor_model,&stationary,&base)) return false;
-        float hz=FanCalibration_GetBaseFrequency(ctx->status.control_setpoint,base.frequency_hz)+
-            ctx->motor_model.pole_pairs/(6.28318530718f*ctx->motor_model.slip_gain_nm_per_rad_s)*
-            (ctx->torque_output.pid_nm+ctx->torque_output.acceleration_nm);
-        if(!isfinite(hz)) return false;
-        result->requested_frequency_hz=hz;
-        result->frequency_hz=fminf(V20_REFERENCE_HZ,fmaxf(0,hz));
-        result->saturated=hz!=result->frequency_hz;
+        if (!MotorModel_TorqueToFrequency(&ctx->motor_model, &stationary, &base))
+            return false;
+        float hz =
+            FanCalibration_GetBaseFrequency(ctx->status.control_setpoint, base.frequency_hz) +
+            ctx->motor_model.pole_pairs /
+                (6.28318530718f * ctx->motor_model.slip_gain_nm_per_rad_s) *
+                (ctx->torque_output.pid_nm + ctx->torque_output.acceleration_nm);
+        if (!isfinite(hz))
+            return false;
+        result->requested_frequency_hz = hz;
+        result->frequency_hz = fminf(V20_REFERENCE_HZ, fmaxf(0, hz));
+        result->saturated = hz != result->frequency_hz;
     }
     return true;
 }
@@ -159,6 +171,9 @@ static bool ControlClockInterrupt(gptimer_handle_t timer, const gptimer_alarm_ev
 /*
  * Notifies ControlTask once per GPTimer alarm; no EventGroup drives the clock.
  */
+///////////////////////////////////////////////////////////////////////////////
+// ControlClockInterrupt()
+
 static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
                                             const gptimer_alarm_event_data_t *event, void *argument)
 {
@@ -173,8 +188,12 @@ static bool IRAM_ATTR ControlClockInterrupt(gptimer_handle_t timer,
 }
 
 /*
- * Starts the alternating 5 ms sensor/control phase timer after startup synchronization.
+ * Starts the alternating 5 ms sensor/control phase timer after startup
+ * synchronization.
  */
+///////////////////////////////////////////////////////////////////////////////
+// StartControlClock()
+
 static void StartControlClock(void)
 {
     gptimer_handle_t timer = NULL;
@@ -193,13 +212,11 @@ static void StartControlClock(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Initialization
-
-///////////////////////////////////////////////////////////////////////////////
 // static void Control_Init(ControlContext *ctx)
 
 /*
- * Initializes control, diagnostics and disabled motor commands before startup synchronization.
+ * Initializes control, diagnostics and disabled motor commands before startup
+ * synchronization.
  */
 static void Control_Init(ControlContext *ctx)
 {
@@ -208,45 +225,41 @@ static void Control_Init(ControlContext *ctx)
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
     /* Design the one-mass torque PID; no parallel frequency PI exists. */
-    const RegelaarDesignInput design_input = {
-        .jm=J_MOTOR_KGM2, .jfan=J_FAN_KGM2,
-        .frequency_hz=DISTURBANCE_FREQUENCY_HZ,
-        .disturbance_ms=DISTURBANCE_AMPLITUDE_MS,
-        .error_ms=ALLOWABLE_ERROR_MS,
-        .nominal_rpm=DESIGN_NOMINAL_RPM,
-        .nominal_airspeed_ms=LUCHTSNELHEID_NOM,
-        .sample_s=CONTROL_CLOCK_PERIOD_S,
-        .minimum_pm_deg=DESIGN_MIN_PHASE_MARGIN_DEG
-    };
+    const RegelaarDesignInput design_input = {.jm = J_MOTOR_KGM2,
+                                              .jfan = J_FAN_KGM2,
+                                              .frequency_hz = DISTURBANCE_FREQUENCY_HZ,
+                                              .disturbance_ms = DISTURBANCE_AMPLITUDE_MS,
+                                              .error_ms = ALLOWABLE_ERROR_MS,
+                                              .nominal_rpm = DESIGN_NOMINAL_RPM,
+                                              .nominal_airspeed_ms = LUCHTSNELHEID_NOM,
+                                              .sample_s = CONTROL_CLOCK_PERIOD_S,
+                                              .minimum_pm_deg = DESIGN_MIN_PHASE_MARGIN_DEG};
     RegelaarDesignOutput design = {0};
     if (RegelaarDesign_Calculate(&design_input, &design) &&
-        TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S)) {
-        ctx->motor_model = (MotorModel){
-            .inertia_kgm2 = design.j,
-            .slip_gain_nm_per_rad_s = MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S,
-            .load_coeff_nm_per_rad_s2 = MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
-            .pole_pairs = MOTOR_MODEL_POLE_PAIRS,
-            .nominal_air_omega_gain = design.kv,
-            .max_command_hz = MANUAL_MAX_HZ
-        };
-        ctx->torque_model_ready =
-            isfinite(ctx->motor_model.slip_gain_nm_per_rad_s) &&
-            ctx->motor_model.slip_gain_nm_per_rad_s > 0.0f &&
-            isfinite(ctx->motor_model.load_coeff_nm_per_rad_s2) &&
-            ctx->motor_model.load_coeff_nm_per_rad_s2 >= 0.0f;
+        TorqueLoadControl_Init(&ctx->torque_controller, &design, CONTROL_CLOCK_PERIOD_S))
+    {
+        ctx->motor_model =
+            (MotorModel){.inertia_kgm2 = design.j,
+                         .slip_gain_nm_per_rad_s = MOTOR_MODEL_SLIP_GAIN_NM_PER_RAD_S,
+                         .load_coeff_nm_per_rad_s2 = MOTOR_MODEL_FAN_LOAD_NM_PER_RAD_S2,
+                         .pole_pairs = MOTOR_MODEL_POLE_PAIRS,
+                         .nominal_air_omega_gain = design.kv,
+                         .max_command_hz = MANUAL_MAX_HZ};
+        ctx->torque_model_ready = isfinite(ctx->motor_model.slip_gain_nm_per_rad_s) &&
+                                  ctx->motor_model.slip_gain_nm_per_rad_s > 0.0f &&
+                                  isfinite(ctx->motor_model.load_coeff_nm_per_rad_s2) &&
+                                  ctx->motor_model.load_coeff_nm_per_rad_s2 >= 0.0f;
         if (ctx->torque_model_ready)
             ESP_LOGI("TORQUE_PID", "J=%g Kp=%g Ki=%g Kd=%g Kv=%g, inverse VFD map unverified",
-                     (double)design.j, (double)design.kp, (double)design.ki,
-                     (double)design.kd, (double)design.kv);
+                     (double)design.j, (double)design.kp, (double)design.ki, (double)design.kd,
+                     (double)design.kv);
     }
     if (!ctx->torque_model_ready)
         ESP_LOGW("TORQUE_PID", "AUTO inhibited: inertia, design or motor model invalid");
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
     ctx->frequency_controller_ready =
-        FrequencyPI_Init(&ctx->frequency_controller,
-                         FREQUENCY_PI_KP_HZ_PER_MPS,
-                         FREQUENCY_PI_KI_HZ_PER_MPS_S,
-                         CONTROL_CLOCK_PERIOD_S);
+        FrequencyPI_Init(&ctx->frequency_controller, FREQUENCY_PI_KP_HZ_PER_MPS,
+                         FREQUENCY_PI_KI_HZ_PER_MPS_S, CONTROL_CLOCK_PERIOD_S);
     if (!ctx->frequency_controller_ready)
         ESP_LOGW("FREQ_PI", "Frequency PI regulator initialization failed");
 #endif
@@ -255,8 +268,10 @@ static void Control_Init(ControlContext *ctx)
     StateMachine_Init(&ctx->machine, ctx->now_ms);
     ctx->v20_initialized = V20Modbus_Init();
     if (ctx->v20_initialized)
-        ESP_LOGI("Control", "V20 Modbus UART initialization successful; drive communication pending");
-    else {
+        ESP_LOGI("Control", "V20 Modbus UART initialization successful; drive "
+                            "communication pending");
+    else
+    {
         ESP_LOGE("Control", "V20 Modbus UART initialization failed; motor remains disarmed");
         StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
     }
@@ -270,7 +285,8 @@ static void Control_Init(ControlContext *ctx)
 
 /*
  * Waits within the existing initialization deadline; ready bits remain set.
- * Readiness means task initialization completed, not that external hardware is healthy.
+ * Readiness means task initialization completed, not that external hardware is
+ * healthy.
  */
 static void Control_WaitForTasks(ControlContext *ctx)
 {
@@ -300,8 +316,9 @@ static void Control_WaitForTasks(ControlContext *ctx)
 // static void Control_HoldInitializationFault(ControlContext *ctx)
 
 /*
- * Keeps failed startup disabled until reboot, without starting the control timer.
- * Continues publishing faults and servicing disabled V20 requests for diagnostics.
+ * Keeps failed startup disabled until reboot, without starting the control
+ * timer. Continues publishing faults and servicing disabled V20 requests for
+ * diagnostics.
  */
 static void Control_HoldInitializationFault(ControlContext *ctx)
 {
@@ -322,13 +339,11 @@ static void Control_HoldInitializationFault(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Input processing
-
-///////////////////////////////////////////////////////////////////////////////
 // static EventBits_t Control_ReadButtonEvents(void)
 
 /*
- * Consumes one-shot physical button notifications without waiting or reading GPIOs.
+ * Consumes one-shot physical button notifications without waiting or reading
+ * GPIOs.
  */
 static EventBits_t Control_ReadButtonEvents(void)
 {
@@ -340,7 +355,8 @@ static EventBits_t Control_ReadButtonEvents(void)
 // static void Control_ReadInputs(ControlContext *ctx)
 
 /*
- * Reads and validates latest queue values every cycle, even without advisory update bits.
+ * Reads and validates latest queue values every cycle, even without advisory
+ * update bits.
  */
 static void Control_ReadInputs(ControlContext *ctx)
 {
@@ -367,13 +383,12 @@ static void Control_ReadInputs(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Command processing
-
-///////////////////////////////////////////////////////////////////////////////
-// static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
+// static void Control_ProcessCommands(ControlContext *ctx, EventBits_t
+// buttonBits)
 
 /*
- * Processes physical actions and at most sixteen queued commands, retaining all START interlocks.
+ * Processes physical actions and at most sixteen queued commands, retaining all
+ * START interlocks.
  */
 static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
 {
@@ -388,8 +403,10 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
     ctx->reset = ((buttonBits & EVT_RESET_BUTTON) != 0 || fresh_reset) && fresh_reset;
 
     /* An old START edge must never be replayed when READY is entered. */
-    bool calibration_busy=FanCalibration_ControlGate(ctx->machine.state==STATE_READY && ctx->motor.ok && ctx->motor.ready &&
-        (TickType_t)(ctx->now_tick-ctx->motor.tick)<pdMS_TO_TICKS(SENSOR_TIMEOUT_MS) && fabsf(ctx->motor.actual_hz)<=0.2f);
+    bool calibration_busy = FanCalibration_ControlGate(
+        ctx->machine.state == STATE_READY && ctx->motor.ok && ctx->motor.ready &&
+        (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS) &&
+        fabsf(ctx->motor.actual_hz) <= 0.2f);
     ctx->start = ctx->start && !calibration_busy && ctx->machine.state == STATE_READY &&
                  (int32_t)(ctx->safety.start_ms - ctx->machine.entered_ms) > 0;
 
@@ -402,7 +419,8 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
         switch (command.type)
         {
         case CMD_MODE:
-            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP) {
+            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
+            {
                 ctx->status.mode = (OperatingMode)(int)command.values[0];
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
                 ctx->frequency_running = ctx->curve_running = false;
@@ -444,20 +462,19 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Safety and state machine
-
-///////////////////////////////////////////////////////////////////////////////
 // static void Control_CheckSafety(ControlContext *ctx)
 
 /*
- * Builds state-machine inputs and preserves physical reset acknowledgement and fault priorities.
+ * Builds state-machine inputs and preserves physical reset acknowledgement and
+ * fault priorities.
  */
 static void Control_CheckSafety(ControlContext *ctx)
 {
     /* Physical reset clears a timing latch only when the input is healthy. */
     if (ctx->reset && ctx->clock_fault == FAULT_NONE && ctx->safety.valid &&
         !ctx->safety.estop_pressed &&
-        (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT)) {
+        (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT))
+    {
         ctx->latched_timing_fault = FAULT_NONE;
         ctx->timing_stats.fault_reason = FAULT_NONE;
         ctx->timing_stats.fault_execution_us = 0;
@@ -474,36 +491,38 @@ static void Control_CheckSafety(ControlContext *ctx)
         ctx->machine.state == STATE_STOP &&
         V20Modbus_StopConfirmed((int64_t)ctx->machine.entered_ms * 1000LL, STOP_CONFIRM_HZ);
 
-    ctx->inputs = (MachineInputs){.now_ms = ctx->now_ms,
-                                  .safety = ctx->safety,
-                                  .sensor_ok = ctx->status.sensor_ok,
-                                  .drive_ready = ctx->motor.operational_ready,
-                                  .drive_ok = ctx->motor.ok,
-                                  .drive_fault_free = ctx->motor.drive_fault_free,
-                                  .drive_fault = (ctx->motor.status & 0x0008u) != 0,
-                                  .drive_communication_ok = ctx->motor.communication_ok,
-                                  .v20_response_received = ctx->motor.status_valid,
-                                  .v20_status_healthy = ctx->motor.status_healthy,
-                                  .v20_modbus_initialized = ctx->motor.initialized,
-                                  .v20_run_commissioned = V20_RUN_COMMISSIONED,
-                                  .v20_diagnostics_complete = ctx->motor.diagnostics_complete,
-                                  .v20_configuration_valid = ctx->motor.reference_config_valid &&
-                                      (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
-                                       ctx->motor.watchdog_config_valid),
-                                  .pi_ok = ctx->status.pi_ok,
-                                  .stop = ctx->stop,
-                                  .start = ctx->start,
-                                  .reset = ctx->reset,
-                                  .urgent_fault = SafetyIO_Fault(),
-                                  .timing_fault = ctx->latched_timing_fault,
-                                  .stop_confirmed = stop_confirmed};
+    ctx->inputs =
+        (MachineInputs){.now_ms = ctx->now_ms,
+                        .safety = ctx->safety,
+                        .sensor_ok = ctx->status.sensor_ok,
+                        .drive_ready = ctx->motor.operational_ready,
+                        .drive_ok = ctx->motor.ok,
+                        .drive_fault_free = ctx->motor.drive_fault_free,
+                        .drive_fault = (ctx->motor.status & 0x0008u) != 0,
+                        .drive_communication_ok = ctx->motor.communication_ok,
+                        .v20_response_received = ctx->motor.status_valid,
+                        .v20_status_healthy = ctx->motor.status_healthy,
+                        .v20_modbus_initialized = ctx->motor.initialized,
+                        .v20_run_commissioned = V20_RUN_COMMISSIONED,
+                        .v20_diagnostics_complete = ctx->motor.diagnostics_complete,
+                        .v20_configuration_valid = ctx->motor.reference_config_valid &&
+                                                   (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
+                                                    ctx->motor.watchdog_config_valid),
+                        .pi_ok = ctx->status.pi_ok,
+                        .stop = ctx->stop,
+                        .start = ctx->start,
+                        .reset = ctx->reset,
+                        .urgent_fault = SafetyIO_Fault(),
+                        .timing_fault = ctx->latched_timing_fault,
+                        .stop_confirmed = stop_confirmed};
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // static void Control_UpdateStateMachine(ControlContext *ctx)
 
 /*
- * Steps the existing state machine and performs its V20 recovery, arm and disarm actions.
+ * Steps the existing state machine and performs its V20 recovery, arm and
+ * disarm actions.
  */
 static void Control_UpdateStateMachine(ControlContext *ctx)
 {
@@ -516,9 +535,9 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
     /* A new physical START is the ONLY place that may arm the VFD. */
     if (previous_state == STATE_READY && ctx->machine.state == STATE_RUNNING)
     {
-        const bool feedback_ok = ctx->motor.ok && ctx->motor.ready &&
-            isfinite(ctx->motor.actual_hz) && ctx->motor.actual_hz >= 0 &&
-            ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
+        const bool feedback_ok =
+            ctx->motor.ok && ctx->motor.ready && isfinite(ctx->motor.actual_hz) &&
+            ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
             (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
         if (ctx->status.mode == MODE_AUTO &&
@@ -534,43 +553,51 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
     }
 
-    /* Disarm immediately on STOP or FAULT; the separate operational VFD-enable relay
-     * permissive is kept enabled through a healthy normal OFF1 ramp. */
+    /* Disarm immediately on STOP or FAULT; the separate operational VFD-enable
+     * relay permissive is kept enabled through a healthy normal OFF1 ramp. */
     if ((previous_state == STATE_RUNNING && ctx->machine.state != STATE_RUNNING) ||
         (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT))
         V20Modbus_Disarm();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Controller
-
-///////////////////////////////////////////////////////////////////////////////
 // static void Control_UpdateController(ControlContext *ctx)
 
 /*
- * Runs one fixed-period profile and PI step; faults disarm before motor requests are published.
+ * Runs one fixed-period profile and PI step; faults disarm before motor
+ * requests are published.
  */
 static void Control_UpdateController(ControlContext *ctx)
 {
     ctx->status.output = 0.0f;
     if (ctx->machine.state == STATE_RUNNING && ctx->clock_fault == FAULT_NONE)
     {
-        if (ctx->status.mode == MODE_MANUAL) {
-            if (!ctx->frequency_running) {
-                ctx->frequency_running = ctx->motor.ok && isfinite(ctx->motor.actual_hz) &&
-                    ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
-                    (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS) &&
+        if (ctx->status.mode == MODE_MANUAL)
+        {
+            if (!ctx->frequency_running)
+            {
+                ctx->frequency_running =
+                    ctx->motor.ok && isfinite(ctx->motor.actual_hz) && ctx->motor.actual_hz >= 0 &&
+                    ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
+                    (TickType_t)(ctx->now_tick - ctx->motor.tick) <
+                        pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS) &&
                     SetpointCurve_Init(&ctx->frequency_curve, ctx->motor.actual_hz,
-                        CONTROL_CLOCK_PERIOD_S,
-                        MANUAL_MAX_SLEW_HZ_PER_S, MANUAL_MAX_ACCEL_HZ_PER_S2);
+                                       CONTROL_CLOCK_PERIOD_S, MANUAL_MAX_SLEW_HZ_PER_S,
+                                       MANUAL_MAX_ACCEL_HZ_PER_S2);
                 ctx->frequency_curve.max_third_derivative = MANUAL_MAX_JERK_HZ_PER_S3;
             }
-            if (!ctx->frequency_running || !SetpointCurve_Step(&ctx->frequency_curve,
-                ctx->status.manual_hz, CONTROL_CLOCK_PERIOD_S, &ctx->status.applied_hz)) {
+            if (!ctx->frequency_running ||
+                !SetpointCurve_Step(&ctx->frequency_curve, ctx->status.manual_hz,
+                                    CONTROL_CLOCK_PERIOD_S, &ctx->status.applied_hz))
+            {
                 StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
                 V20Modbus_Disarm();
-            } else ctx->status.output = 100.0f * ctx->status.applied_hz / V20_REFERENCE_HZ;
-        } else {
+            }
+            else
+                ctx->status.output = 100.0f * ctx->status.applied_hz / V20_REFERENCE_HZ;
+        }
+        else
+        {
             if (!ctx->curve_running)
                 ctx->curve_running =
                     SetpointCurve_Init(&ctx->curve, ctx->sample.value, SETPOINT_TRANSITION_TIME_S,
@@ -578,43 +605,49 @@ static void Control_UpdateController(ControlContext *ctx)
             if (ctx->curve_running && ctx->curve.elapsed == 0.0)
                 ctx->previous_ff_setpoint = ctx->sample.value;
             bool valid = ctx->curve_running &&
-                SetpointCurve_Step(&ctx->curve, ctx->status.setpoint, CONTROL_CLOCK_PERIOD_S,
-                                   &ctx->status.control_setpoint);
+                         SetpointCurve_Step(&ctx->curve, ctx->status.setpoint,
+                                            CONTROL_CLOCK_PERIOD_S, &ctx->status.control_setpoint);
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
             /* Sole AUTO loop: airspeed torque PID -> inverse motor model -> V20 Hz.
              * Physical AUTO remains locked until motor/VFD model validation. */
             valid = valid && ctx->torque_model_ready &&
-                (SIMULATION_MODE || MOTOR_MODEL_TORQUE_TO_V20_ENABLED);
-            if (valid) {
+                    (SIMULATION_MODE || MOTOR_MODEL_TORQUE_TO_V20_ENABLED);
+            if (valid)
+            {
                 const float reference_accel_ms2 =
                     (ctx->status.control_setpoint - ctx->previous_ff_setpoint) /
                     CONTROL_CLOCK_PERIOD_S;
-                valid = TorqueLoadControl_Step(&ctx->torque_controller,
-                    ctx->status.control_setpoint, ctx->sample.value, reference_accel_ms2,
-                    ctx->motor_model.load_coeff_nm_per_rad_s2, &ctx->torque_output);
-                if (valid) {
-                    MotorModelRequest request = {
-                        .rotor_rad_s = ctx->torque_output.omega_est_rad_s,
-                        .reference_accel_ms2 = reference_accel_ms2,
-                        .pid_torque_nm = ctx->torque_output.pid_nm
-                    };
+                valid = TorqueLoadControl_Step(
+                    &ctx->torque_controller, ctx->status.control_setpoint, ctx->sample.value,
+                    reference_accel_ms2, ctx->motor_model.load_coeff_nm_per_rad_s2,
+                    &ctx->torque_output);
+                if (valid)
+                {
+                    MotorModelRequest request = {.rotor_rad_s = ctx->torque_output.omega_est_rad_s,
+                                                 .reference_accel_ms2 = reference_accel_ms2,
+                                                 .pid_torque_nm = ctx->torque_output.pid_nm};
                     MotorModelResult result = {0};
                     valid = automatic_frequency(ctx, &request, &result);
-                    if (valid && ((result.saturated &&
-                        ((ctx->status.control_setpoint > ctx->sample.value &&
-                          result.requested_frequency_hz > ctx->motor_model.max_command_hz) ||
-                         (ctx->status.control_setpoint < ctx->sample.value &&
-                          result.requested_frequency_hz < 0.0f))) ||
-                        (FanCalibration_IsValid() &&
-                         ((ctx->status.control_setpoint > ctx->sample.value && result.frequency_hz > ctx->motor.actual_hz+0.2f) ||
-                          (ctx->status.control_setpoint < ctx->sample.value && result.frequency_hz < ctx->motor.actual_hz-0.2f))))) {
+                    if (valid &&
+                        ((result.saturated &&
+                          ((ctx->status.control_setpoint > ctx->sample.value &&
+                            result.requested_frequency_hz > ctx->motor_model.max_command_hz) ||
+                           (ctx->status.control_setpoint < ctx->sample.value &&
+                            result.requested_frequency_hz < 0.0f))) ||
+                         (FanCalibration_IsValid() &&
+                          ((ctx->status.control_setpoint > ctx->sample.value &&
+                            result.frequency_hz > ctx->motor.actual_hz + 0.2f) ||
+                           (ctx->status.control_setpoint < ctx->sample.value &&
+                            result.frequency_hz < ctx->motor.actual_hz - 0.2f)))))
+                    {
                         /* Reject only integration that worsens output saturation. */
                         TorqueLoadControl_RejectLatestIntegration(&ctx->torque_controller,
                                                                   &ctx->torque_output);
                         request.pid_torque_nm = ctx->torque_output.pid_nm;
                         valid = automatic_frequency(ctx, &request, &result);
                     }
-                    if (valid) {
+                    if (valid)
+                    {
                         ctx->status.applied_hz = result.frequency_hz;
                         ctx->status.output = 100.0f * result.frequency_hz / V20_REFERENCE_HZ;
                     }
@@ -622,25 +655,29 @@ static void Control_UpdateController(ControlContext *ctx)
             }
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
             valid = valid && ctx->frequency_controller_ready;
-            if (valid) {
+            if (valid)
+            {
                 float feedforward_hz = 0.0f;
-                if (FanCalibration_IsValid()) {
+                if (FanCalibration_IsValid())
+                {
                     feedforward_hz = FanCalibration_GetBaseFrequency(ctx->status.control_setpoint,
-                                                                      ctx->sample.value);
+                                                                     ctx->sample.value);
                     if (!isfinite(feedforward_hz))
                         feedforward_hz = 0.0f;
                 }
                 ctx->frequency_feedforward_hz = feedforward_hz;
                 FrequencyPIOutput output = {0};
-                valid = FrequencyPI_Step(&ctx->frequency_controller,
-                    ctx->status.control_setpoint, ctx->sample.value, feedforward_hz, &output);
-                if (valid) {
+                valid = FrequencyPI_Step(&ctx->frequency_controller, ctx->status.control_setpoint,
+                                         ctx->sample.value, feedforward_hz, &output);
+                if (valid)
+                {
                     ctx->status.applied_hz = output.output_hz;
                     ctx->status.output = 100.0f * output.output_hz / V20_REFERENCE_HZ;
                 }
             }
 #endif
-            if (!valid) {
+            if (!valid)
+            {
                 StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
                 V20Modbus_Disarm();
                 ctx->status.output = 0.0f;
@@ -674,13 +711,11 @@ static void Control_UpdateController(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Motor communication
-
-///////////////////////////////////////////////////////////////////////////////
 // static void Control_UpdateMotor(ControlContext *ctx)
 
 /*
- * Services the latest motor request without blocking, then publishes refreshed V20 status.
+ * Services the latest motor request without blocking, then publishes refreshed
+ * V20 status.
  */
 static void Control_UpdateMotor(ControlContext *ctx)
 {
@@ -702,14 +737,14 @@ static void Control_UpdateMotor(ControlContext *ctx)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Telemetry and diagnostics
-
-///////////////////////////////////////////////////////////////////////////////
 // File-local timing accounting
 /*
  * Accounts for jitter and missed notifications without replaying PI steps.
  * Execution and Modbus service budgets retain their original strict limits.
  */
+///////////////////////////////////////////////////////////////////////////////
+// ControlTiming_Tick()
+
 static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned notifications)
 {
     uint64_t elapsed = t->previous_us ? now - t->previous_us : CONTROL_PERIOD_US;
@@ -722,7 +757,8 @@ static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned
     {
         t->missed_deadlines += CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000);
         t->consecutive_missed_ticks = 0;
-        if (t->fault_reason == FAULT_NONE) {
+        if (t->fault_reason == FAULT_NONE)
+        {
             t->fault_reason = FAULT_CLOCK_TIMEOUT;
             t->fault_missed_ticks = CONTROL_CLOCK_TIMEOUT_MS / (CONTROL_PERIOD_US / 1000);
         }
@@ -738,8 +774,10 @@ static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned
     {
         t->missed_deadlines += missed;
         t->consecutive_missed_ticks += missed;
-        if (t->consecutive_missed_ticks > CONTROL_CLOCK_MISSED_TICKS_ALLOWED) {
-            if (t->fault_reason == FAULT_NONE) {
+        if (t->consecutive_missed_ticks > CONTROL_CLOCK_MISSED_TICKS_ALLOWED)
+        {
+            if (t->fault_reason == FAULT_NONE)
+            {
                 t->fault_reason = FAULT_CONTROL_OVERRUN;
                 t->fault_missed_ticks = t->consecutive_missed_ticks;
             }
@@ -752,12 +790,16 @@ static FaultReason_t ControlTiming_Tick(ControlTiming *t, uint64_t now, unsigned
     }
     return FAULT_NONE;
 }
+///////////////////////////////////////////////////////////////////////////////
+// ControlTiming_Execution()
+
 static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uint32_t service_us)
 {
     if (execution_us < CONTROL_PERIOD_US && service_us < V20_SERVICE_BUDGET_US)
         return true;
     t->overruns++;
-    if (t->fault_reason == FAULT_NONE) {
+    if (t->fault_reason == FAULT_NONE)
+    {
         t->fault_reason = FAULT_CONTROL_OVERRUN;
         t->fault_execution_us = execution_us;
         t->fault_service_us = service_us;
@@ -770,7 +812,8 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
 
 /*
  * Publishes current state and motor demand to the existing overwrite queues.
- * Called before Modbus service and again after same-cycle diagnostic fault handling.
+ * Called before Modbus service and again after same-cycle diagnostic fault
+ * handling.
  */
 static void Control_PublishStatus(ControlContext *ctx)
 {
@@ -822,8 +865,7 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->v20_control_word_requested = ctx->motor.control_word_requested;
     diag->v20_control_word_acknowledged = ctx->motor.control_word_acknowledged;
     diag->v20_control_word_requested_valid = ctx->motor.control_word_requested_valid;
-    diag->v20_control_word_acknowledged_valid =
-        ctx->motor.control_word_acknowledged_valid;
+    diag->v20_control_word_acknowledged_valid = ctx->motor.control_word_acknowledged_valid;
     diag->drive_communication_ok = ctx->motor.communication_ok;
     diag->v20_run_commissioned = V20_RUN_COMMISSIONED;
     diag->drive_fault_free = ctx->motor.drive_fault_free;
@@ -861,8 +903,8 @@ static void Control_PublishStatus(ControlContext *ctx)
     if (!ctx->status.running)
         ctx->status.output = 0.0f;
 
-    ctx->status.output = fminf(100.0f * MANUAL_MAX_HZ / V20_REFERENCE_HZ,
-                              fmaxf(0.0f, ctx->status.output));
+    ctx->status.output =
+        fminf(100.0f * MANUAL_MAX_HZ / V20_REFERENCE_HZ, fmaxf(0.0f, ctx->status.output));
     if (ctx->status.mode == MODE_AUTO)
         ctx->status.applied_hz = ctx->status.output * V20_REFERENCE_HZ / 100.0f;
     const MotorRequest command = {.output = ctx->status.output,
@@ -879,7 +921,8 @@ static void Control_PublishStatus(ControlContext *ctx)
 // static void Control_UpdateDiagnostics(ControlContext *ctx)
 
 /*
- * Accounts for execution time and faults immediately on overruns or lost drive communication.
+ * Accounts for execution time and faults immediately on overruns or lost drive
+ * communication.
  */
 static void Control_UpdateDiagnostics(ControlContext *ctx)
 {
@@ -894,8 +937,8 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
     }
     if (!ctx->v20_initialized ||
         ((!ctx->motor.ok || !ctx->motor.operational_ready) &&
-         (ctx->machine.state == STATE_RUNNING ||
-          ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
+         (ctx->machine.state == STATE_RUNNING || ctx->machine.state == STATE_READY ||
+          ctx->machine.state == STATE_STOP)))
     {
         StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
         V20Modbus_Disarm();
@@ -907,8 +950,8 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
 // static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
 
 /*
- * Records the timer wakeup, refreshes the watchdog and latches missed deadlines without replaying
- * steps.
+ * Records the timer wakeup, refreshes the watchdog and latches missed deadlines
+ * without replaying steps.
  */
 static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
 {
@@ -935,9 +978,6 @@ static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications)
         ctx->window_start_us = ctx->started_us;
     }
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// Main ControlTask
 
 ///////////////////////////////////////////////////////////////////////////////
 // void ControlTask(void *argument)

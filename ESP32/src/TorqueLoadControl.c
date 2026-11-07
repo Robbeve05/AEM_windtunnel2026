@@ -1,21 +1,30 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /* Torque-domain airspeed PID and load feedforward, R.E. van Eekelen.
  * V20 accepts frequency, not direct torque; see MotorModel.c.
  */
-#include "TorqueLoadControl.h"
-#include "AppConfig.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
 
-bool TorqueLoadControl_Init(TorqueLoadControl *c,
-                            const RegelaarDesignOutput *d, float sample_s)
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "TorqueLoadControl.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// TorqueLoadControl_Init()
+
+bool TorqueLoadControl_Init(TorqueLoadControl *c, const RegelaarDesignOutput *d, float sample_s)
 {
-    if (!c || !d || !isfinite(sample_s) || sample_s <= 0.0f ||
-        !isfinite(d->j) || d->j <= 0.0f ||
-        !isfinite(d->kv) || d->kv <= 0.0f ||
-        !isfinite(d->kp) || !isfinite(d->ki) || !isfinite(d->kd) ||
-        !isfinite(d->tf) || d->tf <= 0.0f ||
-        d->kp < 0.0f || d->ki < 0.0f || d->kd < 0.0f)
+    if (!c || !d || !isfinite(sample_s) || sample_s <= 0.0f || !isfinite(d->j) || d->j <= 0.0f ||
+        !isfinite(d->kv) || d->kv <= 0.0f || !isfinite(d->kp) || !isfinite(d->ki) ||
+        !isfinite(d->kd) || !isfinite(d->tf) || d->tf <= 0.0f || d->kp < 0.0f || d->ki < 0.0f ||
+        d->kd < 0.0f)
         return false;
     memset(c, 0, sizeof(*c));
     c->design = *d;
@@ -23,9 +32,13 @@ bool TorqueLoadControl_Init(TorqueLoadControl *c,
     return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// TorqueLoadControl_Reset()
+
 void TorqueLoadControl_Reset(TorqueLoadControl *c)
 {
-    if (!c) return;
+    if (!c)
+        return;
     c->integral_nm = 0.0f;
     c->integral_before_step_nm = 0.0f;
     c->previous_error_ms = 0.0f;
@@ -35,14 +48,16 @@ void TorqueLoadControl_Reset(TorqueLoadControl *c)
     c->previous_valid = false;
 }
 
-bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
-                            float measured_ms, float reference_accel_ms2,
-                            float fan_load_coefficient, TorqueLoadOutput *out)
+///////////////////////////////////////////////////////////////////////////////
+// TorqueLoadControl_Step()
+
+bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms, float measured_ms,
+                            float reference_accel_ms2, float fan_load_coefficient,
+                            TorqueLoadOutput *out)
 {
     if (!c || !out || !isfinite(reference_ms) || !isfinite(measured_ms) ||
-        !isfinite(reference_accel_ms2) ||
-        !isfinite(fan_load_coefficient) || fan_load_coefficient < 0.0f ||
-        measured_ms < 0.0f)
+        !isfinite(reference_accel_ms2) || !isfinite(fan_load_coefficient) ||
+        fan_load_coefficient < 0.0f || measured_ms < 0.0f)
         return false;
     *out = (TorqueLoadOutput){0};
     const float dt = c->sample_s;
@@ -51,25 +66,30 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
      * Runtime PID gain commands cannot enable disabled feedback terms. */
     const float kp = CONTROLLER_SETTING == CONTROLLER_NONE ? 0.0f : c->design.kp;
     const float ki = (CONTROLLER_SETTING == CONTROLLER_PI || CONTROLLER_SETTING == CONTROLLER_PID)
-                         ? c->design.ki : 0.0f;
+                         ? c->design.ki
+                         : 0.0f;
     const float kd = CONTROLLER_SETTING == CONTROLLER_PID ? c->design.kd : 0.0f;
     const float tf = c->design.tf;
 
     /* Tustin integral; no implicit actuator anti-windup. Use diagnostics only. */
-    const float integral = c->integral_nm +
-         (c->previous_valid ? ki * dt * 0.5f * (error + c->previous_error_ms) : 0.0f);
-    /* Filtered derivative on measurement avoids reference-setpoint derivative kick. */
-    const float derivative = c->previous_valid ?
-         ((2.0f * tf - dt) * c->derivative_nm -
-          2.0f * kd * (measured_ms - c->previous_measurement_ms)) /
-          (2.0f * tf + dt) : 0.0f;
+    const float integral =
+        c->integral_nm +
+        (c->previous_valid ? ki * dt * 0.5f * (error + c->previous_error_ms) : 0.0f);
+    /* Filtered derivative on measurement avoids reference-setpoint derivative
+     * kick. */
+    const float derivative = c->previous_valid
+                                 ? ((2.0f * tf - dt) * c->derivative_nm -
+                                    2.0f * kd * (measured_ms - c->previous_measurement_ms)) /
+                                       (2.0f * tf + dt)
+                                 : 0.0f;
     const float omega_est = measured_ms / c->design.kv;
     const float pid = kp * error + integral + derivative;
     const float accel = c->design.j * reference_accel_ms2 / c->design.kv;
     const float fan = fan_load_coefficient * omega_est * fabsf(omega_est);
     const float total = pid + accel + fan;
-    if (!isfinite(integral) || !isfinite(derivative) || !isfinite(pid) ||
-        !isfinite(accel) || !isfinite(fan) || !isfinite(total)) return false;
+    if (!isfinite(integral) || !isfinite(derivative) || !isfinite(pid) || !isfinite(accel) ||
+        !isfinite(fan) || !isfinite(total))
+        return false;
     c->integral_before_step_nm = c->integral_nm;
     c->integral_nm = integral;
     c->derivative_nm = derivative;
@@ -77,15 +97,21 @@ bool TorqueLoadControl_Step(TorqueLoadControl *c, float reference_ms,
     c->previous_measurement_ms = measured_ms;
     c->previous_reference_ms = reference_ms;
     c->previous_valid = true;
-    *out = (TorqueLoadOutput){.pid_nm=pid,.acceleration_nm=accel,
-         .fan_load_nm=fan,.total_nm=total,.omega_est_rad_s=omega_est};
+    *out = (TorqueLoadOutput){.pid_nm = pid,
+                              .acceleration_nm = accel,
+                              .fan_load_nm = fan,
+                              .total_nm = total,
+                              .omega_est_rad_s = omega_est};
     return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// TorqueLoadControl_SetGains()
+
 bool TorqueLoadControl_SetGains(TorqueLoadControl *c, float kp, float ki, float kd)
 {
-    if (!c || !isfinite(kp) || !isfinite(ki) || !isfinite(kd) ||
-        kp < 0.0f || ki < 0.0f || kd < 0.0f || c->sample_s <= 0.0f)
+    if (!c || !isfinite(kp) || !isfinite(ki) || !isfinite(kd) || kp < 0.0f || ki < 0.0f ||
+        kd < 0.0f || c->sample_s <= 0.0f)
         return false;
     c->design.kp = kp;
     c->design.ki = ki;
@@ -94,9 +120,13 @@ bool TorqueLoadControl_SetGains(TorqueLoadControl *c, float kp, float ki, float 
     return true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// TorqueLoadControl_RejectLatestIntegration()
+
 void TorqueLoadControl_RejectLatestIntegration(TorqueLoadControl *c, TorqueLoadOutput *out)
 {
-    if (!c || !out || !c->previous_valid) return;
+    if (!c || !out || !c->previous_valid)
+        return;
     const float rejected = c->integral_nm - c->integral_before_step_nm;
     c->integral_nm = c->integral_before_step_nm;
     out->pid_nm -= rejected;

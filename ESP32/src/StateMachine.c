@@ -1,12 +1,21 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * StateMachine.c
  * Operational state transitions and fault recovery.
  *
  * Author: R.E. van Eekelen
  */
-#include "StateMachine.h"
-#include "AppConfig.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <stddef.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "StateMachine.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // State and fault names
@@ -14,6 +23,9 @@
 /*
  * Returns the existing state name used by telemetry.
  */
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Name()
+
 const char *StateMachine_Name(SystemState_t s)
 {
     static const char *names[] = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"};
@@ -23,6 +35,9 @@ const char *StateMachine_Name(SystemState_t s)
 /*
  * Returns the existing fault name used by telemetry.
  */
+///////////////////////////////////////////////////////////////////////////////
+// FaultReason_Name()
+
 const char *FaultReason_Name(FaultReason_t f)
 {
     static const char *names[] = {
@@ -37,6 +52,9 @@ const char *FaultReason_Name(FaultReason_t f)
 /*
  * Records entry time and increments counters only when the state changes.
  */
+///////////////////////////////////////////////////////////////////////////////
+// transition()
+
 static void transition(StateMachine *m, SystemState_t s, uint32_t now)
 {
     if (m->state != s)
@@ -54,10 +72,16 @@ static void transition(StateMachine *m, SystemState_t s, uint32_t now)
 /*
  * Starts disabled in INIT with the original initialization deadline.
  */
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Init()
+
 void StateMachine_Init(StateMachine *m, uint32_t now)
 {
     *m = (StateMachine){.state = STATE_INIT, .entered_ms = now, .boot_ms = now};
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_GetBlockingReasons()
 
 uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInputs *i)
 {
@@ -65,8 +89,7 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
         return 0;
 
     uint32_t reasons = 0;
-    const bool safety_fresh =
-        i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
+    const bool safety_fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
     if (i->safety.estop_pressed)
         reasons |= WAIT_BLOCK_ESTOP_PRESSED;
     if (!i->safety.stop_ok)
@@ -118,6 +141,9 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
 /*
  * Latches the first fault, allowing emergency stop to take priority.
  */
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Fault()
+
 void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
 {
     if (f == FAULT_NONE)
@@ -143,6 +169,9 @@ void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
 /*
  * Checks physical feedback, commissioning and input freshness.
  */
+///////////////////////////////////////////////////////////////////////////////
+// safety_healthy()
+
 static bool safety_healthy(const MachineInputs *i)
 {
     return i->safety.valid && i->safety.commissioned && i->safety.outputs_ok &&
@@ -156,8 +185,12 @@ static bool safety_healthy(const MachineInputs *i)
 // StateMachine execution
 
 /*
- * Evaluates faults and physical actions before applying the existing transitions.
+ * Evaluates faults and physical actions before applying the existing
+ * transitions.
  */
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_Step()
+
 void StateMachine_Step(StateMachine *m, const MachineInputs *i)
 {
     m->recovery_requested = false;
@@ -165,8 +198,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
     bool healthy = safety_healthy(i);
     bool process = i->sensor_ok && i->drive_ready && i->drive_ok && i->pi_ok &&
-                   i->v20_configuration_valid &&
-                   (SIMULATION_MODE || i->v20_run_commissioned);
+                   i->v20_configuration_valid && (SIMULATION_MODE || i->v20_run_commissioned);
     /* Emergency has priority over the first latched non-emergency cause. */
     if (i->safety.estop_pressed)
     {
@@ -190,6 +222,9 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     {
         if (!i->sensor_ok)
             StateMachine_Fault(m, FAULT_SENSOR, i->now_ms);
+        ///////////////////////////////////////////////////////////////////////////////
+        // Function prototypes
+
         else if (i->drive_fault)
             StateMachine_Fault(m, FAULT_VFD, i->now_ms);
         else if (!i->drive_ok || !i->drive_ready)
@@ -201,8 +236,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     if (i->reset && (m->state == STATE_WAIT || m->state == STATE_FAULT) && fresh &&
         !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok &&
-        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE &&
-        !i->drive_fault &&
+        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE && !i->drive_fault &&
         (!i->safety.vfd_fault_available || !i->safety.vfd_fault) &&
         (!i->safety.contactor_available || i->safety.contactor_ok))
     {
@@ -213,10 +247,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     if (m->reset_pending && (int32_t)(i->now_ms - m->reset_until_ms) > 0)
         m->reset_pending = false;
-    if (m->state == STATE_FAULT && m->fault == FAULT_EMERGENCY_STOP && m->reset_pending &&
-        fresh && i->safety.outputs_ok && i->safety.relay_ok && i->safety.stop_ok &&
-        !i->safety.estop_pressed && !i->safety.reset_pressed &&
-        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE)
+    if (m->state == STATE_FAULT && m->fault == FAULT_EMERGENCY_STOP && m->reset_pending && fresh &&
+        i->safety.outputs_ok && i->safety.relay_ok && i->safety.stop_ok &&
+        !i->safety.estop_pressed && !i->safety.reset_pressed && i->urgent_fault == FAULT_NONE &&
+        i->timing_fault == FAULT_NONE)
     {
         m->fault = FAULT_NONE;
         m->reset_pending = false;
@@ -226,9 +260,8 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        if (fresh && i->sensor_ok && i->v20_diagnostics_complete &&
-            i->v20_response_received && i->drive_communication_ok &&
-            i->drive_fault_free && i->safety.outputs_ok)
+        if (fresh && i->sensor_ok && i->v20_diagnostics_complete && i->v20_response_received &&
+            i->drive_communication_ok && i->drive_fault_free && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
         break;
     case STATE_FAULT:

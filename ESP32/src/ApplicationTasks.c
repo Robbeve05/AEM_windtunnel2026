@@ -1,3 +1,6 @@
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
 /*
  * ApplicationTasks.c
  * Creates communication infrastructure before starting any application task.
@@ -5,20 +8,30 @@
  * Author: R.E. van Eekelen
  */
 ///////////////////////////////////////////////////////////////////////////////
-// Includes
-
-#include "ApplicationTasks.h"
-#include "AppConfig.h"
-#include "FanCalibration.h"
-#include "OtaUpdate.h"
-void HeartbeatTask(void *argument);
-#include "SafetyIO.h"
-#include "I2CBus.h"
-#include "TaskData.h"
-#include "PiProtocol.h"
-#include "freertos/task.h"
+// System includes
 #include "esp_err.h"
 #include "esp_log.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Application includes
+#include "AppConfig.h"
+#include "ApplicationTasks.h"
+#include "FanCalibration.h"
+#include "I2CBus.h"
+#include "OtaUpdate.h"
+#include "PiProtocol.h"
+#include "SafetyIO.h"
+#include "TaskData.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Function prototypes
+
+void HeartbeatTask(void *argument);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Shared handles
@@ -38,20 +51,26 @@ volatile bool ota_task_alive, ota_valid_task_alive;
 ///////////////////////////////////////////////////////////////////////////////
 // static void InitHardware(void)
 /*
- * Configures physical inputs and loads inactive output latches before tasks start.
+ * Configures physical inputs and loads inactive output latches before tasks
+ * start.
  */
 static void InitHardware(void)
 {
     ESP_LOGI("Startup", "Safety input initialization begin");
     SafetyIO_Init();
     ESP_LOGI("Startup", "Safety input initialization complete");
-    ESP_LOGI("Startup", "Commissioning flags safety_io=%d v20_run=%d torque_to_v20=%d remote_start=%d",
-             SAFETY_IO_COMMISSIONED, V20_RUN_COMMISSIONED,
-             MOTOR_MODEL_TORQUE_TO_V20_ENABLED, ALLOW_REMOTE_START);
+    ESP_LOGI("Startup",
+             "Commissioning flags safety_io=%d v20_run=%d torque_to_v20=%d "
+             "remote_start=%d",
+             SAFETY_IO_COMMISSIONED, V20_RUN_COMMISSIONED, MOTOR_MODEL_TORQUE_TO_V20_ENABLED,
+             ALLOW_REMOTE_START);
     ESP_LOGI("Startup", "I2C and inactive output initialization begin");
-    if (!I2CBus_Init()) {
+    if (!I2CBus_Init())
+    {
         ESP_LOGE("ApplicationTasks", "I2C/output initialization failed; outputs remain inhibited");
-    } else {
+    }
+    else
+    {
         ESP_LOGI("Startup", "I2C and inactive output initialization successful");
     }
 }
@@ -100,11 +119,10 @@ static void CreateEventGroups(void)
  */
 static void CreateTasks(void)
 {
-    ESP_ERROR_CHECK(
-        xTaskCreatePinnedToCore(InputHandlerTask, "InputHandler", 3072, NULL, 5,
-                                &input_task_handle, 0) == pdPASS
-            ? ESP_OK
-            : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(InputHandlerTask, "InputHandler", 3072, NULL, 5,
+                                            &input_task_handle, 0) == pdPASS
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
     ESP_LOGI("Startup", "Created InputHandler task");
     ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3,
                                             &sensor_task_handle, 0) == pdPASS
@@ -127,14 +145,13 @@ static void CreateTasks(void)
                         : ESP_ERR_NO_MEM);
     ESP_LOGI("Startup", "Created Heartbeat task");
     ota_task_alive = true;
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaUpdateTask, "OTA", 8192, NULL, 1,
-                                            NULL, 0) == pdPASS
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaUpdateTask, "OTA", 8192, NULL, 1, NULL, 0) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     ESP_LOGI("Startup", "Created OTA task");
     ota_valid_task_alive = true;
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaMarkValidTask, "OTAValid", 3072, NULL, 1,
-                                            NULL, 0) == pdPASS
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaMarkValidTask, "OTAValid", 3072, NULL, 1, NULL, 0) ==
+                            pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     ESP_LOGI("Startup", "Created OTAValid task");
@@ -143,7 +160,8 @@ static void CreateTasks(void)
 ///////////////////////////////////////////////////////////////////////////////
 // void StartApplicationTasks(void)
 /*
- * Initializes hardware and shared communication before creating application tasks.
+ * Initializes hardware and shared communication before creating application
+ * tasks.
  */
 void StartApplicationTasks(void)
 {

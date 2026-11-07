@@ -1,6 +1,44 @@
+
+///////////////////////////////////////////////////////////////////////////////
+// File information
+
+/* Raspberry Pi command protocol types and parser declaration. */
+///////////////////////////////////////////////////////////////////////////////
+// Include guard
 #pragma once
+
+///////////////////////////////////////////////////////////////////////////////
+// System includes
 #include <stdbool.h>
-typedef enum { MODE_AUTO = 0, MODE_MANUAL } OperatingMode;
-typedef enum { CMD_STOP, CMD_START, CMD_SETPOINT, CMD_PID, CMD_PING, CMD_FILTER, CMD_MODE, CMD_FREQ } CommandType;
-typedef struct { CommandType type; float values[3]; } PiCommand;
+
+///////////////////////////////////////////////////////////////////////////////
+// Public enumerations
+
+typedef enum
+{
+    MODE_AUTO = 0,
+    MODE_MANUAL
+} OperatingMode;
+typedef enum
+{
+    CMD_STOP,
+    CMD_START,
+    CMD_SETPOINT,
+    CMD_PID,
+    CMD_PING,
+    CMD_FILTER,
+    CMD_MODE,
+    CMD_FREQ
+} CommandType;
+///////////////////////////////////////////////////////////////////////////////
+// Public data structures
+
+typedef struct
+{
+    CommandType type;
+    float values[3];
+} PiCommand;
+///////////////////////////////////////////////////////////////////////////////
+// Function declarations
+
 bool PiProtocol_Parse(const char *line, PiCommand *command);
