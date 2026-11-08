@@ -81,6 +81,8 @@ esp_err_t uart_driver_install(int port, int rx_size, int tx_size, int queue_size
     return init_result();
 }
 
+esp_err_t uart_driver_delete(int port) { assert(port == MODBUS_UART_PORT); return ESP_OK; }
+
 esp_err_t uart_set_mode(int port, int mode)
 {
     assert(port == MODBUS_UART_PORT && mode == UART_MODE_RS485_HALF_DUPLEX);
@@ -121,11 +123,14 @@ int uart_write_bytes(int port, const void *data, size_t length)
         fake.stw = word(tx + 7);
         fake.hsw = word(tx + 9);
         fake.commands++;
-        assert(fake.stw == 0x047e || fake.stw == 0x047f);
+        assert(fake.stw == 0x047e || fake.stw == 0x047f || fake.stw == 0x04fe);
         if (fake.stw == 0x047f)
             fake.run_commands++;
-        else
+        else {
             assert(fake.hsw == 0);
+            if (fake.stw == 0x04fe)
+                fake.status &= 0xfff7u;
+        }
     }
     else
     {
@@ -252,7 +257,12 @@ static void boot(void)
     assert(status().ready_to_switch_on && !status().ready_to_operate &&
            !status().operation_enabled);
     assert(!status().off2_active && !status().off3_active && !status().switch_on_inhibited);
-    assert(fake.run_commands == 0 && fake.commands == 0);
+    assert(fake.run_commands == 0);
+#if V20_RUN_COMMISSIONED
+    assert(fake.commands == 1 && fake.stw == 0x047e);
+#else
+    assert(fake.commands == 0);
+#endif
     assert(status().watchdog_valid && status().watchdog_register_value == 1000 &&
            status().watchdog_parameter_expected_value == 500 &&
            !status().watchdog_config_known && fake.reference == 5000);
@@ -463,7 +473,9 @@ static void test_inhibited_status_is_communication_healthy(void)
            current.off2_active && current.off3_active && current.switch_on_inhibited);
     assert(current.status == 0xEB40 && current.actual_hz == 0);
     assert(!V20Modbus_Arm() && fake.run_commands == 0);
+#if !V20_RUN_COMMISSIONED
     assert(fake.commands == 0);
+#endif
 }
 
 static void test_nonrunning_status_transitions(void)

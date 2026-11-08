@@ -32,10 +32,10 @@ Motor data, allowable frequency range, direction and drive acceleration/decelera
 | STW | 40100 | 99 | Command word: 0x047E OFF1; 0x047F forward/run |
 | HSW | 40101 | 100 | Setpoint 0–16384 for 0–100% of P2000 |
 | ZSW / HIW | 40110 / 40111 | 109 / 110 | Status word and actual-frequency indication |
-| Watchdog | 40001 | 0 | 500 ms |
+| Watchdog | 40001 | 0 | Readback only; not assumed identical to P2014 |
 | Reference | 40016 | 15 | 5000 = 50.00 Hz |
 
-The driver uses FC16 for combined STW/HSW writes, FC03 for reads and FC06 for watchdog configuration. Modbus registers are big-endian with low-byte-first CRC transmission. Driver initialization requests OFF1 and checks the reference and status before permitting operation. A 0 Hz setpoint does not replace an explicit OFF1 stop.
+The driver uses FC16 for combined STW/HSW writes and FC03 for reads. It does not configure the watchdog or automatically change V20 parameters. Modbus registers are big-endian with low-byte-first CRC transmission. Driver initialization bootstraps with status/reference/watchdog reads and then requests OFF1 when V20 writes are permitted. STOPPED_PREPARE verifies a post-reset stopped command and fresh stopped feedback before READY; STARTING waits for post-START operation-enabled feedback. A 0 Hz setpoint does not replace an explicit OFF1 stop.
 
 Requests have bounded response handling, including frame timing and late-response quarantine. A write timeout does **not** prove that the V20 ignored a RUN command. The controller therefore avoids blind automatic RUN retries and attempts a stop following communication errors. The drive's independent telegram-watchdog response must be tested in hardware.
 
@@ -44,9 +44,9 @@ Requests have bounded response handling, including frame timing and late-respons
 The ESP32 uses an internal GPTimer and a **100 Hz / 10 ms** control cycle. V20 service is asynchronous; responses are not expected to complete inside each 10 ms control period.
 
 - **MANUAL:** frequency setpoint through a separate fifth-order ramp.
-- **AUTO:** Pitot airspeed feedback, a fifth-order reference, one-mass torque PID and an approximate inverse motor model that generates V20 frequency.
-- There is **no separate legacy frequency-domain PI controller** in the current firmware.
-- Real AUTO remains inhibited until motor and fan model parameters are independently validated.
+- **AUTO:** selectable identified frequency PI (current selection) or torque PID/inverse model. Both share physical START and safety handling.
+- Frequency permissions are enabled for the requested motor-disconnected bench configuration; numeric identification and valid calibration are still checked. Torque-to-V20 remains disabled.
+- None of these settings prove physical commissioning.
 
 See [ESP32 README](../../ESP32/README.md) and [Torque control](../control/TORQUE-CONTROL.md). The current software state and commissioning flags, not historical tuning figures, determine whether the machine can be operated.
 

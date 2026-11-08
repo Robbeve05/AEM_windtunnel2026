@@ -45,7 +45,8 @@ bool I2CBus_Init(void)
 
     return DigitalOutputs_Init();
 #else
-    mutex = xSemaphoreCreateMutex();
+    if (!mutex)
+        mutex = xSemaphoreCreateMutex();
     if (!mutex)
         return false;
     const i2c_config_t c = {.mode = I2C_MODE_MASTER,
@@ -54,12 +55,11 @@ bool I2CBus_Init(void)
                             .sda_pullup_en = true,
                             .scl_pullup_en = true,
                             .master.clk_speed = SENSOR_I2C_HZ};
-    ready = i2c_param_config(0, &c) == ESP_OK &&
+    if (!ready)
+        ready = i2c_param_config(0, &c) == ESP_OK &&
             i2c_driver_install(0, I2C_MODE_MASTER, 0, 0, 0) == ESP_OK;
-    bool ok = ready && DigitalOutputs_Init();
-    if (!ok)
-        ready = false;
-    return ok;
+    /* Keep an installed bus usable when only the inactive output write failed. */
+    return ready && DigitalOutputs_Init();
 #endif
 }
 

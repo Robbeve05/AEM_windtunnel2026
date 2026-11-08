@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
-    assert(OTA_MAINTENANCE_ENABLED==0 && SAFETY_IO_COMMISSIONED==0);
+    assert(OTA_MAINTENANCE_ENABLED==0 && SAFETY_IO_COMMISSIONED==1);
     SafetySnapshot s={.valid=true,.commissioned=true,.estop_pressed=true,
         .contactor_available=true,.stop_ok=true};
     assert(OtaSafety_Authorized(true,true,true,&s));

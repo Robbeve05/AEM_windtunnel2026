@@ -72,7 +72,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok);
 void V20Modbus_GetStatus(MotorStatus *status);
 
 /*
- * Call ONLY on an accepted NEW physical Start transition (READY->RUNNING).
+ * Call ONLY on an accepted NEW physical Start transition (READY->STARTING).
  * Returning true merely arms software; it is NOT a safety function.
  */
 bool V20Modbus_Arm(void);
@@ -86,6 +86,13 @@ void V20Modbus_Disarm(void);
  * It never clears an actual VFD fault or arms the motor.
  */
 void V20Modbus_RequestRecheck(void);
+
+/* Physical RESET only. Additional verified configuration and live safety are
+ * checked inside the driver. ON remains zero throughout the bounded pulse. */
+bool V20Modbus_RequestFaultAck(void);
+bool V20Modbus_StartConfirmed(int64_t start_entered_us);
+/* Simulation-only fault/permission injection; real firmware always rejects. */
+bool V20Modbus_Simulate(const char *name, bool active);
 
 /* Standard Modbus RTU CRC16 (public to facilitate host-side tests). */
 uint16_t V20Modbus_Crc16(const uint8_t *data, size_t length);

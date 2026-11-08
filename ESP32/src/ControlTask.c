@@ -92,6 +92,7 @@ typedef struct
     bool curve_running;
     float previous_ff_setpoint;
     bool v20_initialized;
+    uint32_t v20_init_retry_ms;
     bool control_clock_started;
     uint32_t cycles;
     uint32_t control_cycle_count;
@@ -289,7 +290,7 @@ static void Control_WaitForTasks(ControlContext *ctx)
     }
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
-    StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+    StateMachine_Fault(&ctx->machine, FAULT_INITIALIZATION, ctx->now_ms);
     V20Modbus_Disarm();
     Control_PublishStatus(ctx);
 }
@@ -298,9 +299,9 @@ static void Control_WaitForTasks(ControlContext *ctx)
 // Control_HoldInitializationFault()
 
 /*
- * Keeps failed startup disabled until reboot, without starting the control
- * timer. Continues publishing faults and servicing disabled V20 requests for
- * diagnostics.
+ * Keeps failed startup disabled while required services recover, without
+ * starting the control timer. Publishes diagnostics and resumes INIT only
+ * after the task barrier is healthy; RESET/START are never inferred.
  */
 static void Control_HoldInitializationFault(ControlContext *ctx)
 {
@@ -316,6 +317,15 @@ static void Control_HoldInitializationFault(ControlContext *ctx)
         Control_PublishStatus(ctx);
         Control_UpdateMotor(ctx);
         Control_PublishStatus(ctx);
+        if ((xEventGroupGetBits(handle_ThreadEventGroup) & EVT_ALL_TASKS_READY) == EVT_ALL_TASKS_READY)
+        {
+            /* Restored initialization is not reset acceptance or run permission. */
+            ctx->tasks_ready = true;
+            StateMachine_Init(&ctx->machine, ctx->now_ms);
+            ctx->previous_start_sequence = ctx->safety.start_sequence;
+            ctx->previous_reset_sequence = ctx->safety.reset_sequence;
+            return;
+        }
         vTaskDelay(pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS));
     }
 }
@@ -400,7 +410,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
         switch (command.type)
         {
         case CMD_MODE:
-            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
+            if (ctx->machine.state != STATE_STARTING && ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
             {
                 ctx->status.mode = (OperatingMode)(int)command.values[0];
                 ctx->status.manual_hz = ctx->status.applied_hz = ctx->status.output = 0;
@@ -419,7 +429,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
             break;
         case CMD_PID:
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
-            if (ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
+            if (ctx->machine.state != STATE_STARTING && ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STOP)
             {
                 RegelaarParameters parameters;
                 /* Wire protocol remains legacy Kp/Ki/Kd, converted at this boundary. */
@@ -463,7 +473,12 @@ static void Control_CheckSafety(ControlContext *ctx)
         ctx->timing_stats.fault_missed_ticks = 0;
     }
 
-    if (ctx->machine.reset_pending && !ctx->safety.estop_pressed && ctx->safety.relay_ok)
+    if (ctx->reset && (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT) &&
+        ctx->safety.valid && ctx->safety.commissioned && ctx->safety.outputs_ok &&
+        ctx->now_ms - ctx->safety.tick_ms < INPUT_TIMEOUT_MS &&
+        !ctx->safety.estop_pressed && !ctx->safety.reset_pressed && ctx->safety.stop_ok &&
+        ctx->safety.relay_ok &&
+        (!ctx->safety.contactor_available || ctx->safety.contactor_ok))
         SafetyIO_Acknowledge();
 
     /* This becomes true only after a fresh, acknowledged OFF1 and status
@@ -479,7 +494,10 @@ static void Control_CheckSafety(ControlContext *ctx)
                         .drive_ready = ctx->motor.operational_ready,
                         .drive_ok = ctx->motor.ok,
                         .drive_fault_free = ctx->motor.drive_fault_free,
-                        .drive_fault = (ctx->motor.status & 0x0008u) != 0,
+                        .drive_fault = ctx->motor.status_valid && (ctx->motor.status & 0x0008u) != 0,
+                        .drive_run_locked = ctx->motor.run_locked,
+                        .drive_operation_enabled = ctx->motor.operation_enabled,
+                        .stop_command_acknowledged = ctx->motor.stopped_command_acknowledged,
                         .drive_communication_ok = ctx->motor.communication_ok,
                         .v20_response_received = ctx->motor.status_valid,
                         .v20_status_healthy = ctx->motor.status_healthy,
@@ -495,7 +513,11 @@ static void Control_CheckSafety(ControlContext *ctx)
                         .reset = ctx->reset,
                         .urgent_fault = SafetyIO_Fault(),
                         .timing_fault = ctx->latched_timing_fault,
-                        .stop_confirmed = stop_confirmed};
+                        .stop_confirmed = stop_confirmed,
+                        .stopped_prepared = V20Modbus_StopConfirmed(
+                            (int64_t)ctx->machine.entered_ms * 1000LL, STOP_CONFIRM_HZ),
+                        .start_confirmed = V20Modbus_StartConfirmed(
+                            (int64_t)ctx->machine.entered_ms * 1000LL)};
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -511,10 +533,15 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
     StateMachine_Step(&ctx->machine, &ctx->inputs);
 
     if (ctx->machine.recovery_requested)
+    {
         V20Modbus_RequestRecheck();
+        (void)V20Modbus_RequestFaultAck();
+    }
+    if (previous_state != STATE_STOPPED_PREPARE && ctx->machine.state == STATE_STOPPED_PREPARE)
+        V20Modbus_Disarm();
 
     /* A new physical START is the ONLY place that may arm the VFD. */
-    if (previous_state == STATE_READY && ctx->machine.state == STATE_RUNNING)
+    if (previous_state == STATE_READY && ctx->machine.state == STATE_STARTING)
     {
         const bool feedback_ok =
             ctx->motor.ok && ctx->motor.ready && isfinite(ctx->motor.actual_hz) &&
@@ -523,12 +550,12 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 #if CONTROL_TYPE == CONTROL_TORQUE_PI
         if (ctx->status.mode == MODE_AUTO &&
             (!ctx->torque_model_ready || (!SIMULATION_MODE && !MOTOR_MODEL_TORQUE_TO_V20_ENABLED)))
-            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+            StateMachine_Fault(&ctx->machine, FAULT_CONFIGURATION, ctx->now_ms);
 #elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
         if (ctx->status.mode == MODE_AUTO &&
             (!ctx->frequency_controller_ready || !FanCalibration_IsValid() ||
              (!SIMULATION_MODE && !ctx->frequency_model.commissioned)))
-            StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+            StateMachine_Fault(&ctx->machine, FAULT_CONFIGURATION, ctx->now_ms);
 #endif
         else if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
             StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
@@ -538,7 +565,8 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 
     /* Disarm immediately on STOP or FAULT; the separate operational VFD-enable
      * relay permissive is kept enabled through a healthy normal OFF1 ramp. */
-    if ((previous_state == STATE_RUNNING && ctx->machine.state != STATE_RUNNING) ||
+    if (((previous_state == STATE_RUNNING || previous_state == STATE_STARTING) &&
+         ctx->machine.state != STATE_RUNNING && ctx->machine.state != STATE_STARTING) ||
         (previous_state != STATE_FAULT && ctx->machine.state == STATE_FAULT))
         V20Modbus_Disarm();
 }
@@ -698,6 +726,12 @@ static void Control_UpdateMotor(ControlContext *ctx)
                            SafetyIO_Fault() == FAULT_NONE;
 
     const int64_t service_started_us = esp_timer_get_time();
+    if (!ctx->v20_initialized && ctx->now_ms - ctx->v20_init_retry_ms >= 1000u)
+    {
+        ctx->v20_init_retry_ms = ctx->now_ms;
+        ctx->v20_initialized = V20Modbus_Init();
+        V20Modbus_Disarm();
+    }
     if (ctx->v20_initialized)
         V20Modbus_Service(&request, safety_ok);
     ctx->status.service_us = (uint32_t)(esp_timer_get_time() - service_started_us);
@@ -816,7 +850,7 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->safety_inputs_valid = ctx->safety.valid;
     diag->safety_inputs_fresh =
         ctx->safety.valid &&
-        (TickType_t)(ctx->now_tick - ctx->safety.tick_ms) < pdMS_TO_TICKS(INPUT_TIMEOUT_MS);
+        ctx->now_ms - ctx->safety.tick_ms < INPUT_TIMEOUT_MS;
     diag->estop_released = !ctx->safety.estop_pressed;
     diag->stop_ok = ctx->safety.stop_ok;
     diag->reset_detected = ctx->reset;
@@ -872,6 +906,8 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->blocking_reasons = StateMachine_GetBlockingReasons(&ctx->machine, &ctx->inputs);
     DigitalOutputStatus outputs = {0};
     DigitalOutputs_GetStatus(&outputs);
+    diag->digital_outputs_initialized = outputs.initialized;
+    diag->digital_outputs_healthy = outputs.initialized && outputs.confirmed_valid;
     diag->do1_requested = outputs.vfd_requested;
     diag->do1_acknowledged = outputs.vfd_acknowledged;
     diag->do1_ack_valid = outputs.confirmed_valid;
@@ -884,7 +920,7 @@ static void Control_PublishStatus(ControlContext *ctx)
         ctx->status.applied_hz = ctx->status.output * V20_REFERENCE_HZ / 100.0f;
     const MotorRequest command = {.output = ctx->status.output,
                                   .tick = ctx->now_tick,
-                                  .run = ctx->status.running,
+                                  .run = ctx->status.running || ctx->machine.state == STATE_STARTING,
                                   .permissive = ctx->machine.permissive,
                                   .coast = ctx->machine.state == STATE_FAULT,
                                   .epoch = ctx->machine.epoch};
@@ -910,10 +946,12 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
         StateMachine_Fault(&ctx->machine, ctx->latched_timing_fault, ctx->now_ms);
         V20Modbus_Disarm();
     }
+    /* State-specific drive diagnosis belongs to StateMachine_Step. Only transport
+     * loss is acted upon here immediately after service; never relabel a VFD trip. */
     if (!ctx->v20_initialized ||
-        ((!ctx->motor.ok || !ctx->motor.operational_ready) &&
-         (ctx->machine.state == STATE_RUNNING || ctx->machine.state == STATE_READY ||
-          ctx->machine.state == STATE_STOP)))
+        (!ctx->motor.communication_ok &&
+         (ctx->machine.state == STATE_STARTING || ctx->machine.state == STATE_RUNNING ||
+          ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
     {
         StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
         V20Modbus_Disarm();

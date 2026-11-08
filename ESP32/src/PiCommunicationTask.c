@@ -40,6 +40,7 @@
 #include "SafetyIO.h"
 #include "StatusOutput.h"
 #include "TaskData.h"
+#include "V20Modbus.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // File-local data structures
@@ -167,11 +168,11 @@ static void reply(const char *text)
 static void process(const char *line)
 {
 #if SIMULATION_MODE
-    char name[16], extra;
+    char name[32], extra;
     int active;
-    if (sscanf(line, "SIM %15s %d %c", name, &active, &extra) == 2 && (active == 0 || active == 1))
+    if (sscanf(line, "SIM %31s %d %c", name, &active, &extra) == 2 && (active == 0 || active == 1))
     {
-        reply(SafetyIO_Simulate(name, active != 0) ? "OK SIM\n" : "ERR SIM\n");
+        reply((SafetyIO_Simulate(name, active != 0) || V20Modbus_Simulate(name, active != 0)) ? "OK SIM\n" : "ERR SIM\n");
         return;
     }
 #endif
@@ -221,7 +222,7 @@ static void process(const char *line)
         Telemetry current = {0};
         if (xQueuePeek(telemetry, &current, 0) != pdTRUE ||
             (c.type == CMD_MODE &&
-             (current.state == STATE_RUNNING || current.state == STATE_STOP)) ||
+             (current.state == STATE_STARTING || current.state == STATE_RUNNING || current.state == STATE_STOP)) ||
             (c.type == CMD_FREQ && current.mode != MODE_MANUAL))
         {
             reply("ERR MODE_OR_STATE\n");
@@ -354,7 +355,9 @@ void PiCommunicationTask(void *argument)
                 MotorStatus motor = {0};
                 xQueuePeek(sensors, &sample, 0);
                 xQueuePeek(motor_status, &motor, 0);
-                char buffer[1024];
+                /* Single task owns this buffer. Keep full diagnostics off the
+                 * task stack; the old 1024-byte buffer could never append them. */
+                static char buffer[6144];
                 int length = snprintf(
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f "
@@ -460,7 +463,7 @@ void PiCommunicationTask(void *argument)
                                        outputs.confirmed_image, outputs.confirmed_valid,
                                        EXTERNAL_STATUS_LEDS_ENABLED);
                 const ReadyDiagnostics *diag = &t.ready_diag;
-                if (length > 0 && length < (int)sizeof(buffer) - 1152)
+                if (length > 0 && length < (int)sizeof(buffer) - 3072)
                     length += snprintf(
                         buffer + length, sizeof(buffer) - length,
                         " diag_blockers=%lu diag_estop_released=%d diag_stop_ok=%d"
@@ -529,10 +532,21 @@ void PiCommunicationTask(void *argument)
                         diag->pitot_communication_ok, diag->sensor_data_valid,
                         diag->sensor_data_fresh, diag->sensor_ok, ethernet_link, heartbeat_received,
                         heartbeat_fresh, diag->pi_ok);
+                if (length > 0 && length < (int)sizeof(buffer) - 180)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " diag_v20_run_locked=%d diag_v20_warning=%d diag_v20_fault_ack_pending=%d"
+                        " diag_v20_stop_attempts=%lu",
+                        motor.run_locked, motor.warning_active, motor.fault_ack_pending,
+                        (unsigned long)motor.stop_attempts);
                 for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 32;
                      tap++)
                     length += snprintf(buffer + length, sizeof(buffer) - length, " p%d=%.3f", tap,
                                        (sample.taps_valid & (1u << tap)) ? sample.taps[tap] : 0.0f);
+                if (length <= 0 || length >= (int)sizeof(buffer) - 2)
+                {
+                    ESP_LOGE("PiCommunication", "STATUS frame exceeded buffer; frame discarded");
+                    continue;
+                }
                 if (length > 0 && length < (int)sizeof(buffer) - 2)
                 {
                     buffer[length++] = '\n';

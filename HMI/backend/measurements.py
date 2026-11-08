@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -11,12 +12,28 @@ from .reynolds import REYNOLDS_FIELDS
 
 
 def save_json(path: Path, value: dict) -> None:
-    temp = path.with_suffix('.tmp')
-    with temp.open('w', encoding='utf-8') as stream:
-        json.dump(value, stream, indent=2, allow_nan=False)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temp.replace(path)
+    # Each writer owns its temporary file. On Windows a concurrent metadata
+    # reader can briefly deny atomic replacement; retain the old complete file
+    # and retry only sharing/access errors, with a finite deadline.
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix=path.name+'.', suffix='.tmp', delete=False) as stream:
+            temp = Path(stream.name)
+            json.dump(value, stream, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        for attempt in range(10):
+            try:
+                temp.replace(path)
+                break
+            except PermissionError as exc:
+                if getattr(exc, 'winerror', None) not in (5, 32, 33) or attempt == 9:
+                    raise
+                time.sleep(min(.01*(attempt+1), .05))
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
 
 
 class Measurements:

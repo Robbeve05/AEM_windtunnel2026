@@ -127,6 +127,7 @@ void InputHandlerTask(void *argument)
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     TickType_t wake = xTaskGetTickCount();
     bool initialized = false;
+    uint32_t last_init_retry_ms = 0;
     for (;;)
     {
         SafetySnapshot s = SafetyIO_Read();
@@ -142,6 +143,14 @@ void InputHandlerTask(void *argument)
         Telemetry current = {0};
         bool telemetry_available = xQueuePeek(telemetry, &current, 0) == pdTRUE;
         StatusIndicator indicators = StatusOutput_Get(&current, telemetry_available, s.tick_ms);
+        /* Retry only the inactive initialization path until the module is ready. */
+        DigitalOutputStatus output_state = {0};
+        DigitalOutputs_GetStatus(&output_state);
+        if (!output_state.initialized && s.tick_ms - last_init_retry_ms >= 1000u)
+        {
+            last_init_retry_ms = s.tick_ms;
+            (void)I2CBus_Init();
+        }
         s.outputs_ok = DigitalOutputs_Set(enable, indicators);
         xQueueOverwrite(safety_status, &s);
         SafetyIO_PublishButtonEvents(&s, &previous);
@@ -150,9 +159,9 @@ void InputHandlerTask(void *argument)
         {
             /* Only a successful first output initialization pass publishes readiness.
              */
-            initialized = true;
             if (s.outputs_ok)
             {
+                initialized = true;
                 ESP_LOGI("InputHandler",
                          "Input/output task initialized; initial output write successful");
                 xEventGroupSetBits(handle_ThreadEventGroup, EVT_INPUT_TASK_READY);

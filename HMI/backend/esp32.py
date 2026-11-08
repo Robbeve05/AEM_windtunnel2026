@@ -7,10 +7,10 @@ import re
 import time
 from urllib.parse import unquote
 
-STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"}
+STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT", "STOPPED_PREPARE", "STARTING"}
 FLOATS = {"air_density", "manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
           "control_hz", "modbus_hz", "filter_hz"}
-INTS = {"cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
+INTS = {"diag_v20_run_locked", "diag_v20_warning", "diag_v20_fault_ack_pending", "diag_v20_stop_attempts", "cal_valid", "cal_active", "cal_points", "cal_crc", "cal_version", "outputs_ok", "output_write_errors", "output_image", "output_ack_image", "output_ack_valid", "external_leds_enabled","led_green", "led_yellow", "led_red","running", "sensor_ok", "motor_ok", "sim", "drive_status", "drive_fault",
         "estop", "relay", "reset_required", "stop", "inputs_valid", "pi", "commissioned",
         "estop_pressed", "safety_relay_ok", "stop_button_ok", "pi_connected", "taps_valid",
         "ethernet", "ethernet_link", "ipv4_configured", "pi_tcp_connected",

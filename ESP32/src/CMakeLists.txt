@@ -23,5 +23,6 @@ idf_component_register(
         StatusIndicators.c
         TorqueModel.c
         V20Modbus.c
+        V20Simulation.c
     INCLUDE_DIRS "../include"
     REQUIRES nvs_flash driver esp_timer esp_eth esp_netif esp_event esp_system app_update mbedtls)

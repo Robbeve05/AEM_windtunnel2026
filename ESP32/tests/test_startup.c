@@ -16,7 +16,10 @@ static EventBits_t groups[4];
 static unsigned queue_count, group_count, task_count, watchdog_calls;
 static unsigned hardware_stage;
 static bool output_ok = true, sensor_init_ok = true;
+static unsigned sensor_failures_remaining;
 static bool calibration_initialized;
+static bool retry_output;
+static unsigned recovery_passes;
 static jmp_buf task_finished;
 
 void SafetyIO_Init(void) { assert(hardware_stage == 0); hardware_stage = 1; }
@@ -69,6 +72,7 @@ void vTaskDelayUntil(TickType_t *wake,TickType_t period)
 {
     (void)wake;
     assert(period == 10 || period == SENSOR_PERIOD_MS);
+    if (retry_output && recovery_passes++ == 0) { output_ok=true; return; }
     longjmp(task_finished,1);
 }
 int xQueuePeek(QueueHandle_t q,void *data,TickType_t wait)
@@ -85,6 +89,8 @@ int xQueueOverwrite(QueueHandle_t q,const void *data)
 EventBits_t xEventGroupSetBits(EventGroupHandle_t group,EventBits_t bits) { return *group |= bits; }
 SafetySnapshot SafetyIO_Read(void) { return (SafetySnapshot){.tick_ms=100}; }
 bool SafetyIO_Inhibited(void) { return true; }
+void vTaskDelay(TickType_t ticks) { (void)ticks; }
+void DigitalOutputs_GetStatus(DigitalOutputStatus *s) { *s=(DigitalOutputStatus){.initialized=true}; }
 bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators) { assert(!enabled); (void)indicators; return output_ok; }
 void SafetyIO_PublishButtonEvents(const SafetySnapshot *current,const SafetySnapshot *previous)
 {
@@ -93,7 +99,10 @@ void SafetyIO_PublishButtonEvents(const SafetySnapshot *current,const SafetySnap
     assert(xQueuePeek(safety_status,&published,0));
     assert(published.tick_ms == current->tick_ms);
 }
-bool SensorLib_Init(void) { return sensor_init_ok; }
+bool SensorLib_Init(void) {
+    if (sensor_failures_remaining) { sensor_failures_remaining--; return false; }
+    return sensor_init_ok;
+}
 bool FanCalibration_Init(void)
 {
     assert(hardware_stage == 2 && task_count == 0);
@@ -115,6 +124,10 @@ int main(void)
     *handle_ThreadEventGroup=0;output_ok=false;
     if (!setjmp(task_finished)) InputHandlerTask(NULL);
     assert(!(*handle_ThreadEventGroup & EVT_INPUT_TASK_READY));
+    retry_output=true; recovery_passes=0;
+    if (!setjmp(task_finished)) InputHandlerTask(NULL);
+    assert((*handle_ThreadEventGroup & EVT_INPUT_TASK_READY) && output_ok);
+    retry_output=false;
     if (!setjmp(task_finished)) SensorTask(NULL);
     assert(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY);
     Sample sample;assert(xQueuePeek(sensors,&sample,0) && !sample.valid);
@@ -122,6 +135,9 @@ int main(void)
     *handle_ThreadEventGroup=0;sensor_init_ok=false;
     if (!setjmp(task_finished)) SensorTask(NULL);
     assert(!(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY));
+    sensor_init_ok=true; sensor_failures_remaining=1;
+    if (!setjmp(task_finished)) SensorTask(NULL);
+    assert(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY);
     puts("PASS queue/event creation before tasks; unchanged scheduling; successful local initialization only");
     puts("PASS readiness independent of sensor calibration and physical health; failed init remains inhibited");
     return 0;

@@ -15,6 +15,17 @@ FRAME = ("STATUS state=FAULT fault=EMERGENCY_STOP estop_pressed=1 "
 
 
 class ParserTests(unittest.TestCase):
+    def test_preparation_starting_and_independent_drive_diagnostics(self):
+        for state in ('STOPPED_PREPARE', 'STARTING'):
+            data = parse_status(FRAME.replace('state=FAULT', 'state=' + state)
+                                + ' diag_v20_run_locked=1 diag_v20_warning=0'
+                                ' diag_v20_fault_ack_pending=0 diag_v20_stop_attempts=3')
+            self.assertIsNotNone(data)
+            self.assertEqual(data['state'], state)
+            self.assertEqual(data['running'], 0)
+            self.assertEqual(data['diag_v20_run_locked'], 1)
+            self.assertEqual(data['diag_v20_stop_attempts'], 3)
+
     def test_authoritative_status_lamps(self):
         data = parse_status(FRAME + ' led_green=0 led_yellow=1 led_red=1 status_text=INITIALIZING external_leds_enabled=0 output_write_errors=3 output_ack_valid=0')
         indication = status_indication(data)

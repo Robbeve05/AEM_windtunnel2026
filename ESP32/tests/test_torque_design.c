@@ -24,8 +24,8 @@ int main(void)
  assert(MOTOR_VARIANT_CONFIRMED==1);
  /* Manufacturer-supplied inertia does not enable hardware. */
  assert(MOTOR_MODEL_TORQUE_TO_V20_ENABLED==0);
- assert(SAFETY_IO_COMMISSIONED==0);
- assert(V20_RUN_COMMISSIONED==0);
+ assert(SAFETY_IO_COMMISSIONED==1);
+ assert(V20_RUN_COMMISSIONED==1);
  assert(close_to(out.ti,10.0f/out.wb,1e-5f));
  assert(close_to(out.td,3.0f/out.wb,1e-5f));
  assert(close_to(out.tf,1.0f/(10.0f*out.wb),1e-5f));

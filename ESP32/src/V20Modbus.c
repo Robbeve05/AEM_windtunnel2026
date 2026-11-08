@@ -29,6 +29,9 @@
 
 #include "AppConfig.h"
 #include "V20Modbus.h"
+#if SIMULATION_MODE
+#include "V20Simulation.h"
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Local definitions
@@ -79,6 +82,11 @@ typedef enum
 typedef struct
 {
     bool uart_ok;
+    bool transport_error;
+    bool operation_seen, operation_lost;
+    unsigned stop_attempts;
+    unsigned fault_ack_phase; /* 0 idle, 1 pulse high requested, 2 low required */
+    int64_t last_stop_ack_us, last_run_ack_us, status_request_us;
     bool configured;
     bool armed;
     bool latched_fault;
@@ -121,6 +129,12 @@ typedef struct
 // File-local variables
 
 static V20Context d;
+#if SIMULATION_MODE
+static V20Simulation simulated_drive;
+static int64_t simulation_previous_us;
+static portMUX_TYPE simulation_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t simulation_inputs, simulation_previous_inputs;
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
@@ -156,6 +170,11 @@ bool V20Modbus_Init(void)
 {
     memset(&d, 0, sizeof(d));
 #if SIMULATION_MODE
+    V20Simulation_Init(&simulated_drive);
+    /* Intended operational relay -> In1/OFF2 chain; configurable independently
+     * for fault-injection tests. This is a model, not as-built evidence. */
+    simulation_inputs = simulation_previous_inputs = 32u;
+    simulation_previous_us = esp_timer_get_time();
     d.uart_ok = true;
 #else
     const uart_config_t cfg = {.baud_rate = MODBUS_BAUD,
@@ -166,10 +185,19 @@ bool V20Modbus_Init(void)
                                .source_clk = UART_SCLK_APB};
     if (uart_param_config(MODBUS_UART_PORT, &cfg) != ESP_OK ||
         uart_set_pin(MODBUS_UART_PORT, MODBUS_TX_PIN, MODBUS_RX_PIN, MODBUS_DE_PIN,
-                     UART_PIN_NO_CHANGE) != ESP_OK ||
-        uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 0, NULL, 0) != ESP_OK ||
-        uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK)
+                     UART_PIN_NO_CHANGE) != ESP_OK)
     {
+        record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
+        return false;
+    }
+    if (uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 0, NULL, 0) != ESP_OK)
+    {
+        record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
+        return false;
+    }
+    if (uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK)
+    {
+        (void)uart_driver_delete(MODBUS_UART_PORT);
         record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
         return false;
     }
@@ -386,11 +414,15 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
     }
     else
     {
+        if (!d.latched_fault)
+            d.stop_attempts = 0;
         d.latched_fault = true;
         d.pending_stop = true;
     }
+    d.transport_error = true;
+    d.fault_ack_phase = 0;
     d.phase = PH_RECOVERY;
-    d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
+    d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
     d.rx_used = 0;
     d.active_operation = V20_OP_NONE;
 }
@@ -401,6 +433,7 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
 static void accept_exception(int64_t now_us, uint32_t exception_code)
 {
     d.errors++;
+    d.transport_error = false;
     d.last_rx_success_us = now_us;
     d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
     d.phase = PH_IDLE;
@@ -426,7 +459,10 @@ static void accept_exception(int64_t now_us, uint32_t exception_code)
         d.control_word_acknowledged_valid = false;
         d.armed = false;
         d.demand_run = false;
+        if (!d.latched_fault)
+            d.stop_attempts = 0;
         d.latched_fault = true;
+        d.fault_ack_phase = 0;
         d.pending_stop = true;
     }
 
@@ -454,6 +490,10 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
     if (operation == V20_OP_WRITE_CONTROL)
     {
         uint16_t stw = run ? V20_WORD_RUN : V20_WORD_OFF1;
+        if (!run && d.fault_ack_phase == 1)
+            stw |= 0x0080u;
+        if (!run)
+            d.stop_attempts++;
         uint16_t hsw = run ? (uint16_t)lroundf(percent * 16384.0f / 100.0f) : 0;
         size = build_command(d.tx, stw, hsw);
         d.active_stw = stw;
@@ -529,6 +569,7 @@ static V20CommError verify_reply(uint32_t *exception_code)
 
 static void accept_reply(int64_t now_us)
 {
+    d.transport_error = false;
     d.last_rx_success_us = now_us;
     d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
     d.phase = PH_IDLE;
@@ -537,6 +578,7 @@ static void accept_reply(int64_t now_us)
     {
     case V20_OP_READ_STATUS:
     {
+        d.status_request_us = d.tx_started_us;
         d.status_word = get_word(&d.rx[3]);
         const uint16_t raw = get_word(&d.rx[5]);
         const int32_t signed_raw = raw < 32768u ? (int32_t)raw : (int32_t)raw - 65536;
@@ -550,6 +592,18 @@ static void accept_reply(int64_t now_us)
                             (V20_STATUS_READY_BIT | V20_STATUS_REMOTE_BIT | V20_STATUS_OFF2_BIT |
                              V20_STATUS_OFF3_BIT) &&
                         (d.status_word & (V20_STATUS_FAULT_BIT | V20_STATUS_INHIBIT_BIT)) == 0;
+        if (d.armed && d.last_run_ack_us > 0 && d.status_request_us > d.last_run_ack_us)
+        {
+            if ((d.status_word & V20_STATUS_OPERATION_ENABLED_BIT) != 0)
+                d.operation_seen = true;
+            else if (d.operation_seen)
+            {
+                d.operation_lost = true;
+                d.armed = d.demand_run = false;
+                d.pending_stop = true;
+                d.stop_attempts = 0;
+            }
+        }
         d.status_valid = true;
         d.last_status_us = now_us;
         break;
@@ -579,7 +633,18 @@ static void accept_reply(int64_t now_us)
         d.control_word_acknowledged = d.active_stw;
         d.control_word_acknowledged_valid = true;
         if (!d.last_run_command)
+        {
             d.pending_stop = false;
+            if ((d.active_stw & 0x0080u) != 0)
+                d.fault_ack_phase = 2;
+            else
+            {
+                d.fault_ack_phase = 0;
+                d.last_stop_ack_us = now_us;
+            }
+        }
+        else if (d.last_run_ack_us == 0)
+            d.last_run_ack_us = now_us;
         d.last_command_us = now_us;
         break;
     default:
@@ -606,17 +671,7 @@ static void simulate_response(int64_t now_us)
     if (d.rx[1] == V20_FC_WRITE_MULTI)
     {
         memcpy(&d.rx[2], &d.tx[2], 4);
-        if (d.active_stw == V20_WORD_RUN)
-        {
-            const float pct = (float)d.active_hsw * 100.0f / 16384.0f;
-            Simulation_SetOutput(pct);
-            d.actual_hz = pct * 0.5f;
-        }
-        else
-        {
-            Simulation_SetOutput(0.0f);
-            d.actual_hz = 0.0f;
-        }
+        V20Simulation_Command(&simulated_drive, d.active_stw, d.active_hsw);
         d.rx_used = 8;
     }
     else
@@ -627,8 +682,8 @@ static void simulate_response(int64_t now_us)
         d.rx[2] = (uint8_t)(2 * d.active_count);
         if (d.active_operation == V20_OP_READ_STATUS)
         {
-            put_word(&d.rx[3], 0x0231u);
-            put_word(&d.rx[5], (uint16_t)lroundf(d.actual_hz * 16384.0f / V20_REFERENCE_HZ));
+            put_word(&d.rx[3], V20Simulation_Status(&simulated_drive));
+            put_word(&d.rx[5], (uint16_t)lroundf(simulated_drive.actual_hz * 16384.0f / V20_REFERENCE_HZ));
         }
         else
             put_word(&d.rx[3], value);
@@ -695,6 +750,13 @@ static void receive_pending(int64_t now_us)
 static void restart_commissioning(void)
 {
     d.latched_fault = false;
+    d.transport_error = false;
+    d.operation_seen = d.operation_lost = false;
+    d.last_rx_success_us = 0;
+    d.last_stop_ack_us = d.last_run_ack_us = d.status_request_us = 0;
+    d.control_word_acknowledged_valid = d.control_word_requested_valid = false;
+    d.stop_attempts = 0;
+    d.pending_stop = true;
     d.armed = false;
     d.status_valid = false;
     d.drive_ready = false;
@@ -727,11 +789,14 @@ bool V20Modbus_Arm(void)
     const int64_t now_us = esp_timer_get_time();
     const bool good = d.uart_ok && d.diagnostics_complete && d.reference_config_valid &&
                       (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid) &&
-                      !d.latched_fault && !d.recheck_pending && d.status_valid &&
+                      !d.latched_fault && !d.operation_lost && !d.recheck_pending && d.status_valid &&
                       d.drive_fault_free && d.drive_ready &&
                       now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
     if (!good)
         return false;
+    d.last_run_ack_us = 0;
+    d.operation_seen = false;
+    d.stop_attempts = 0;
     d.armed = true;
     return true;
 #endif
@@ -742,10 +807,11 @@ bool V20Modbus_Arm(void)
 
 void V20Modbus_Disarm(void)
 {
-    const bool stop_required = d.pending_stop || d.demand_run || d.last_run_command;
+    if (!d.pending_stop && !d.latched_fault)
+        d.stop_attempts = 0;
     d.armed = false;
     d.demand_run = false;
-    d.pending_stop = stop_required;
+    d.pending_stop = true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -759,11 +825,44 @@ void V20Modbus_RequestRecheck(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// V20Modbus_RequestFaultAck()
+
+bool V20Modbus_RequestFaultAck(void)
+{
+    /* This API is called only from the accepted physical RESET path. No
+     * parameter write is performed. Configuration permission defaults OFF. */
+    if (!(SIMULATION_MODE || V20_RUN_COMMISSIONED) || !V20_FAULT_ACK_VERIFIED ||
+        !d.reference_config_valid || !d.status_valid || d.armed || d.demand_run ||
+        (d.status_word & V20_STATUS_FAULT_BIT) == 0 || d.fault_ack_phase != 0)
+        return false;
+    d.stop_attempts = 0;
+    d.fault_ack_phase = 1;
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // V20Modbus_Service()
 
 void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
 {
     const int64_t now_us = esp_timer_get_time();
+#if SIMULATION_MODE
+    portENTER_CRITICAL(&simulation_lock);
+    uint32_t inputs = simulation_inputs;
+    portEXIT_CRITICAL(&simulation_lock);
+    simulated_drive.off1 = (inputs & 1u) != 0;
+    simulated_drive.off2 = (inputs & 2u) != 0;
+    simulated_drive.off3 = (inputs & 4u) != 0;
+    simulated_drive.persistent_fault = (inputs & 16u) != 0;
+    if (((inputs & 8u) && !(simulation_previous_inputs & 8u)) || simulated_drive.persistent_fault)
+        simulated_drive.fault = true;
+    simulated_drive.relay_required = (inputs & 32u) != 0;
+    simulated_drive.relay_permission = !(inputs & 64u) && safety_ok && request != NULL && request->permissive;
+    simulation_previous_inputs = inputs;
+    V20Simulation_Step(&simulated_drive, (float)(now_us - simulation_previous_us) / 1000000.0f);
+    simulation_previous_us = now_us;
+    Simulation_SetOutput(simulated_drive.actual_hz * 2.0f);
+#endif
     if (!d.uart_ok)
         return;
     const bool fresh = request != NULL && (TickType_t)(xTaskGetTickCount() - request->tick) <
@@ -780,10 +879,21 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     }
     if (d.latched_fault)
         d.armed = false;
-    d.demand_run = d.armed && requested_run && safety_ok && d.configured && !d.latched_fault;
+    d.demand_run = d.armed && requested_run && safety_ok && d.configured && !d.latched_fault && !d.operation_lost;
 
+    if (!safety_ok && d.fault_ack_phase != 0)
+    {
+        d.fault_ack_phase = 0;
+        d.pending_stop = true;
+    }
     if (d.phase == PH_RECOVERY)
     {
+#if !SIMULATION_MODE
+        uint8_t discard[V20_MAX_FRAME];
+        const int received = uart_read_bytes(MODBUS_UART_PORT, discard, sizeof(discard), 0);
+        if (received > 0)
+            d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
+#endif
         if (now_us < d.bus_quiet_until_us)
             return;
         d.phase = PH_IDLE;
@@ -809,7 +919,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         d.armed = false;
         d.latched_fault = d.diagnostics_complete;
     }
-    if (d.latched_fault || now_us < d.bus_quiet_until_us)
+    if (now_us < d.bus_quiet_until_us)
         return;
     if (d.bootstrap_next != V20_OP_NONE)
     {
@@ -818,9 +928,9 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     }
     if (!d.diagnostics_complete)
         return;
-    const bool operation_commissioned =
-        (SIMULATION_MODE || V20_RUN_COMMISSIONED) && d.reference_config_valid &&
-        (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid);
+    /* OFF1 does not depend on setpoint scaling. Configuration mismatch must
+     * inhibit RUN, not prevent a bounded stopped command to a responding V20. */
+    const bool operation_commissioned = SIMULATION_MODE || V20_RUN_COMMISSIONED;
     if (!operation_commissioned)
     {
         if (!d.status_valid ||
@@ -828,24 +938,38 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
             (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
     }
-    if (!d.configured)
+    if (!d.status_valid)
+    {
+        (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
+    }
+    /* A latched run lock never prevents bounded OFF1 attempts. Fault ACK is
+     * also bounded, safety gated, and always has ON=0. STOP outranks polling. */
+    if (d.fault_ack_phase != 0 && safety_ok && d.stop_attempts < V20_STOP_MAX_ATTEMPTS)
+    {
+        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
+        return;
+    }
+    if ((d.pending_stop || (!d.demand_run && d.last_run_command)) &&
+        d.stop_attempts < V20_STOP_MAX_ATTEMPTS)
+    {
+        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
+        return;
+    }
     if (!d.status_valid || now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
     {
         (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
     }
-    if (d.pending_stop || (!d.demand_run && d.last_run_command))
-    {
-        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
+    if (d.latched_fault)
         return;
-    }
     if (d.demand_run)
     {
         if (now_us - d.last_command_us >= (int64_t)V20_COMMAND_PERIOD_MS * US_PER_MS)
             (void)send_operation(V20_OP_WRITE_CONTROL, true, request->output, now_us);
     }
-    else if (now_us - d.last_command_us >= (int64_t)V20_STOP_HEARTBEAT_MS * US_PER_MS)
+    else if (d.configured &&
+             now_us - d.last_command_us >= (int64_t)V20_STOP_HEARTBEAT_MS * US_PER_MS)
     {
         (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
     }
@@ -865,12 +989,22 @@ void V20Modbus_GetStatus(MotorStatus *status)
         d.last_rx_success_us > 0 &&
         now_us - d.last_rx_success_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
     const bool communication_ok =
-        d.uart_ok && communication_recent && !d.latched_fault && !d.recheck_pending;
+        d.uart_ok && communication_recent && !d.transport_error;
     const bool healthy =
         communication_ok && d.drive_fault_free && d.reference_config_valid && !d.latched_fault;
     const uint64_t age_us = d.last_rx_success_us > 0 ? (uint64_t)(now_us - d.last_rx_success_us)
                                                      : UINT32_MAX * (uint64_t)US_PER_MS;
     *status = (MotorStatus){
+        .run_locked = d.latched_fault || d.operation_lost || d.recheck_pending,
+        /* Repeating OFF1 must not drop relay permission while its echo is
+         * pending. Preserve the established stopped-command history, but never
+         * carry it across RUN, recheck, or a transport/run lock. */
+        .stopped_command_acknowledged = d.last_stop_ack_us > 0 && !d.last_run_command &&
+            d.last_stop_ack_us >= d.last_run_ack_us && !d.recheck_pending &&
+            !d.latched_fault && !d.operation_lost,
+        .warning_active = recent && (d.status_word & 0x0080u) != 0,
+        .fault_ack_pending = d.fault_ack_phase != 0,
+        .stop_attempts = d.stop_attempts,
         .ready = d.diagnostics_complete && d.reference_config_valid &&
                  (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid) && recent &&
                  d.drive_ready && !d.latched_fault,
@@ -931,7 +1065,48 @@ bool V20Modbus_StopConfirmed(int64_t stop_entered_us, float maximum_hz)
     const int64_t now_us = esp_timer_get_time();
     return d.configured && d.status_valid && d.drive_ready && !d.latched_fault &&
            !d.recheck_pending && !d.pending_stop && !d.last_run_command &&
-           d.last_status_us > stop_entered_us &&
+           d.last_stop_ack_us >= stop_entered_us &&
+           d.status_request_us > d.last_stop_ack_us &&
+           (d.status_word & V20_STATUS_OPERATION_ENABLED_BIT) == 0 &&
            now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS &&
            fabsf(d.actual_hz) <= maximum_hz;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// V20Modbus_StartConfirmed()
+
+bool V20Modbus_StartConfirmed(int64_t start_entered_us)
+{
+    const int64_t now_us = esp_timer_get_time();
+    return d.armed && d.demand_run && !d.latched_fault && !d.recheck_pending &&
+           d.last_run_ack_us >= start_entered_us && d.status_request_us > d.last_run_ack_us &&
+           d.status_valid && d.drive_ready && d.drive_fault_free &&
+           (d.status_word & V20_STATUS_OPERATION_ENABLED_BIT) != 0 &&
+           now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// V20Modbus_Simulate()
+
+bool V20Modbus_Simulate(const char *name, bool active)
+{
+#if SIMULATION_MODE
+    static const char *names[] = {"V20_OFF1", "V20_OFF2", "V20_OFF3", "V20_FAULT",
+        "V20_FAULT_PERSISTENT", "V20_RELAY_REQUIRED", "V20_RELAY_BLOCKED"};
+    if (name == NULL) return false;
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(name, names[i]) == 0)
+        {
+            portENTER_CRITICAL(&simulation_lock);
+            if (active) simulation_inputs |= 1u << i;
+            else simulation_inputs &= ~(1u << i);
+            portEXIT_CRITICAL(&simulation_lock);
+            return true;
+        }
+#else
+    (void)name; (void)active;
+#endif
+    return false;
 }

@@ -46,6 +46,13 @@ void SensorTask(void *argument)
     }
     for (;;)
     {
+        if (!ready)
+        {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            ready = SensorLib_Init();
+            if (ready)
+                xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
+        }
         if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS)) || !ready)
             continue;
         Sample sample = {0};

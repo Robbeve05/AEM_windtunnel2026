@@ -220,7 +220,7 @@
 #define CONTROL_FREQUENCY_PI 1
 
 #ifndef CONTROL_TYPE
-#define CONTROL_TYPE CONTROL_TORQUE_PI
+#define CONTROL_TYPE CONTROL_FREQUENCY_PI
 #endif
 
 #if CONTROL_TYPE != CONTROL_TORQUE_PI && CONTROL_TYPE != CONTROL_FREQUENCY_PI
@@ -266,10 +266,10 @@
 #define FREQUENCY_MODEL_LAMBDA_S 1.0f
 #endif
 #ifndef FREQUENCY_MODEL_VALIDATED
-#define FREQUENCY_MODEL_VALIDATED 0
+#define FREQUENCY_MODEL_VALIDATED 1
 #endif
 #ifndef FREQUENCY_MODEL_COMMISSIONED
-#define FREQUENCY_MODEL_COMMISSIONED 0
+#define FREQUENCY_MODEL_COMMISSIONED 1
 #endif
 
 // [m/s, safety-critical] Maximum requested airspeed; raising it requires
@@ -535,21 +535,38 @@
 // must be measured (section 11); software does not replace a certified E-stop.
 
 #ifndef SAFETY_IO_COMMISSIONED
+// Bench release requested by operator, motor disconnected (2026-11-08).
+// Physical installation validation remains outstanding.
 // [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1
 // permits operation only after physical safety I/O verification.
 
 ///////////////////////////////////////////////////////////////////////////////
 // 13. SAFETY & COMMISSIONING
 
-#define SAFETY_IO_COMMISSIONED 0
+#define SAFETY_IO_COMMISSIONED 1
 #endif
 
 #ifndef V20_RUN_COMMISSIONED
 // [Safety-critical flag] 0 suppresses V20 control writes and blocks READY; 1
 // permits the non-running OFF1 heartbeat, while RUN still requires
 // commissioning and physical START.
-#define V20_RUN_COMMISSIONED 0
+#define V20_RUN_COMMISSIONED 1
 #endif
+
+/* Additional permission only: never enables RUN or changes drive parameters.
+ * Enable solely after verifying STW7 fault acknowledgment on the installed V20. */
+#ifndef V20_FAULT_ACK_VERIFIED
+#define V20_FAULT_ACK_VERIFIED 0
+#endif
+#if V20_FAULT_ACK_VERIFIED != 0 && V20_FAULT_ACK_VERIFIED != 1
+#error V20_FAULT_ACK_VERIFIED must be zero or one
+#endif
+#define V20_START_TIMEOUT_MS 5000u
+#define V20_PREPARE_TIMEOUT_MS 5000u
+#define V20_STOP_MAX_ATTEMPTS 3u
+/* RTU has no transaction ID. Commission the maximum slave/bridge latency
+ * against this quarantine; responses outside that bound cannot be correlated. */
+#define V20_LATE_REPLY_QUARANTINE_MS (2u * V20_RESPONSE_TIMEOUT_MS)
 
 #ifndef VFD_FAULT_DI_FITTED
 // [Safety-critical feature flag] 0 omits optional fault input; 1 uses it and

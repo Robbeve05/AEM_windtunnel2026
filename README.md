@@ -76,7 +76,7 @@ See the [documentation index](docs/README.md) for active engineering references,
 
 - The physical start/reset inputs and independent safety circuit remain authoritative; remote START/RESET are not operator functions.
 - Confirm the **current electrical drawing and actual board polarity** before wiring DI1–DI5. Some historical migration notes still use an old mapping.
-- `SAFETY_IO_COMMISSIONED=0`, `V20_RUN_COMMISSIONED=0` and `MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0` are documented uncommissioned settings; verify the actual build configuration.
+- Current motor-disconnected bench configuration (operator request): `SAFETY_IO_COMMISSIONED=1`, `V20_RUN_COMMISSIONED=1`, frequency-model permissions enabled and selected, `MOTOR_MODEL_TORQUE_TO_V20_ENABLED=0`. This does not validate the installation, numeric frequency identification or fan calibration. See [current V20 audit](docs/V20_STARTUP_AUDIT.md#16-implementation-and-validation-update).
 - The 16-channel pressure-tap system requires confirmed PCB sensor addresses, ranges and physical commissioning.
 
 This repository documents an educational engineering project, not a certified safety controller.

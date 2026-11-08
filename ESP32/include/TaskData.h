@@ -66,6 +66,8 @@ typedef struct
     bool switch_on_inhibited, control_word_requested_valid, control_word_acknowledged_valid;
     bool diagnostics_complete, status_valid, reference_valid, reference_config_valid;
     bool watchdog_valid, watchdog_config_known, watchdog_config_valid;
+    bool run_locked, warning_active, fault_ack_pending, stopped_command_acknowledged;
+    uint32_t stop_attempts;
     float actual_hz;
     uint16_t status, control_word_requested, control_word_acknowledged;
     uint16_t reference_value, watchdog_register_value;

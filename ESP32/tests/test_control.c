@@ -13,6 +13,7 @@
 #include "../src/InputHandlerTask.c"
 
 static DigitalOutputStatus output_status;
+bool I2CBus_Init(void) { return true; }
 void DigitalOutputs_GetStatus(DigitalOutputStatus *status)
 {
     if (status != NULL)
@@ -41,7 +42,7 @@ static MotorStatus drive = {
     .status_healthy = true, .communication_ok = true, .drive_fault_free = true,
     .operational_ready = true, .diagnostics_complete = true, .status_valid = true,
     .reference_valid = true, .reference_config_valid = true, .status = 0x0231,
-    .reference_value = 5000
+    .stopped_command_acknowledged = true, .reference_value = 5000
 };
 int64_t esp_timer_get_time(void)
 {
@@ -183,6 +184,8 @@ bool V20Modbus_Arm(void)
 void V20Modbus_RequestRecheck(void)
 {
 }
+bool V20Modbus_RequestFaultAck(void) { return false; }
+bool V20Modbus_StartConfirmed(int64_t t) { (void)t;return drive.operation_enabled; }
 bool V20Modbus_StopConfirmed(int64_t t, float hz)
 {
     (void)t;
@@ -220,6 +223,7 @@ static void healthy_context(ControlContext *c)
     c->now_tick = 1000;
     c->safety = healthy();
     c->motor = drive;
+    c->motor.operation_enabled = false;
     c->status.sensor_ok = c->status.pi_ok = true;
     StateMachine_Init(&c->machine, 0);
     c->machine.state = STATE_READY;
@@ -276,6 +280,13 @@ int main(void)
     assert(c.start);
     Control_CheckSafety(&c);
     Control_UpdateStateMachine(&c);
+    assert(c.machine.state == STATE_STARTING && arms == 1);
+    Control_PublishStatus(&c);
+    assert(!c.status.running && ((MotorRequest *)q[2].data)->run && c.status.output == 0);
+    drive.operation_enabled = true;
+    c.motor = drive;
+    Control_CheckSafety(&c);
+    Control_UpdateStateMachine(&c);
     assert(c.machine.state == STATE_RUNNING && arms == 1);
     assert(SafetyIO_Simulate("STOP", true));
     Control_ProcessCommands(&c, 0);
@@ -305,6 +316,9 @@ int main(void)
     Control_CheckSafety(&c);
     Control_UpdateStateMachine(&c);
     Control_ProcessCommands(&c, 0);
+    Control_CheckSafety(&c);
+    Control_UpdateStateMachine(&c);
+    assert(c.machine.state == STATE_STOPPED_PREPARE && arms == 1);
     Control_CheckSafety(&c);
     Control_UpdateStateMachine(&c);
     assert(c.machine.state == STATE_READY && arms == 1);
@@ -372,7 +386,7 @@ int main(void)
     assert(t.fault == FAULT_CONTROL_OVERRUN && t.overruns == 1);
     healthy_context(&c);
     c.started_us = fake_us;
-    c.motor.ok = false;
+    c.motor.communication_ok = false;
     Control_UpdateDiagnostics(&c);
     Control_PublishStatus(&c);
     assert(c.machine.fault == FAULT_MODBUS);
@@ -401,12 +415,12 @@ int main(void)
     thread_bits = EVT_INPUT_TASK_READY;
     Control_Init(&c);
     Control_WaitForTasks(&c);
-    assert(!c.tasks_ready && fake_us == 15000000 && c.machine.fault == FAULT_INTERNAL &&
+    assert(!c.tasks_ready && fake_us == 15000000 && c.machine.fault == FAULT_INITIALIZATION &&
            timer_starts == 0);
     assert(watchdog_resets >= 300);
     Telemetry startup_fault;
     xQueuePeek(telemetry, &startup_fault, 0);
-    assert(startup_fault.state == STATE_FAULT && startup_fault.fault == FAULT_INTERNAL &&
+    assert(startup_fault.state == STATE_FAULT && startup_fault.fault == FAULT_INITIALIZATION &&
            startup_fault.fault_from == STATE_INIT);
     xQueuePeek(motor_requests, &request, 0);
     assert(!request.run && !request.permissive && request.output == 0);
@@ -584,5 +598,45 @@ int main(void)
     Control_UpdateController(&c);
     assert(c.machine.state==STATE_FAULT && c.status.output==0);
     puts("PASS invalid negative airspeed cannot enter either automatic plant");
+    /* Released but still-latched safety must recover through physical RESET,
+     * without the test manually calling SafetyIO_Acknowledge first. */
+    fake_us = 1000000;
+    (void)SafetyIO_Simulate("RELAY", true);
+    (void)SafetyIO_Simulate("STOP", false);
+    (void)SafetyIO_Simulate("ESTOP", false);
+    SafetyIO_Acknowledge();
+    healthy_context(&c); c.machine.state=STATE_FAULT; c.machine.fault=FAULT_EMERGENCY_STOP;
+    unsigned arms_before=arms;
+    assert(SafetyIO_Simulate("ESTOP", true));
+    assert(SafetyIO_Simulate("ESTOP", false));
+    assert(SafetyIO_Fault()==FAULT_EMERGENCY_STOP);
+    c.safety=SafetyIO_Read(); c.reset=false;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_FAULT && SafetyIO_Fault()==FAULT_EMERGENCY_STOP);
+    c.reset=true;
+    Control_CheckSafety(&c);
+    assert(SafetyIO_Fault()==FAULT_NONE);
+    Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_WAIT && arms==arms_before);
+    c.reset=false; Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_STOPPED_PREPARE && arms==arms_before);
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_READY && arms==arms_before);
+    (void)SafetyIO_Simulate("ESTOP", true); c.safety=SafetyIO_Read(); c.reset=true;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(SafetyIO_Fault()==FAULT_EMERGENCY_STOP && c.machine.state==STATE_FAULT && arms==arms_before);
+    (void)SafetyIO_Simulate("ESTOP", false); SafetyIO_Acknowledge();
+    /* Diagnostic milliseconds are independent of the RTOS tick value. */
+    healthy_context(&c); c.now_tick=42; c.now_ms=1000; c.safety.tick_ms=950;
+    Control_PublishStatus(&c); assert(c.status.ready_diag.safety_inputs_fresh);
+    c.safety.tick_ms=900; Control_PublishStatus(&c);
+    assert(!c.status.ready_diag.safety_inputs_fresh);
+    puts("PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness");
+    healthy_context(&c); c.machine.state=STATE_FAULT; c.machine.fault=FAULT_INITIALIZATION;
+    c.tasks_ready=false; thread_bits=EVT_ALL_TASKS_READY;
+    Control_HoldInitializationFault(&c);
+    assert(c.tasks_ready && c.machine.state==STATE_INIT && !c.machine.reset_accepted);
+    Control_PublishStatus(&c); assert(!((MotorRequest*)q[2].data)->run);
+    puts("PASS recovered task barrier resumes INIT without reset acceptance or RUN");
     return 0;
 }

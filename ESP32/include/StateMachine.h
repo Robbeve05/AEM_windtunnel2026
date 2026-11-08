@@ -31,7 +31,9 @@ typedef enum
     STATE_READY,
     STATE_RUNNING,
     STATE_STOP,
-    STATE_FAULT
+    STATE_FAULT,
+    STATE_STOPPED_PREPARE,
+    STATE_STARTING
 } SystemState_t;
 typedef enum
 {
@@ -45,7 +47,11 @@ typedef enum
     FAULT_CONTROL_OVERRUN,
     FAULT_CLOCK_TIMEOUT,
     FAULT_INTERLOCK,
-    FAULT_INTERNAL
+    FAULT_INTERNAL,
+    FAULT_DRIVE_INHIBIT,
+    FAULT_CONFIGURATION,
+    FAULT_START_TIMEOUT,
+    FAULT_INITIALIZATION
 } FaultReason_t;
 typedef enum
 {
@@ -91,7 +97,8 @@ typedef struct
     bool drive_communication_ok, v20_response_received, v20_status_healthy;
     bool v20_modbus_initialized, v20_run_commissioned;
     bool v20_diagnostics_complete, v20_configuration_valid;
-    bool stop_confirmed;
+    bool stop_confirmed, stopped_prepared, start_confirmed, drive_run_locked;
+    bool drive_operation_enabled, stop_command_acknowledged;
     FaultReason_t urgent_fault, timing_fault;
 } MachineInputs;
 

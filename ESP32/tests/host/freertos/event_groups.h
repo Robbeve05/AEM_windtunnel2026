@@ -8,3 +8,4 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t,EventBits_t,int,int,TickType_
 EventBits_t xEventGroupSetBits(EventGroupHandle_t,EventBits_t);
 
 EventGroupHandle_t xEventGroupCreate(void);
+static inline EventBits_t xEventGroupGetBits(EventGroupHandle_t g) { return *g; }

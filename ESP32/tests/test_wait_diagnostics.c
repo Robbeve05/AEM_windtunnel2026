@@ -27,6 +27,7 @@ static MachineInputs ready_inputs(void)
         .v20_diagnostics_complete = true,
         .v20_configuration_valid = true,
         .pi_ok = true,
+        .stopped_prepared = true,
     };
 }
 
@@ -42,6 +43,10 @@ int main(void)
     MachineInputs inputs = ready_inputs();
     assert(StateMachine_GetBlockingReasons(&machine, &inputs) == 0);
     StateMachine_Step(&machine, &inputs);
+    if (machine.state == STATE_STOPPED_PREPARE) {
+        MachineInputs prepared = ready_inputs();
+        StateMachine_Step(&machine, &prepared);
+    }
     assert(machine.state == STATE_READY);
 
     inputs = ready_inputs();
@@ -189,6 +194,10 @@ int main(void)
     startup.reset = false;
     startup.now_ms++;
     StateMachine_Step(&machine, &startup);
+    if (machine.state == STATE_STOPPED_PREPARE) {
+        MachineInputs prepared = ready_inputs();
+        StateMachine_Step(&machine, &prepared);
+    }
     assert(machine.state == STATE_READY && machine.reset_accepted);
 
     MachineInputs emergency_reset = ready_inputs();
@@ -202,6 +211,10 @@ int main(void)
     emergency_reset.reset = false;
     emergency_reset.now_ms++;
     StateMachine_Step(&machine, &emergency_reset);
+    if (machine.state == STATE_STOPPED_PREPARE) {
+        MachineInputs prepared = ready_inputs();
+        StateMachine_Step(&machine, &prepared);
+    }
     assert(machine.state == STATE_READY && machine.reset_accepted);
 
     MachineInputs new_fault = ready_inputs();
@@ -229,6 +242,10 @@ int main(void)
     new_fault.reset = false;
     new_fault.now_ms++;
     StateMachine_Step(&machine, &new_fault);
+    if (machine.state == STATE_STOPPED_PREPARE) {
+        MachineInputs prepared = ready_inputs();
+        StateMachine_Step(&machine, &prepared);
+    }
     assert(machine.state == STATE_READY && machine.fault == FAULT_NONE &&
            machine.reset_accepted);
 

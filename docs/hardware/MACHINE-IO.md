@@ -23,8 +23,8 @@ flags, all existing controller design parameters and V20 settings; values and mo
 | Spare input | DI8 | GPIO11 | Reserved |
 | K2 | DO1 | Bit 0 | Existing operational permissive |
 | Green lamp | DO2 | Bit 1 | Proposed READY / RUNNING indication |
-| Yellow lamp | DO3 | Bit 2 | Proposed INIT / WAIT / STOP indication |
-| Red lamp | DO4 | Bit 3 | Proposed FAULT / emergency indication |
+| Red lamp | DO3 | Bit 2 | Current firmware FAULT indication; verify installed wiring |
+| Yellow lamp | DO4 | Bit 3 | Current firmware INIT / WAIT / PREPARE / STARTING / STOP indication; verify installed wiring |
 | Spare outputs | DO5..DO8 | Bits 4..7 | Reserved, no request API; held low as previously |
 
 The lamp assignments are proposed until installed wiring is verified. This table is a logical signal
@@ -83,8 +83,7 @@ lamp command or manual fault-indication override exists. HMI indication works wi
 ## Electrical verification still required
 
 EXTERNAL_STATUS_LEDS_ENABLED remains 0. STATUS_LED_ACTIVE_LEVEL defaults to 1 solely as a configurable
-software setting. SAFETY_IO_COMMISSIONED and V20_RUN_COMMISSIONED remain 0. Do not enable these flags
-until the corresponding installation has been verified independently.
+software setting. SAFETY_IO_COMMISSIONED and V20_RUN_COMMISSIONED are now 1 by explicit operator request for the motor-disconnected bench setup. This does not establish independent installation verification. DO1 supplies the intended V20 In1/OFF2 permission after RESET and an acknowledged OFF1 in STOPPED_PREPARE, and stays enabled in healthy READY/STARTING/RUNNING/STOP. Live safety gates remain mandatory. See the updated V20 audit for outstanding as-built checks.
 
 The vendor documents EXIO1..8 output numbering, GPIO4..11 isolated inputs and optocoupler/Darlington
 sinking outputs. The current official Resources page does not provide a board schematic. Therefore this

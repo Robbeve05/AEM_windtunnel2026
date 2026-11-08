@@ -20,6 +20,7 @@ esp_err_t uart_param_config(int port, const uart_config_t *config);
 esp_err_t uart_set_pin(int port, int tx, int rx, int rts, int cts);
 esp_err_t uart_driver_install(int port, int rx_size, int tx_size, int queue_size,
                              void *queue, int flags);
+esp_err_t uart_driver_delete(int port);
 esp_err_t uart_set_mode(int port, int mode);
 esp_err_t uart_flush_input(int port);
 int uart_write_bytes(int port, const void *data, size_t length);

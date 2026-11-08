@@ -50,8 +50,8 @@ void StateMachine_Init(StateMachine *m, uint32_t now)
 
 const char *StateMachine_Name(SystemState_t s)
 {
-    static const char *names[] = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT"};
-    return (unsigned)s < 6 ? names[s] : "UNKNOWN";
+    static const char *names[] = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT", "STOPPED_PREPARE", "STARTING"};
+    return (unsigned)s < 8 ? names[s] : "UNKNOWN";
 }
 
 /*
@@ -65,7 +65,8 @@ const char *FaultReason_Name(FaultReason_t f)
 {
     static const char *names[] = {
         "NONE",          "EMERGENCY_STOP",  "SAFETY_FEEDBACK", "VFD",       "MODBUS",  "SENSOR",
-        "PI_CONNECTION", "CONTROL_OVERRUN", "CLOCK_TIMEOUT",   "INTERLOCK", "INTERNAL"};
+        "PI_CONNECTION", "CONTROL_OVERRUN", "CLOCK_TIMEOUT",   "INTERLOCK", "INTERNAL",
+        "DRIVE_INHIBIT", "CONFIGURATION", "START_TIMEOUT", "INITIALIZATION"};
     return (unsigned)f < sizeof(names) / sizeof(names[0]) ? names[f] : "INTERNAL";
 }
 
@@ -95,7 +96,7 @@ static void transition(StateMachine *m, SystemState_t s, uint32_t now)
 
 uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInputs *i)
 {
-    if (m == NULL || i == NULL || m->state != STATE_WAIT)
+    if (m == NULL || i == NULL || (m->state != STATE_WAIT && m->state != STATE_STOPPED_PREPARE))
         return 0;
 
     uint32_t reasons = 0;
@@ -160,7 +161,8 @@ void StateMachine_Fault(StateMachine *m, FaultReason_t f, uint32_t now)
     if (f == FAULT_NONE)
         return;
     const bool new_fault = m->state == STATE_FAULT && m->fault != f;
-    m->last_fault = f;
+    if (m->fault == FAULT_NONE || f == FAULT_EMERGENCY_STOP)
+        m->last_fault = f;
     if (m->fault == FAULT_NONE || f == FAULT_EMERGENCY_STOP)
         m->fault = f;
     if (m->state != STATE_FAULT || new_fault)
@@ -210,8 +212,11 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     m->permissive = false;
     bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
     bool healthy = safety_healthy(i);
-    bool process = i->sensor_ok && i->drive_ready && i->drive_ok && i->pi_ok &&
+    bool stopped_process = i->sensor_ok && i->v20_diagnostics_complete &&
+                   i->drive_communication_ok && !i->drive_run_locked &&
+                   i->drive_fault_free && i->pi_ok &&
                    i->v20_configuration_valid && (SIMULATION_MODE || i->v20_run_commissioned);
+    bool process = stopped_process && i->drive_ready && i->drive_ok;
     /* Emergency has priority over the first latched non-emergency cause. */
     if (i->safety.estop_pressed)
     {
@@ -231,14 +236,24 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
         StateMachine_Fault(m, FAULT_SAFETY_FEEDBACK, i->now_ms);
     if (i->timing_fault != FAULT_NONE)
         StateMachine_Fault(m, i->timing_fault, i->now_ms);
-    if (m->state == STATE_READY || m->state == STATE_RUNNING || m->state == STATE_STOP)
+    if (m->state == STATE_READY || m->state == STATE_STARTING ||
+        m->state == STATE_RUNNING || m->state == STATE_STOP || m->state == STATE_STOPPED_PREPARE)
     {
         if (!i->sensor_ok)
             StateMachine_Fault(m, FAULT_SENSOR, i->now_ms);
 
         else if (i->drive_fault)
             StateMachine_Fault(m, FAULT_VFD, i->now_ms);
-        else if (!i->drive_ok || !i->drive_ready)
+        else if (!i->drive_communication_ok)
+            StateMachine_Fault(m, FAULT_MODBUS, i->now_ms);
+        else if (!i->v20_configuration_valid)
+            StateMachine_Fault(m, FAULT_CONFIGURATION, i->now_ms);
+        else if (((!i->drive_ready || !i->drive_ok) && m->state != STATE_STOPPED_PREPARE &&
+                  !i->drive_run_locked) ||
+                 (m->state == STATE_RUNNING && !i->drive_operation_enabled) ||
+                 (m->state == STATE_READY && i->drive_operation_enabled))
+            StateMachine_Fault(m, FAULT_DRIVE_INHIBIT, i->now_ms);
+        else if (i->drive_run_locked)
             StateMachine_Fault(m, FAULT_MODBUS, i->now_ms);
         else if (!i->pi_ok)
             StateMachine_Fault(m, FAULT_PI_CONNECTION, i->now_ms);
@@ -247,8 +262,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     if (i->reset && (m->state == STATE_WAIT || m->state == STATE_FAULT) && fresh &&
         !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok &&
-        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE && !i->drive_fault &&
-        (!i->safety.vfd_fault_available || !i->safety.vfd_fault) &&
+        i->urgent_fault == FAULT_NONE && i->timing_fault == FAULT_NONE &&
         (!i->safety.contactor_available || i->safety.contactor_ok))
     {
         m->reset_pending = true;
@@ -272,11 +286,11 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     {
     case STATE_INIT:
         if (fresh && i->sensor_ok && i->v20_diagnostics_complete && i->v20_response_received &&
-            i->drive_communication_ok && i->drive_fault_free && i->safety.outputs_ok)
+            i->drive_communication_ok && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
         break;
     case STATE_FAULT:
-        if (m->reset_pending && healthy && process && i->safety.stop_ok &&
+        if (m->reset_pending && healthy && stopped_process && i->safety.stop_ok &&
             i->timing_fault == FAULT_NONE && i->urgent_fault == FAULT_NONE)
         {
             m->fault = FAULT_NONE;
@@ -286,24 +300,45 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
         }
         break;
     case STATE_WAIT:
-        if (m->reset_pending && healthy && process && i->safety.stop_ok)
+        if (m->reset_pending && healthy && stopped_process && !i->reset && i->safety.stop_ok)
         {
             m->reset_accepted = true;
             m->reset_pending = false;
         }
-        if (m->reset_accepted && healthy && process && i->safety.stop_ok)
+        if (m->reset_accepted && healthy && stopped_process && !i->reset && i->safety.stop_ok)
+            transition(m, STATE_STOPPED_PREPARE, i->now_ms);
+        break;
+    case STATE_STOPPED_PREPARE:
+        /* Serial OFF1 throughout. Relay release of intended In1/OFF2 requires
+         * separate as-built verification; no software safety override. */
+        if (i->stop || !i->safety.stop_ok)
+        {
+            m->reset_accepted = false;
+            transition(m, STATE_WAIT, i->now_ms);
+        }
+        else if (healthy && process && i->stopped_prepared)
             transition(m, STATE_READY, i->now_ms);
+        else if (i->now_ms - m->entered_ms >= V20_PREPARE_TIMEOUT_MS)
+            StateMachine_Fault(m, FAULT_DRIVE_INHIBIT, i->now_ms);
         break;
     case STATE_READY:
         if (i->start && !i->reset && !i->stop && i->safety.stop_ok && healthy && process)
+            transition(m, STATE_STARTING, i->now_ms);
+        break;
+    case STATE_STARTING:
+        if (i->stop || !i->safety.stop_ok)
+            transition(m, STATE_STOP, i->now_ms);
+        else if (i->start_confirmed)
             transition(m, STATE_RUNNING, i->now_ms);
+        else if (i->now_ms - m->entered_ms >= V20_START_TIMEOUT_MS)
+            StateMachine_Fault(m, FAULT_START_TIMEOUT, i->now_ms);
         break;
     case STATE_RUNNING:
         if (i->stop || !i->safety.stop_ok)
             transition(m, STATE_STOP, i->now_ms);
         break;
     case STATE_STOP:
-        if (i->stop_confirmed)
+        if (i->stop_confirmed && i->safety.stop_ok && !i->stop)
             transition(m, STATE_READY, i->now_ms);
         else if (i->now_ms - m->entered_ms >= NORMAL_STOP_TIMEOUT_MS)
             StateMachine_Fault(m, FAULT_VFD, i->now_ms);
@@ -314,5 +349,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     /* Keep the non-safety OFF2 permissive through a healthy normal OFF1 ramp. */
     m->permissive = healthy && process && m->fault == FAULT_NONE &&
-                    (m->state == STATE_RUNNING || m->state == STATE_STOP);
+                    (m->state == STATE_STARTING || m->state == STATE_RUNNING || m->state == STATE_STOP);
+    if (m->reset_accepted &&
+        m->fault == FAULT_NONE && healthy && stopped_process && i->safety.stop_ok &&
+        i->stop_command_acknowledged &&
+        (m->state == STATE_STOPPED_PREPARE || m->state == STATE_READY))
+        m->permissive = true;
 }

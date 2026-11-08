@@ -321,8 +321,16 @@ class AerodynamicAPITests(unittest.TestCase):
         self.assertEqual(self.client.post(base+'/start').status_code, 200)
         self.assertEqual(self.client.post('/api/measurement/start', json={'name': 'conflict'}).status_code, 400)
         self.assertEqual(self.client.post('/api/calibration/fan/prepare', json={}).status_code, 400)
-        deadline = time.monotonic()+3
-        while self.client.get(base).json()['metadata']['state'] == 'ACQUIRING' and time.monotonic() < deadline: time.sleep(.03)
+        # A completed metadata write can become visible just before its worker
+        # finishes. Wait for completion as well as state, including on busy CI.
+        deadline = time.monotonic()+15
+        while time.monotonic() < deadline:
+            detail = self.client.get(base).json()
+            if (detail['metadata']['state'] != 'ACQUIRING'
+                    and self.controller.aerodynamics.tasks[identifier].done()):
+                break
+            time.sleep(.03)
+        self.assertEqual(detail['metadata']['state'], 'COMPLETED', detail['metadata'])
         self.assertEqual(self.client.post(base+'/analyze', json={'minimum_samples_per_tap': 2}).status_code, 200)
         deadline = time.monotonic()+30
         while self.client.get(base).json()['metadata']['state'] == 'PROCESSING' and time.monotonic() < deadline: time.sleep(.05)
