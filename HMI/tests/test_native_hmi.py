@@ -277,7 +277,7 @@ class NativeHMITests(unittest.TestCase):
             window = HMIWindow()
             panel = window.diagnostics_text
             self.assertEqual(set(panel.groups), {'Controller', 'Connection', 'Safety',
-                'V20 drive', 'Outputs', 'Sensors', 'Registers'})
+                'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus'})
             panel.groups['Safety'].setExpanded(True)
             row = panel.rows['diag_estop_released']
             panel.tree.setCurrentItem(row)

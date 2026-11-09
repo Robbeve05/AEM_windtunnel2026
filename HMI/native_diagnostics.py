@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from backend.esp32 import DIAGNOSTIC_SIGNALS, V20_COMM_ERRORS, V20_OPERATIONS
+from backend.esp32 import DIAGNOSTIC_SIGNALS, V20_COMM_ERRORS, V20_OPERATIONS, I2C_FIELDS
 
 
 class DiagnosticsPanel(QWidget):
@@ -37,7 +37,7 @@ class DiagnosticsPanel(QWidget):
         layout.addWidget(self.tree)
         self.groups = {}
         self.rows = {}
-        for title in ('Controller', 'Connection', 'Safety', 'V20 drive', 'Outputs', 'Sensors', 'Registers'):
+        for title in ('Controller', 'Connection', 'Safety', 'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus'):
             item = QTreeWidgetItem(self.tree, [title, ''])
             font = item.font(0)
             font.setBold(True)
@@ -102,7 +102,29 @@ class DiagnosticsPanel(QWidget):
         self._row('Connection', 'modbus_retries', 'Read retries')
         self._row('Connection', 'modbus_recovered_transactions', 'Recovered read transactions')
         self._row('Connection', 'modbus_final_comm_errors', 'Final communication errors')
+        self._row('I2C bus', 'i2c_hz', 'Configured bus speed (Hz)')
+        self._row('I2C bus', 'i2c_diag_v', 'Diagnostic format version')
+        self.i2c_devices = {}
+        for address, name in ((0x20, 'DO expander'), (0x28, 'Pitot'), (0x51, 'RTC'),
+                              (0x70, 'Mux 0'), (0x71, 'Mux 1'), (0x29, 'Tap (if configured)')):
+            self._i2c_device(f'i2c_{address:02x}', name)
+        for key, label in (('output_write_ack_valid', 'Last write I2C ACK (not contact feedback)'),
+                           ('output_latch_valid', 'Latch read received'),
+                           ('output_latch_image', 'Read output latch'),
+                           ('output_latch_match', 'Latch equals requested image'),
+                           ('output_read_errors', 'Latch read errors'),
+                           ('output_latch_mismatches', 'Latch mismatches')):
+            self._row('Outputs', key, label)
         self.update_status({}, stale=True)
+
+    def _i2c_device(self, key, name):
+        parent = QTreeWidgetItem(self.groups['I2C bus'], [f'{name} 0x{key[4:].upper()}', 'Not accessed'])
+        self.i2c_devices[key] = parent
+        for field in I2C_FIELDS:
+            label = field.replace('_', ' ')
+            row = QTreeWidgetItem(parent, [label, '—'])
+            row.setToolTip(0, 'Times in microseconds; last error is the raw ESP-IDF code. Zero counters do not prove device presence.')
+            self.rows[key + '_' + field] = row
 
     def _row(self, group, key, label, tooltip=None):
         row = QTreeWidgetItem(self.groups[group], [label, '—'])
@@ -113,8 +135,24 @@ class DiagnosticsPanel(QWidget):
         self.summary.setText('SIMULATION · physical diagnostics unavailable' if simulation else
                              'ESP32 offline or telemetry stale · no current diagnostics' if stale else
                              'LIVE · read only · expand a group for details')
+        drive = dict(drive)
+        for key, value in list(drive.items()):
+            if key.startswith('i2c_') and isinstance(value, dict):
+                # Address inventory comes from firmware, including custom tap addresses.
+                if key not in self.i2c_devices:
+                    self._i2c_device(key, 'Device')
+                for field, number in value.items():
+                    row_key = key + '_' + field
+                    if row_key not in self.rows:
+                        self._row('I2C bus', row_key, f'0x{key[4:].upper()} / {field}')
+                    drive[row_key] = number
         flags = {key for key, _ in DIAGNOSTIC_SIGNALS}
         unavailable = stale or simulation
+        for key, parent in self.i2c_devices.items():
+            stats = drive.get(key)
+            parent.setText(1, '—' if unavailable or stats is None else
+                           'Not accessed' if stats.get('wire_calls') == 0 else
+                           'OK' if stats.get('last_result') == 0 else 'ERROR / BUSY')
         for key, row in self.rows.items():
             value = ((system or {}).get(key[7:]) if key.startswith('system_') else
                      None if unavailable else drive.get(key))

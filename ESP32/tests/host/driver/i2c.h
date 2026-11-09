@@ -13,3 +13,5 @@ esp_err_t i2c_param_config(int port, const i2c_config_t *config);
 esp_err_t i2c_driver_install(int port, int mode, size_t rx, size_t tx, int flags);
 esp_err_t i2c_master_read_from_device(int port, uint8_t address, uint8_t *data, size_t size, TickType_t wait);
 esp_err_t i2c_master_write_to_device(int port, uint8_t address, const uint8_t *data, size_t size, TickType_t wait);
+
+esp_err_t i2c_master_write_read_device(int port, uint8_t address, const uint8_t *tx, size_t tx_size, uint8_t *rx, size_t rx_size, TickType_t wait);

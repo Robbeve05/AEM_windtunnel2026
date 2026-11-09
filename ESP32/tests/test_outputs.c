@@ -12,6 +12,9 @@ static __declspec(thread) int critical_depth;
 static LONG entered, exited, writes;
 static bool no_mutex, inhibited;
 static LONG fail_write;
+static LONG reads;
+static bool fail_read, mismatch;
+static uint8_t output_latch;
 static uint8_t registers[128],images[128];
 static HANDLE write_started, release_write;
 static LONG pause_write;
@@ -34,7 +37,14 @@ bool I2CBus_Write(uint8_t address,const uint8_t *data,size_t size) {
     if(InterlockedCompareExchange(&pause_write,0,1)==1) {
         SetEvent(write_started); assert(WaitForSingleObject(release_write,5000)==WAIT_OBJECT_0);
     }
+    if(n!=fail_write && data[0]==1) output_latch=data[1];
     return n!=fail_write;
+}
+bool I2CBus_ReadRegister(uint8_t address,uint8_t reg,uint8_t *data,size_t size) {
+    assert(critical_depth==0 && address==BOARD_DO_I2C_ADDRESS && reg==1 && size==1);
+    InterlockedIncrement(&reads);
+    *data=output_latch ^ (mismatch ? (1u<<VFD_ENABLE_DO_BIT) : 0);
+    return !fail_read;
 }
 static bool vfd_on(uint8_t image) {return !!(image&(1u<<VFD_ENABLE_DO_BIT))==(VFD_ENABLE_ACTIVE_LEVEL!=0);}
 static DWORD WINAPI enable_thread(LPVOID unused) {(void)unused;assert(DigitalOutputs_Set(true,(StatusIndicator){0}));return 0;}
@@ -79,9 +89,19 @@ int main(void) {
     CloseHandle(enable);CloseHandle(disable);CloseHandle(write_started);CloseHandle(release_write);
     inhibited=true;assert(DigitalOutputs_Set(true,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);assert(!s.vfd_requested && !vfd_on(s.confirmed_image));
     assert(s.confirmed_image==0xffu);
-    inhibited=false;fail_write=writes+1;assert(!DigitalOutputs_Set(true,(StatusIndicator){0}));
+    inhibited=false;fail_write=writes+1;assert(!DigitalOutputs_Set(true,(StatusIndicator){.red=true}));
     DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && !s.vfd_acknowledged && s.write_errors==1);
     fail_write=0;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);assert(s.confirmed_valid && !vfd_on(s.confirmed_image));
+    LONG before=writes, before_reads=reads;
+    for(int i=0;i<100;i++) assert(DigitalOutputs_Set(false,(StatusIndicator){0}));
+    assert(writes==before && reads-before_reads==100); /* 10 ms probes, zero duplicate writes */
+    mismatch=true;assert(!DigitalOutputs_Set(false,(StatusIndicator){0}));
+    DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && s.latch_valid && s.latch_mismatches==1 && !s.vfd_acknowledged);
+    mismatch=false;fail_read=true;assert(!DigitalOutputs_Set(false,(StatusIndicator){0}));
+    DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && !s.latch_valid && s.read_errors==1);
+    fail_read=false;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));
+    DigitalOutputs_GetStatus(&s);assert(s.confirmed_valid && !s.vfd_requested && !s.vfd_acknowledged);
+    assert(writes==before); /* recovery never writes RUN/DO1 back on */
     // Failing direction setup never publishes initialized/confirmed outputs.
     fail_write=writes+2;assert(!DigitalOutputs_Init());DigitalOutputs_GetStatus(&s);
     assert(!s.initialized && !s.confirmed_valid && s.write_errors==1 && !DigitalOutputs_Set(true,(StatusIndicator){0}));

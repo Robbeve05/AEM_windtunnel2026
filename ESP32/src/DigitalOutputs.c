@@ -97,7 +97,7 @@ bool DigitalOutputs_Init(void)
         ok = I2CBus_Write(BOARD_DO_I2C_ADDRESS, direction, sizeof(direction));
 #endif
     portENTER_CRITICAL(&state_lock);
-    state.initialized = state.confirmed_valid = ok;
+    state.initialized = state.confirmed_valid = state.write_ack_valid = ok;
     state.confirmed_image = inactive;
     state.vfd_acknowledged = false;
     if (!ok)
@@ -175,11 +175,40 @@ bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators)
     state.vfd_requested = authorized;
     status_indicators = indicators;
     const uint8_t image = compose();
+    const bool changed = image != state.requested_image;
     state.requested_image = image;
     portEXIT_CRITICAL(&state_lock);
-    const bool ok = write_image(image);
+    /* Unchanged images are verified, never rewritten. Keep the 10 ms probe,
+     * including DO1, and no retry/grace for unknown outputs. */
+    uint8_t latch = 0;
+    bool read_ok = false;
+    bool ok;
+    if (changed)
+        ok = write_image(image);
+    else
+    {
+#if SIMULATION_MODE
+        latch = image;
+        read_ok = true;
+#else
+        read_ok = I2CBus_ReadRegister(BOARD_DO_I2C_ADDRESS, 1, &latch, 1);
+#endif
+        ok = read_ok && latch == image;
+    }
     portENTER_CRITICAL(&state_lock);
     state.confirmed_valid = ok;
+    if (changed)
+    {
+        state.write_ack_valid = ok;
+        state.latch_valid = false;
+    }
+    else
+    {
+        state.latch_image = latch;
+        state.latch_valid = read_ok;
+        if (!read_ok) state.read_errors++;
+        else if (latch != image) state.latch_mismatches++;
+    }
     if (ok)
     {
         state.confirmed_image = image;
@@ -188,7 +217,7 @@ bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators)
     else
     {
         state.vfd_acknowledged = false;
-        state.write_errors++;
+        if (changed) state.write_errors++;
     }
     portEXIT_CRITICAL(&state_lock);
     xSemaphoreGive(writer_lock);

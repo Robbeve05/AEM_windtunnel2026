@@ -376,6 +376,9 @@ bool SensorLib_TapsStep(Sample *out)
 #endif
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_GetPitotDiagnostics()
+
 void SensorLib_GetPitotDiagnostics(PitotDiagnostics *out)
 {
     if (!out) return;

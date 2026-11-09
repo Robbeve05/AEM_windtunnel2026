@@ -383,13 +383,15 @@ static void LogApplicationStatus(void)
         if (!attempts) continue;
         ESP_LOGI("I2CDiag", "addr=0x%02x ok=%lu busy=%lu nack=%lu timeout=%lu driver=%lu "
                  "last_us=%lu max_us=%lu max_call_us=%lu retries=%lu recovered=%lu final_errors=%lu "
-                 "last_failure=%u driver_error=%d failure_ms=%lu",
+                 "last_failure=%u driver_error=%d failure_ms=%lu hz=%u wait_max_us=%lu avg_us=%lu",
                  address, (unsigned long)bus.results[I2C_RESULT_OK],
                  (unsigned long)bus.results[I2C_RESULT_BUSY], (unsigned long)bus.results[I2C_RESULT_NACK],
                  (unsigned long)bus.results[I2C_RESULT_TIMEOUT], (unsigned long)bus.results[I2C_RESULT_DRIVER],
                  (unsigned long)bus.last_us, (unsigned long)bus.max_us, (unsigned long)bus.max_call_us,
                  (unsigned long)bus.retries, (unsigned long)bus.recovered, (unsigned long)bus.final_errors,
-                 (unsigned)bus.last_failure, bus.last_failure_driver_error, (unsigned long)bus.last_failure_ms);
+                 (unsigned)bus.last_failure, bus.last_failure_driver_error, (unsigned long)bus.last_failure_ms,
+                 (unsigned)SENSOR_I2C_HZ, (unsigned long)bus.max_wait_us,
+                 (unsigned long)(bus.wire_calls > bus.retries ? bus.total_us / (bus.wire_calls - bus.retries) : 0));
     }
     esp_netif_ip_info_t ip_info = {0};
     const bool ip_info_available = Ethernet_GetIpInfo(&ip_info);

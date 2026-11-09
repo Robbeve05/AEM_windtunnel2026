@@ -33,6 +33,9 @@ typedef struct
     bool initialized, vfd_requested, vfd_acknowledged, confirmed_valid;
     uint8_t requested_image, confirmed_image;
     uint32_t write_errors;
+    bool write_ack_valid, latch_valid;
+    uint8_t latch_image;
+    uint32_t read_errors, latch_mismatches;
 } DigitalOutputStatus;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -41,7 +44,7 @@ typedef struct
 /* Called once, before tasks, after the shared I2C bus is ready. */
 bool DigitalOutputs_Init(void);
 // InputHandlerTask owns output updates. Success acknowledges the image over
-// I2C, not physical lamp or relay state.
+// I2C write ACK or a matching latch read, not physical lamp or relay state.
 bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators);
 
 

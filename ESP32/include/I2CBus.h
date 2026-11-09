@@ -38,6 +38,8 @@ typedef enum {
 typedef struct {
     uint32_t results[I2C_RESULT_COUNT];
     uint32_t last_us, max_us, max_call_us;
+    uint32_t last_wait_us, max_wait_us, wire_calls;
+    uint64_t total_us;
     uint32_t retries, recovered, final_errors;
     int last_driver_error;
     I2CBusResult last_result, last_failure;
@@ -55,3 +57,8 @@ bool I2CBus_Write(uint8_t address, const uint8_t *data, size_t size);
 bool I2CBus_Read(uint8_t address, uint8_t *data, size_t size);
 
 bool I2CBus_GetDiagnostics(uint8_t address, I2CBusDiagnostics *out);
+
+/* Repeated START; register pointer and read share one mutex/IDF command. */
+bool I2CBus_ReadRegister(uint8_t address, uint8_t reg, uint8_t *data, size_t size);
+/* Compact, versioned numeric STATUS tokens. No bus traffic. Returns -1 on overflow. */
+int I2CBus_FormatDiagnostics(char *buffer, size_t size);

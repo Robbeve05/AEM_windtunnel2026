@@ -76,7 +76,7 @@ class ParserTests(unittest.TestCase):
         self.assertGreater(len(large), 4096)
         self.assertLess(len(large), 6144)
         self.assertIsNotNone(parse_status(large))
-        self.assertIsNone(parse_status(large + ' padding=' + 'x'*6144))
+        self.assertIsNone(parse_status(large + ' padding=' + 'x'*12288))
 
     def test_wait_diagnostics_protocol_and_multiple_blockers(self):
         frame = parse_status(

@@ -7,7 +7,7 @@ import re
 import time
 from urllib.parse import unquote
 
-MAX_FRAME_BYTES = 6144  # Matches the existing ESP32 STATUS transmit buffer.
+MAX_FRAME_BYTES = 12288  # Matches the existing ESP32 STATUS transmit buffer.
 
 STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT", "STOPPED_PREPARE", "STARTING"}
 FLOATS = {"air_density", "manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
@@ -73,6 +73,12 @@ PITOT_FLOATS = {'pitot_raw_pressure_pa', 'pitot_airspeed_ms', 'pitot_pressure_pa
 PITOT_INTS = {'pitot_age_ms', 'pitot_status_bits', 'pitot_read_ok', 'pitot_valid', 'pitot_zero_samples', 'pitot_sample_seq', 'pitot_raw_count', 'pitot_calibrated'}
 FLOATS.update(PITOT_FLOATS)
 INTS.update(PITOT_INTS)
+
+I2C_FIELDS = ('ok', 'busy', 'nack', 'timeout', 'driver', 'retries', 'recovered', 'wire_calls',
+              'avg_us', 'max_us', 'max_wait_us', 'max_call_us', 'last_result', 'last_error',
+              'last_failure', 'last_failure_error', 'failure_ms', 'final_errors')
+INTS.update({'i2c_hz', 'i2c_diag_v', 'output_write_ack_valid', 'output_latch_valid',
+             'output_latch_image', 'output_latch_match', 'output_read_errors', 'output_latch_mismatches'})
 
 WAIT_BLOCKERS = (
     (1 << 0, "E-stop pressed"),
@@ -226,7 +232,12 @@ def parse_status(line):
         if not key or not val or key in out:
             return None
         try:
-            if key in FLOATS or re.fullmatch(r"p(?:[0-9]|1[0-5])", key):
+            if re.fullmatch(r"i2c_[0-7][0-9a-f]", key):
+                numbers = [int(v) for v in val.split(',')]
+                if len(numbers) != len(I2C_FIELDS):
+                    return None
+                val = dict(zip(I2C_FIELDS, numbers))
+            elif key in FLOATS or re.fullmatch(r"p(?:[0-9]|1[0-5])", key):
                 val = float(val)
                 if not math.isfinite(val):
                     return None
@@ -235,6 +246,8 @@ def parse_status(line):
         except ValueError:
             return None
         out[key] = val
+    if any(re.fullmatch(r"i2c_[0-7][0-9a-f]", k) for k in out) and out.get('i2c_diag_v') != 1:
+        return None
     if out.get("mode") not in {"AUTO", "MANUAL"}:
         return None
     if out.get("state") not in STATES or "fault" not in out:
@@ -467,7 +480,7 @@ class ESP32Client:
             try:
                 logging.info("Connecting to ESP32 TCP listener %s:%d", self.host, self.port)
                 self._reader, self._writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port, limit=8192), 3.0)
+                    asyncio.open_connection(self.host, self.port, limit=16384), 3.0)
                 self._connected, self._last = True, 0
                 on_event("ESP32 Ethernet connected; awaiting STATUS.", "info")
                 self._first_fault = None

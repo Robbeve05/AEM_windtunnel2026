@@ -12,6 +12,8 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'i2c_concurrency'; Sources = @('tests\test_i2c_concurrency.c', 'src\I2CBus.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1' },
+    @{ Name = 'i2c100'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '/DSENSOR_I2C_HZ=100000' },
     @{ Name = 'i2c'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '' },
     @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c', 'src\FaultSnapshot.c', 'src\StateMachine.c', 'src\StatusIndicators.c'); Flags = '' },
     @{ Name = "fan_calibration"; Sources = @("tests\test_fan_calibration.c"); Flags = "" },
@@ -42,8 +44,7 @@ $cases = @(
 if ($Case.Count) {
     $unknown = @($Case | Where-Object { $_ -notin $cases.Name })
     if ($unknown.Count) { throw ('Unknown test cases: ' + ($unknown -join ', ')) }
-    $cases = @(
-    @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c', 'src\FaultSnapshot.c', 'src\StateMachine.c', 'src\StatusIndicators.c'); Flags = '' },$cases | Where-Object { $_.Name -in $Case })
+    $cases = @($cases | Where-Object { $_.Name -in $Case })
 }
 $failed = @()
 foreach ($testCase in $cases) {

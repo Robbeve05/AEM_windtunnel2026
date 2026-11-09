@@ -443,7 +443,16 @@
 ///////////////////////////////////////////////////////////////////////////////
 // 10. I2C COMMUNICATION
 
-#define SENSOR_I2C_HZ 100000
+#ifndef SENSOR_I2C_HZ
+#define SENSOR_I2C_HZ 400000
+#endif
+#if SENSOR_I2C_HZ != 100000 && SENSOR_I2C_HZ != 400000
+#error SENSOR_I2C_HZ must be 100000 or 400000
+#endif
+
+// Sensors never wait for ownership and hold the bus for at most this budget
+// (plus one FreeRTOS tick of IDF timeout granularity). DO retains 10 ms.
+#define I2C_SENSOR_TIMEOUT_MS 2
 
 // [ms, adjustable] Bus transaction timeout; increasing can block longer on an
 // unresponsive device.

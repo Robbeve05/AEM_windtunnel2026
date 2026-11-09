@@ -34,6 +34,7 @@
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
 #include "Ethernet.h"
+#include "I2CBus.h"
 #include "FanCalibration.h"
 #include "FaultSnapshot.h"
 #include "PiProtocol.h"
@@ -376,7 +377,7 @@ void PiCommunicationTask(void *argument)
                 xQueuePeek(motor_status, &motor, 0);
                 /* Single task owns this buffer. Keep full diagnostics off the
                  * task stack; the old 1024-byte buffer could never append them. */
-                static char buffer[6144];
+                static char buffer[12288];
                 int length = snprintf(
                     buffer, sizeof(buffer),
                     "STATUS running=%d sensor_ok=%d motor_ok=%d sp=%.3f pv=%.3f "
@@ -458,6 +459,12 @@ void PiCommunicationTask(void *argument)
                         (unsigned long)pitot.pitot_read_ok,
                         (unsigned long)pitot.pitot_valid,
                         (unsigned long)((xTaskGetTickCount() - pitot.pitot_tick) * portTICK_PERIOD_MS));
+                if (length > 0 && length < (int)sizeof(buffer))
+                {
+                    const int added = I2CBus_FormatDiagnostics(buffer + length, sizeof(buffer) - (size_t)length);
+                    if (added < 0) continue; /* Never transmit a truncated STATUS. */
+                    length += added;
+                }
                 const StatusIndicator indication =
                     StatusOutput_Get(&t, true, (uint32_t)(now * portTICK_PERIOD_MS));
                 if (length > 0 && length < (int)sizeof(buffer) - 256)
@@ -480,8 +487,17 @@ void PiCommunicationTask(void *argument)
                     }
                     buffer[length] = 0;
                 }
+                DigitalOutputStatus outputs;
+                DigitalOutputs_GetStatus(&outputs);
                 FanCalibrationStatus cal;
                 FanCalibration_GetStatus(&cal);
+                if (length > 0 && length < (int)sizeof(buffer) - 256)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " output_write_ack_valid=%d output_latch_valid=%d output_latch_image=%u"
+                        " output_latch_match=%d output_read_errors=%lu output_latch_mismatches=%lu",
+                        outputs.write_ack_valid, outputs.latch_valid, outputs.latch_image,
+                        outputs.latch_valid && outputs.latch_image == outputs.requested_image,
+                        (unsigned long)outputs.read_errors, (unsigned long)outputs.latch_mismatches);
                 if (length > 0 && length < (int)sizeof(buffer) - 160)
                     length += snprintf(buffer + length, sizeof(buffer) - length,
                                        " air_density=%.4f cal_valid=%d cal_active=%d "
@@ -489,8 +505,6 @@ void PiCommunicationTask(void *argument)
                                        AIR_DENSITY, cal.valid, cal.valid, cal.points,
                                        (unsigned long)cal.crc, cal.version,
                                        cal.valid ? "CALIBRATED" : "DEFAULT");
-                DigitalOutputStatus outputs;
-                DigitalOutputs_GetStatus(&outputs);
                 if (length > 0 && length < (int)sizeof(buffer) - 192)
                     length += snprintf(buffer + length, sizeof(buffer) - length,
                                        " outputs_ok=%d output_write_errors=%lu output_image=%u "
