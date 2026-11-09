@@ -51,6 +51,6 @@ StatusIndicator StatusIndicators_Get(SystemState_t s, FaultReason_t f, bool pres
     case STATE_STOP:
         return (StatusIndicator){.amber = true, .text = "STOPPING - WAIT FOR VFD"};
     default:
-        return (StatusIndicator){.red = true, .text = FaultReason_Name(f)};
+        return (StatusIndicator){.red = blink, .text = FaultReason_Name(f)};
     }
 }

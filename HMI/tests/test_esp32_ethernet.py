@@ -15,6 +15,25 @@ FRAME = ("STATUS state=FAULT fault=EMERGENCY_STOP estop_pressed=1 "
 
 
 class ParserTests(unittest.TestCase):
+    def test_fault_lamps_follow_esp32_blink_and_pressed_override(self):
+        for fault in ('INTERLOCK', 'MODBUS', 'EMERGENCY_STOP'):
+            for pressed in (0, 1):
+                for blink in (0, 1):
+                    with self.subTest(fault=fault, pressed=pressed, blink=blink):
+                        red = int(bool(pressed or blink))
+                        text = ('EMERGENCY STOP ACTIVE' if pressed else
+                                'EMERGENCY STOP RELEASED - RESET REQUIRED'
+                                if fault == 'EMERGENCY_STOP' else fault)
+                        frame = FRAME.replace('fault=EMERGENCY_STOP', 'fault=' + fault)
+                        frame = frame.replace('estop_pressed=1', f'estop_pressed={pressed}')
+                        data = parse_status(frame + f' led_green=0 led_yellow=0 led_red={red}'
+                                            + ' status_text=' + text.replace(' ', '%20'))
+                        indication = status_indication(data)
+                        self.assertTrue(indication['available'])
+                        self.assertEqual((indication['green'], indication['yellow'], indication['red']),
+                                         (False, False, bool(red)))
+                        self.assertEqual(indication['text'], text)
+
     def test_modbus_scheduler_metrics_are_numeric(self):
         data = parse_status(FRAME + ' modbus_wire_load_permille=36 modbus_write_cycle_us=100000'
                             ' modbus_write_deadline_misses=0 modbus_retries=1'

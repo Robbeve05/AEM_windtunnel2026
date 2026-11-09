@@ -33,7 +33,20 @@ int main(void) {
     check(STATE_RUNNING,FAULT_NONE,false,0,true,false,false);
     check(STATE_RUNNING,FAULT_NONE,false,999,true,false,false);
     check(STATE_STOP,FAULT_NONE,false,999,false,true,false);
-    check(STATE_FAULT,FAULT_SENSOR,false,999,false,false,true);
+    const FaultReason_t faults[]={FAULT_SENSOR,FAULT_INTERLOCK,FAULT_MODBUS,FAULT_EMERGENCY_STOP};
+    const unsigned times[]={0,499,500,999,1000};
+    for (unsigned i=0;i<sizeof(faults)/sizeof(faults[0]);++i) {
+        for (unsigned j=0;j<sizeof(times)/sizeof(times[0]);++j) {
+            bool on=(times[j]%1000u)<500u;
+            check(STATE_FAULT,faults[i],false,times[j],false,false,on);
+            check(STATE_FAULT,faults[i],true,times[j],false,false,true);
+            Telemetry fault={.state=STATE_FAULT,.fault=faults[i]};
+            StatusIndicator shared=StatusOutput_Get(&fault,true,times[j]);
+            assert(!shared.green && !shared.amber && shared.red==on);
+            if (faults[i]!=FAULT_EMERGENCY_STOP)
+                assert(strcmp(shared.text,FaultReason_Name(faults[i]))==0);
+        }
+    }
     check(STATE_FAULT,FAULT_EMERGENCY_STOP,true,999,false,false,true);
     check(STATE_READY,FAULT_NONE,true,999,false,false,true);
     check(STATE_FAULT,FAULT_EMERGENCY_STOP,false,0,false,false,true);
