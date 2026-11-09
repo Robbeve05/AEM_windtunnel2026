@@ -43,7 +43,7 @@ StatusIndicator StatusIndicators_Get(SystemState_t s, FaultReason_t f, bool pres
     case STATE_STOPPED_PREPARE:
         return (StatusIndicator){.amber = true, .text = "VERIFYING STOPPED DRIVE"};
     case STATE_STARTING:
-        return (StatusIndicator){.amber = blink, .text = "STARTING - WAIT FOR VFD"};
+        return (StatusIndicator){.green = blink, .text = "STARTING - WAIT FOR VFD"};
     case STATE_READY:
         return (StatusIndicator){.green = blink, .text = "READY - PRESS START"};
     case STATE_RUNNING:

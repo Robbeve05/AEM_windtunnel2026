@@ -16,6 +16,20 @@ int main(void) {
     check(STATE_READY,FAULT_NONE,false,499,true,false,false);
     check(STATE_READY,FAULT_NONE,false,500,false,false,false);
     check(STATE_READY,FAULT_NONE,false,1000,true,false,false);
+    check(STATE_STOPPED_PREPARE,FAULT_NONE,false,999,false,true,false);
+    check(STATE_STARTING,FAULT_NONE,false,0,true,false,false);
+    check(STATE_STARTING,FAULT_NONE,false,499,true,false,false);
+    check(STATE_STARTING,FAULT_NONE,false,500,false,false,false);
+    check(STATE_STARTING,FAULT_NONE,false,999,false,false,false);
+    check(STATE_STARTING,FAULT_NONE,false,1000,true,false,false);
+    check(STATE_STARTING,FAULT_NONE,true,0,false,false,true);
+    assert(strcmp(StatusIndicators_Get(STATE_STARTING,FAULT_NONE,false,false,0).text,
+                  "STARTING - WAIT FOR VFD")==0);
+    Telemetry starting={.state=STATE_STARTING};
+    StatusIndicator starting_on=StatusOutput_Get(&starting,true,499);
+    StatusIndicator starting_off=StatusOutput_Get(&starting,true,500);
+    assert(starting_on.green && !starting_on.amber && !starting_on.red);
+    assert(!starting_off.green && !starting_off.amber && !starting_off.red);
     check(STATE_RUNNING,FAULT_NONE,false,0,true,false,false);
     check(STATE_RUNNING,FAULT_NONE,false,999,true,false,false);
     check(STATE_STOP,FAULT_NONE,false,999,false,true,false);
@@ -30,6 +44,6 @@ int main(void) {
     unknown=StatusOutput_Get(NULL,true,0);assert(unknown.red && !unknown.green);
     assert(StatusOutput_Get(&t,true,0).green);
     assert(strstr(StatusIndicators_Get(STATE_FAULT,FAULT_EMERGENCY_STOP,false,false,0).text,"RESET REQUIRED"));
-    puts("PASS INIT/WAIT/READY/RUNNING/STOP/FAULT, emergency press/release, blink boundaries, missing telemetry, existing text");
+    puts("PASS INIT/WAIT/STOPPED_PREPARE/READY/STARTING/RUNNING/STOP/FAULT, emergency press/release, blink boundaries, shared telemetry, missing telemetry, existing text");
     return 0;
 }
