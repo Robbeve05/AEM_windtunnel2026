@@ -534,6 +534,23 @@ void PiCommunicationTask(void *argument)
                         (unsigned long)motor.transaction.rtt_us, (unsigned long)motor.transaction.max_rtt_us,
                         (unsigned long)motor.transaction.enqueue_us, motor.transaction.rx_bytes,
                         motor.transaction.expected_rx_bytes);
+                if (length > 0 && length < (int)sizeof(buffer) - 1024)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " modbus_wire_load_permille=%lu modbus_transactions_per_minute=%lu"
+                        " modbus_write_cycle_us=%lu modbus_status_cycle_us=%lu"
+                        " modbus_status_cycle_max_us=%lu modbus_write_jitter_max_us=%lu"
+                        " modbus_write_deadline_misses=%lu modbus_transaction_max_us=%lu"
+                        " modbus_idle_us=%lu modbus_idle_min_us=%lu modbus_idle_max_us=%lu"
+                        " modbus_service_gap_max_us=%lu modbus_retries=%lu"
+                        " modbus_recovered_transactions=%lu modbus_final_comm_errors=%lu",
+                        (unsigned long)motor.bus.wire_load_permille, (unsigned long)motor.bus.transactions_per_minute,
+                        (unsigned long)motor.bus.write_cycle_us, (unsigned long)motor.bus.status_cycle_us,
+                        (unsigned long)motor.bus.max_status_cycle_us, (unsigned long)motor.bus.max_write_jitter_us,
+                        (unsigned long)motor.bus.write_deadline_misses, (unsigned long)motor.bus.max_transaction_us,
+                        (unsigned long)motor.bus.last_idle_us, (unsigned long)motor.bus.min_idle_us,
+                        (unsigned long)motor.bus.max_idle_us, (unsigned long)motor.bus.max_service_gap_us,
+                        (unsigned long)motor.retries, (unsigned long)motor.recovered_transactions,
+                        (unsigned long)motor.final_comm_errors);
                 const ReadyDiagnostics *diag = &t.ready_diag;
                 if (length > 0 && length < (int)sizeof(buffer) - 3072)
                     length += snprintf(

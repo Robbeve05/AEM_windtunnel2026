@@ -1,0 +1,9 @@
+test_v20_scheduler.c
+V20Modbus_baseline.c
+Generating Code...
+delay=1000 write_hz=9.100 read_hz=9.083 max_write_us=110000 max_read_us=110000 missed=545 max_rtt_us=10000
+delay=30000 write_hz=7.700 read_hz=7.700 max_write_us=130000 max_read_us=130000 missed=461 max_rtt_us=30000
+delay=70000 write_hz=5.883 read_hz=5.883 max_write_us=170000 max_read_us=170000 missed=352 max_rtt_us=70000
+jitter write_hz=8.483 read_hz=7.200 max_tx_gap_ms=150 max_ack_gap_ms=170 max_rtt_us=60000
+lost_read max_write_gap_ms=310 retries=1 recovered=1 locked=0
+stop_behind_read_us=80000

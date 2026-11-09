@@ -15,6 +15,16 @@ FRAME = ("STATUS state=FAULT fault=EMERGENCY_STOP estop_pressed=1 "
 
 
 class ParserTests(unittest.TestCase):
+    def test_modbus_scheduler_metrics_are_numeric(self):
+        data = parse_status(FRAME + ' modbus_wire_load_permille=36 modbus_write_cycle_us=100000'
+                            ' modbus_write_deadline_misses=0 modbus_retries=1'
+                            ' modbus_recovered_transactions=1 modbus_final_comm_errors=0')
+        self.assertIsNotNone(data)
+        self.assertEqual(data['modbus_wire_load_permille'], 36)
+        self.assertEqual(data['modbus_write_cycle_us'], 100000)
+        self.assertEqual(data['modbus_write_deadline_misses'], 0)
+        self.assertEqual(data['modbus_recovered_transactions'], 1)
+
     def test_preparation_starting_and_independent_drive_diagnostics(self):
         for state in ('STOPPED_PREPARE', 'STARTING'):
             data = parse_status(FRAME.replace('state=FAULT', 'state=' + state)

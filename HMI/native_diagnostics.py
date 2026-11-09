@@ -87,6 +87,21 @@ class DiagnosticsPanel(QWidget):
             ('diag_v20_watchdog_register_value', 'Watchdog register', 'Registers'),
         ):
             self._row(group, key, label)
+        self._row('Connection', 'modbus_wire_load_permille', 'Estimated wire load (permille)')
+        self._row('Connection', 'modbus_transactions_per_minute', 'Transactions per minute (boot average)')
+        self._row('Connection', 'modbus_write_cycle_us', 'Write cycle (us)')
+        self._row('Connection', 'modbus_status_cycle_us', 'Status cycle (us)')
+        self._row('Connection', 'modbus_status_cycle_max_us', 'Maximum status cycle (us)')
+        self._row('Connection', 'modbus_write_jitter_max_us', 'Maximum write jitter (us)')
+        self._row('Connection', 'modbus_write_deadline_misses', 'Late running write intervals')
+        self._row('Connection', 'modbus_transaction_max_us', 'Maximum transaction duration (us)')
+        self._row('Connection', 'modbus_idle_us', 'Observed idle before TX (us)')
+        self._row('Connection', 'modbus_idle_min_us', 'Minimum observed idle (us)')
+        self._row('Connection', 'modbus_idle_max_us', 'Maximum observed idle (us)')
+        self._row('Connection', 'modbus_service_gap_max_us', 'Maximum pending service gap (us)')
+        self._row('Connection', 'modbus_retries', 'Read retries')
+        self._row('Connection', 'modbus_recovered_transactions', 'Recovered read transactions')
+        self._row('Connection', 'modbus_final_comm_errors', 'Final communication errors')
         self.update_status({}, stale=True)
 
     def _row(self, group, key, label, tooltip=None):

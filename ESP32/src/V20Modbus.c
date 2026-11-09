@@ -123,7 +123,9 @@ typedef struct
     ModbusTransactionDiagnostics transaction;
     uint32_t transaction_sequence, max_rtt_us;
     int64_t previous_service_us;
-    int64_t last_status_us;
+    int64_t last_status_us, last_status_tx_us;
+    int64_t diagnostics_started_us, last_completed_us;
+    ModbusBusDiagnostics bus;
     int64_t last_command_us;
     int64_t tx_started_us;
     int64_t bus_quiet_until_us;
@@ -225,6 +227,7 @@ bool V20Modbus_Init(void)
     }
     d.uart_ok = true;
 #endif
+    d.diagnostics_started_us = esp_timer_get_time();
     restart_commissioning();
     d.bus_quiet_until_us = esp_timer_get_time() + V20_FRAME_GAP_US;
     return true;
@@ -422,9 +425,13 @@ static uint16_t expected_pdu_address(V20Operation operation)
 static void finish_transaction(V20CommError result, int64_t now_us)
 {
     ModbusTransactionDiagnostics *t = &d.transaction;
+    const uint32_t duration = (uint32_t)(now_us - d.tx_started_us);
+    if (duration > d.bus.max_transaction_us) d.bus.max_transaction_us = duration;
+    d.last_completed_us = now_us;
     t->pending = false;
     t->result = (uint8_t)result;
     t->completed_ms = (uint32_t)(now_us / US_PER_MS);
+    d.bus.rx_bytes += (uint32_t)d.rx_used;
     t->rx_bytes = (uint8_t)d.rx_used;
     t->expected_rx_bytes = (uint8_t)d.rx_expected;
     memcpy(t->rx_frame, d.rx, d.rx_used);
@@ -614,6 +621,14 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
         return false;
     }
 #endif
+    d.bus.transactions++;
+    d.bus.tx_bytes += (uint32_t)size;
+    if (d.last_completed_us > 0) {
+        const uint32_t idle = (uint32_t)(now_us - d.last_completed_us);
+        d.bus.last_idle_us = idle;
+        if (!d.bus.min_idle_us || idle < d.bus.min_idle_us) d.bus.min_idle_us = idle;
+        if (idle > d.bus.max_idle_us) d.bus.max_idle_us = idle;
+    }
     /* The response window starts when the TX API has accepted the frame, not
      * before UART mutex/ring-buffer waits. This is enqueue time, not a claim
      * about the physical final stop bit on RS485. */
@@ -621,10 +636,27 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
     d.transaction.enqueue_us = (uint32_t)(queued_us - now_us);
     d.transaction.start_ms = (uint32_t)(queued_us / US_PER_MS);
     d.transaction.deadline_ms = (uint32_t)((queued_us + (int64_t)V20_RESPONSE_TIMEOUT_MS * US_PER_MS) / US_PER_MS);
+    if (operation == V20_OP_READ_STATUS) {
+        if (d.last_status_tx_us > 0) {
+            d.bus.status_cycle_us = (uint32_t)(queued_us - d.last_status_tx_us);
+            if (d.bus.status_cycle_us > d.bus.max_status_cycle_us)
+                d.bus.max_status_cycle_us = d.bus.status_cycle_us;
+        }
+        d.last_status_tx_us = queued_us;
+    }
     if (operation == V20_OP_WRITE_CONTROL)
     {
         if (d.last_process_data_tx_us > 0)
         {
+            d.bus.write_cycle_us = (uint32_t)(queued_us - d.last_process_data_tx_us);
+            /* Count only running cyclic deadlines, not stopped heartbeats. */
+            if (run && d.last_run_command) {
+                const uint32_t period = V20_COMMAND_PERIOD_MS * 1000u;
+                const uint32_t jitter = d.bus.write_cycle_us > period ?
+                    d.bus.write_cycle_us - period : period - d.bus.write_cycle_us;
+                if (jitter > d.bus.max_write_jitter_us) d.bus.max_write_jitter_us = jitter;
+                if (d.bus.write_cycle_us > period) d.bus.write_deadline_misses++;
+            }
             const uint32_t gap = (uint32_t)((queued_us - d.last_process_data_tx_us) / US_PER_MS);
             if (gap > d.max_process_data_tx_gap_ms) d.max_process_data_tx_gap_ms = gap;
         }
@@ -856,6 +888,12 @@ static void receive_pending(int64_t now_us)
     }
 #endif
     now_us = esp_timer_get_time();
+    /* A complete frame observed after the response deadline must not revive
+     * an expired transaction following a delayed ControlTask invocation. */
+    if (now_us - d.tx_started_us > (int64_t)V20_RESPONSE_TIMEOUT_MS * US_PER_MS) {
+        fail_transaction(V20_COMM_TIMEOUT, now_us, 0, 0);
+        return;
+    }
     if (d.rx_used)
     {
         /* A Modbus exception reply is 5 bytes instead of the normal length. */
@@ -989,6 +1027,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     if (d.transaction.pending && d.previous_service_us > 0)
     {
         const uint32_t gap = (uint32_t)(now_us - d.previous_service_us);
+        if (gap > d.bus.max_service_gap_us) d.bus.max_service_gap_us = gap;
         if (gap > d.transaction.max_service_gap_us) d.transaction.max_service_gap_us = gap;
     }
     d.previous_service_us = now_us;
@@ -1124,6 +1163,14 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
             }
             else
             {
+                /* Once quarantine ends, refresh overdue process data before a
+                 * read retry. Keep its single retry pending; never replay RUN
+                 * blindly after an unconfirmed write. */
+                if (d.demand_run && now_us - d.last_process_data_tx_us >=
+                    (int64_t)V20_COMMAND_PERIOD_MS * US_PER_MS) {
+                    (void)send_operation(V20_OP_WRITE_CONTROL, true, request->output, now_us);
+                    return;
+                }
                 d.retries++;
                 (void)send_operation(d.retry_operation, false, 0, now_us);
                 return;
@@ -1143,7 +1190,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     if (!operation_commissioned)
     {
         if (!d.status_valid ||
-            now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
+            now_us - d.last_status_tx_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
             (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
     }
@@ -1184,7 +1231,9 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
                              d.demand_run ? request->output : 0, now_us);
         return;
     }
-    if (!d.status_valid || now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
+    /* Poll from accepted TX, like the write heartbeat: adding RTT here
+     * causes phase drift and repeatedly places a read across the next write. */
+    if (!d.status_valid || now_us - d.last_status_tx_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
     {
         (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
@@ -1210,6 +1259,15 @@ void V20Modbus_GetStatus(MotorStatus *status)
         communication_ok && d.drive_fault_free && d.reference_config_valid && !d.latched_fault;
     const uint64_t age_us = d.last_rx_success_us > 0 ? (uint64_t)(now_us - d.last_rx_success_us)
                                                      : UINT32_MAX * (uint64_t)US_PER_MS;
+    /* Estimated wire utilisation: 11 bits/byte for 8E1. Observation latency,
+     * slave turnaround and mandatory silence are not wire airtime. */
+    const uint64_t elapsed = (uint64_t)(now_us - d.diagnostics_started_us);
+    if (elapsed > 0) {
+        const uint64_t wire_us = ((uint64_t)d.bus.tx_bytes + d.bus.rx_bytes) *
+            11000000ULL / MODBUS_BAUD;
+        d.bus.wire_load_permille = (uint32_t)(wire_us * 1000ULL / elapsed);
+        d.bus.transactions_per_minute = (uint32_t)((uint64_t)d.bus.transactions * 60000000ULL / elapsed);
+    }
     *status = (MotorStatus){
         .run_locked = d.latched_fault || d.operation_lost || d.recheck_pending,
         /* Repeating OFF1 must not drop relay permission while its echo is
@@ -1260,6 +1318,7 @@ void V20Modbus_GetStatus(MotorStatus *status)
         .last_error_actual = d.last_error_actual,
         .last_status_response_ms = (uint32_t)(d.last_status_us / US_PER_MS),
         .last_status_request_ms = (uint32_t)(d.status_request_us / US_PER_MS),
+        .bus = d.bus,
         .transaction = d.transaction,
         .last_valid_response_ms = (uint32_t)(d.last_valid_response_us / US_PER_MS),
         .last_valid_process_data_ms = (uint32_t)(d.last_process_data_us / US_PER_MS),

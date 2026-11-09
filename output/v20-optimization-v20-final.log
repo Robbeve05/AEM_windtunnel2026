@@ -1,0 +1,56 @@
+test_v20_scheduler.c
+V20Modbus.c
+Generating Code...
+delay=1000 write_hz=10.000 read_hz=10.000 max_write_us=100000 max_read_us=100000 missed=0 max_rtt_us=10000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=10000 max_service_gap_us=10000 wire_permille=36
+delay=30000 write_hz=10.000 read_hz=10.000 max_write_us=100000 max_read_us=100000 missed=0 max_rtt_us=30000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=30000 max_service_gap_us=10000 wire_permille=36
+delay=70000 write_hz=6.250 read_hz=6.250 max_write_us=160000 max_read_us=160000 missed=374 max_rtt_us=70000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=70000 max_service_gap_us=10000 wire_permille=22
+jitter write_hz=8.833 read_hz=8.817 max_tx_gap_ms=130 max_ack_gap_ms=150 max_rtt_us=60000
+lost_read max_write_gap_ms=280 retries=1 recovered=1 locked=0
+stop_behind_read_us=80000
+PASS executable v20_scheduler
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS single read timeout/CRC recovery counters, bounded outage, STOP/E-stop/stale-request cancellation, no retry START
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS exact EB31 OFF1 -> physical-arm RUN/zero -> enabled EB37, no implicit restart
+PASS 10s controlled STOP, cyclic OFF1/zero gap=100 ms, status polling continues
+PASS measured enqueue/70ms response, unchanged 80ms window, partial ACK timeout and UART errors fail closed
+PASS 10min constant 50Hz, max TX gap=100 ms, process ACKs distinguished from reads/timeouts
+PASS V20 scaling, arm/disarm, OFF1, fresh stop confirmation and explicit re-arm
+PASS all eight legacy reply failures, UART failures, fault latch and explicit recovery
+PASS invalid demand, stale/null requests, lost safety permissive and epoch-independent lockout
+PASS unhealthy drive status, signed speed and fragmented replies
+PASS executable v20
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS single read timeout/CRC recovery counters, bounded outage, STOP/E-stop/stale-request cancellation, no retry START
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS default uncommissioned firmware cannot arm or transmit RUN
+PASS executable v20_inhibited
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_recovery
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_fault_ack
+test_v20_simulation.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS real driver + state machine + relay-dependent simulated V20: boot/reset/prepare/start/enabled/stop, independent OFF1/OFF3, drive fault ACK and reboot
+PASS executable v20_simulation
+6/6 host executables passed.

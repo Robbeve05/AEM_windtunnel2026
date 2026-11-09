@@ -1,0 +1,14 @@
+test_v20_scheduler.c
+V20Modbus.c
+Generating Code...
+delay=1000 write_hz=10.000 read_hz=10.000 max_write_us=100000 max_read_us=100000 missed=0 max_rtt_us=10000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=10000 max_service_gap_us=10000 wire_permille=36
+delay=30000 write_hz=10.000 read_hz=10.000 max_write_us=100000 max_read_us=100000 missed=0 max_rtt_us=30000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=30000 max_service_gap_us=10000 wire_permille=36
+delay=70000 write_hz=6.250 read_hz=6.250 max_write_us=160000 max_read_us=160000 missed=374 max_rtt_us=70000
+observed idle_min_us=10000 idle_max_us=50000 max_transaction_us=70000 max_service_gap_us=10000 wire_permille=22
+jitter write_hz=8.833 read_hz=8.817 max_tx_gap_ms=130 max_ack_gap_ms=150 max_rtt_us=60000
+lost_read max_write_gap_ms=280 retries=1 recovered=1 locked=0
+stop_behind_read_us=80000
+PASS executable v20_scheduler
+1/1 host executables passed.

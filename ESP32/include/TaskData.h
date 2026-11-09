@@ -69,6 +69,15 @@ typedef struct
     uint8_t tx_frame[32], rx_frame[32];
 } ModbusTransactionDiagnostics;
 
+/* UART-observed timing, not physical bus timestamps. Lifetime counters. */
+typedef struct
+{
+    uint32_t transactions, tx_bytes, rx_bytes, wire_load_permille, transactions_per_minute;
+    uint32_t write_cycle_us, status_cycle_us, max_status_cycle_us;
+    uint32_t max_write_jitter_us, write_deadline_misses, max_transaction_us;
+    uint32_t last_idle_us, min_idle_us, max_idle_us, max_service_gap_us;
+} ModbusBusDiagnostics;
+
 typedef struct
 {
     bool ready, ok, initialized, response_received, status_healthy, communication_ok;
@@ -92,6 +101,7 @@ typedef struct
     uint32_t max_process_data_gap_ms, max_response_gap_ms, max_process_data_tx_gap_ms;
     uint32_t valid_reads, valid_writes, crc_errors, invalid_frames, late_replies, exceptions;
     float requested_hz;
+    ModbusBusDiagnostics bus;
     ModbusTransactionDiagnostics transaction;
     uint32_t exception_code, last_error_count;
     uint8_t last_error, last_operation;
