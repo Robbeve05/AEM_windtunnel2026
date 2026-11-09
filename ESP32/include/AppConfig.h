@@ -196,17 +196,21 @@
 
 #define MANUAL_MAX_HZ 50.0f
 
+// [s] Minimum duration of each manual quintic segment; derivative limits may
+// extend it. Independent of AUTO and of the drive's P1120/P1121 ramps.
+#define MANUAL_TRANSITION_TIME_S 5.0f
+
 // [Hz/s, adjustable] Maximum first derivative of frequency; lowering slows
 // manual transitions.
-#define MANUAL_MAX_SLEW_HZ_PER_S 10.0f
+#define MANUAL_MAX_SLEW_HZ_PER_S 20.0f
 
 // [Hz/s^2, adjustable] Maximum second derivative of frequency; lowering smooths
 // changes in frequency slope.
-#define MANUAL_MAX_ACCEL_HZ_PER_S2 1.0f
+#define MANUAL_MAX_ACCEL_HZ_PER_S2 12.0f
 
 // [Hz/s^3, adjustable] Maximum third derivative of frequency; lowering further
 // lengthens/smooths manual transitions.
-#define MANUAL_MAX_JERK_HZ_PER_S3 0.5f
+#define MANUAL_MAX_JERK_HZ_PER_S3 25.0f
 
 // Compile-time selection between the validated torque PI path and the frequency
 // PI path. The user only changes CONTROL_TYPE between the two values below;

@@ -707,7 +707,7 @@ static void Control_UpdateController(ControlContext *ctx)
                     (TickType_t)(ctx->now_tick - ctx->motor.tick) <
                         pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS) &&
                     SetpointCurve_Init(&ctx->frequency_curve, ctx->motor.actual_hz,
-                                       CONTROL_CLOCK_PERIOD_S, MANUAL_MAX_SLEW_HZ_PER_S,
+                                       MANUAL_TRANSITION_TIME_S, MANUAL_MAX_SLEW_HZ_PER_S,
                                        MANUAL_MAX_ACCEL_HZ_PER_S2);
                 ctx->frequency_curve.max_third_derivative = MANUAL_MAX_JERK_HZ_PER_S3;
             }

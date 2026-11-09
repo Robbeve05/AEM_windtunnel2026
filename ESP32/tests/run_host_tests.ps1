@@ -30,6 +30,7 @@ $cases = @(
     @{ Name = 'models'; Sources = @('tests\test_models.c', 'tests\host\calibration_stub.c', 'src\Regelaar.c', 'src\TorqueModel.c', 'src\FrequencyModel.c'); Flags = '' },
     @{ Name = 'motor_model'; Sources = @('tests\test_torque_inverse.c', 'src\TorqueModel.c', 'tests\host\calibration_stub.c'); Flags = '' },
     @{ Name = 'torque_design'; Sources = @('tests\test_torque_design.c', 'src\TorqueModel.c', 'tests\host\calibration_stub.c'); Flags = '' },
+    @{ Name = 'manual_ramp'; Sources = @('tests\test_manual_ramp.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'curve'; Sources = @('tests\test_curve.c', 'src\SetpointCurve.c'); Flags = '' },
     @{ Name = 'v20_scheduler'; Sources = @('tests\test_v20_scheduler.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },
     @{ Name = 'v20'; Sources = @('tests\test_v20.c', 'src\V20Modbus.c'); Flags = '/DV20_RUN_COMMISSIONED=1' },

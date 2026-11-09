@@ -12,6 +12,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 
@@ -100,6 +101,11 @@ static void StartNieuweOvergang(SetpointCurve *curve, float doel)
 static void BerekenVolgendeWaarde(SetpointCurve *curve, float Tsample)
 {
     curve->elapsed = fmin(curve->duration, curve->elapsed + (double)Tsample);
+    /* Tsample is float: 500 nominal 10 ms ticks can fall just below 5 s.
+     * Snap within float precision so endpoint/queued-target handling does not
+     * require an extra control tick. */
+    if (curve->duration - curve->elapsed <= FLT_EPSILON * curve->duration)
+        curve->elapsed = curve->duration;
     const double q = curve->elapsed / curve->duration;
     const double factor = BerekenVijfdegraadsFactor(q);
     curve->value = curve->start + (curve->target - curve->start) * factor;

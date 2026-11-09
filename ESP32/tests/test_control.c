@@ -268,6 +268,56 @@ static void healthy_context(ControlContext *c)
     calibration_enabled = true;
 #endif
 }
+/* Exercise the production MANUAL path and its stop bypasses. */
+static void test_manual_five_seconds(void)
+{
+    ControlContext c;
+    healthy_context(&c);
+    c.machine.state=STATE_RUNNING; c.machine.permissive=true;
+    c.motor.operation_enabled=true; c.status.mode=MODE_MANUAL; c.status.manual_hz=50;
+    c.motor.tick=c.now_tick; c.motor.actual_hz=0;
+    float previous=0;
+    const int ticks=(int)lroundf(5.0f/CONTROL_CLOCK_PERIOD_S);
+    for(int n=0;n<ticks;n++) {
+        Control_UpdateController(&c); Control_PublishStatus(&c);
+        assert(c.machine.state==STATE_RUNNING);
+        assert(c.status.applied_hz>=previous && c.status.applied_hz<=50);
+        assert(c.status.applied_hz-previous<=MANUAL_MAX_SLEW_HZ_PER_S*CONTROL_CLOCK_PERIOD_S+1e-5f);
+        assert(((MotorRequest*)q[2].data)->output<=100);
+        previous=c.status.applied_hz;
+    }
+    assert(c.frequency_curve.duration==5 && c.frequency_curve.elapsed==5);
+    assert(c.status.applied_hz==50);
+    c.status.manual_hz=20;
+    for(int n=0;n<ticks;n++) {
+        Control_UpdateController(&c);
+        assert(c.status.applied_hz<=previous && c.status.applied_hz>=20);
+        previous=c.status.applied_hz;
+    }
+    assert(c.status.applied_hz==20 && c.frequency_curve.elapsed==5);
+    PiCommand invalid={.type=CMD_FREQ,.values={51}};
+    xQueueOverwrite(commands,&invalid); Control_ProcessCommands(&c,0);
+    assert(c.status.manual_hz==20);
+    c.status.manual_hz=50; Control_UpdateController(&c);
+    assert(c.frequency_running && c.frequency_curve.elapsed<c.frequency_curve.duration);
+    c.stop=true; stop_confirmed=false;
+    const unsigned before=disarms;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    Control_UpdateController(&c); Control_PublishStatus(&c);
+    MotorRequest r=*(MotorRequest*)q[2].data;
+    assert(c.machine.state==STATE_STOP && !c.frequency_running && disarms>before);
+    assert(!r.run && r.permissive && !r.coast && r.output==0);
+    healthy_context(&c); c.machine.state=STATE_RUNNING; c.machine.permissive=true;
+    c.motor.operation_enabled=true; c.status.mode=MODE_MANUAL; c.status.manual_hz=50; c.motor.tick=c.now_tick;
+    Control_UpdateController(&c); assert(c.frequency_running);
+    c.motor.communication_ok=false;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    Control_UpdateController(&c); Control_PublishStatus(&c);
+    r=*(MotorRequest*)q[2].data;
+    assert(c.machine.state==STATE_FAULT && !c.frequency_running);
+    assert(!r.run && !r.permissive && r.coast && r.output==0);
+    puts("PASS MANUAL 0->50 and 50->20 in 5s, no overshoot, 50Hz cap, active-curve STOP/OFF1 and FAULT bypass");
+}
 static void test_start_configuration(void)
 {
     ControlContext c;
@@ -872,5 +922,6 @@ int main(void)
     assert(c.tasks_ready && c.machine.state==STATE_INIT && !c.machine.reset_accepted);
     Control_PublishStatus(&c); assert(!((MotorRequest*)q[2].data)->run);
     puts("PASS recovered task barrier resumes INIT without reset acceptance or RUN");
+    test_manual_five_seconds();
     return 0;
 }
