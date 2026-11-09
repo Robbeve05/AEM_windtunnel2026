@@ -1,0 +1,46 @@
+{
+  "config": {
+    "ts": 0.01,
+    "duration_s": 115.0,
+    "inertia_motor": 0.0182,
+    "inertia_fan": 0.353,
+    "nominal_rpm": 1450.0,
+    "nominal_power_w": 4000.0,
+    "nominal_airspeed_ms": 40.0,
+    "pole_pairs": 2.0,
+    "max_frequency_hz": 50.0,
+    "max_airspeed_ms": 40.0,
+    "v20_ramp_hz_per_s": 2.0,
+    "pitot_cutoff_hz": 1.0,
+    "frequency_kp": 0.75,
+    "frequency_ti": 2.142857142857143,
+    "torque_pid_mode": "PI",
+    "frequency_pid_mode": "PI",
+    "disturbance_amplitude_ms": 1.0,
+    "disturbance_start_s": 70.0,
+    "disturbance_frequency_hz": 0.02,
+    "reference_start_s": 5.0,
+    "reference_duration_s": 15.0
+  },
+  "torque_ISA": {
+    "kp": 1.7707386242807786,
+    "ti_s": 7.957747154594767,
+    "td_s": 2.3873241463784303,
+    "tf_s": 0.07957747154594767,
+    "mode": "PI"
+  },
+  "frequency_ISA": {
+    "kp": 0.75,
+    "ti_s": 2.142857142857143,
+    "td_s": 0.0,
+    "tf_s": 0.0,
+    "mode": "PI"
+  },
+  "derived": {
+    "J": 0.3712,
+    "Kv": 0.2634288713245164,
+    "Ks": 5.031120842929874,
+    "Kload": 0.0011425366251295403
+  },
+  "provenance": "Supplied windtunnel_dual_controller_sim.py, unchanged defaults; model-only, not firmware commissioning"
+}

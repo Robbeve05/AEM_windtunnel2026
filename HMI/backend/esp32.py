@@ -7,6 +7,8 @@ import re
 import time
 from urllib.parse import unquote
 
+MAX_FRAME_BYTES = 6144  # Matches the existing ESP32 STATUS transmit buffer.
+
 STATES = {"INIT", "WAIT", "READY", "RUNNING", "STOP", "FAULT", "STOPPED_PREPARE", "STARTING"}
 FLOATS = {"air_density", "manual_hz", "applied_hz", "sp", "pv", "out", "sp_ramp", "pressure_pa", "temperature_c", "actual_hz", "desired_hz",
           "control_hz", "modbus_hz", "filter_hz"}
@@ -15,6 +17,13 @@ INTS = {"diag_v20_run_locked", "diag_v20_warning", "diag_v20_fault_ack_pending",
         "estop_pressed", "safety_relay_ok", "stop_button_ok", "pi_connected", "taps_valid",
         "ethernet", "ethernet_link", "ipv4_configured", "pi_tcp_connected",
         "pi_heartbeat_received", "pi_heartbeat_fresh",
+        "fault_do1_off_observed_ms", "fault_off2_observed_ms", "first_fault_valid", "first_fault_sequence",
+        "modbus_last_valid_response_ms", "modbus_last_valid_process_data_ms",
+        "modbus_max_process_data_gap_ms", "modbus_max_process_data_tx_gap_ms", "modbus_max_response_gap_ms",
+        "modbus_valid_reads", "modbus_valid_writes", "modbus_crc_errors", "modbus_invalid_frames",
+        "modbus_late_replies", "modbus_exceptions", "configuration_start_ready", "control_type",
+        "modbus_transaction_id", "modbus_transaction_pending", "modbus_rtt_us", "modbus_rtt_max_us",
+        "modbus_enqueue_us", "modbus_rx_bytes", "modbus_expected_rx_bytes",
         "sample_seq", "sensor_errors", "modbus_errors", "modbus_timeouts", "control_period_us",
         "execution_us", "missed_deadlines", "overruns", "diag_blockers",
         "diag_estop_released", "diag_stop_ok", "diag_reset_detected", "diag_reset_accepted",
@@ -44,6 +53,11 @@ INTS = {"diag_v20_run_locked", "diag_v20_warning", "diag_v20_fault_ack_pending",
         "diag_pitot_communication_ok", "diag_sensor_data_valid", "diag_sensor_data_fresh",
         "diag_sensor_ok", "diag_ethernet_link", "diag_pi_heartbeat_received",
         "diag_pi_heartbeat_fresh", "diag_pi_ok"}
+
+PITOT_FLOATS = {'pitot_raw_pressure_pa', 'pitot_airspeed_ms', 'pitot_pressure_pa', 'pitot_zero_offset_pa', 'pitot_corrected_pressure_pa', 'pitot_filtered_pressure_pa'}
+PITOT_INTS = {'pitot_age_ms', 'pitot_status_bits', 'pitot_read_ok', 'pitot_valid', 'pitot_zero_samples', 'pitot_sample_seq', 'pitot_raw_count', 'pitot_calibrated'}
+FLOATS.update(PITOT_FLOATS)
+INTS.update(PITOT_INTS)
 
 WAIT_BLOCKERS = (
     (1 << 0, "E-stop pressed"),
@@ -187,7 +201,7 @@ def _enum_name(value, choices):
     return choices[value] if isinstance(value, int) and 0 <= value < len(choices) else "unavailable"
 
 def parse_status(line):
-    if not line.startswith("STATUS ") or len(line) > 4096:
+    if not line.startswith("STATUS ") or len(line) > MAX_FRAME_BYTES:
         return None
     out = {}
     for token in line[7:].split():
@@ -218,6 +232,37 @@ def parse_status(line):
     return out
 
 
+def parse_first_fault(line):
+    """Read the separate immutable evidence frame without enlarging STATUS."""
+    if not line.startswith('FIRST_FAULT ') or len(line) > MAX_FRAME_BYTES:
+        return None
+    fields = {}
+    strings = {'previous_machine_state', 'new_machine_state', 'first_fault_code',
+               'first_fault_source', 'fault_reason', 'configuration_failure_reason', 'configuration_mode', 'modbus_transaction_type',
+               'modbus_tx_hex', 'modbus_rx_hex'}
+    try:
+        for token in line[12:].split():
+            key, value = token.split('=', 1)
+            if not key or not value or key in fields:
+                return None
+            if key in strings or re.fullmatch(r'event[0-7]', key):
+                fields[key] = value
+            elif key in {'v20_setpoint_hz', 'v20_actual_hz', 'model_gain', 'model_tau_s', 'model_delay_s', 'model_lambda_s'}:
+                fields[key] = float(value)
+                if not math.isfinite(fields[key]):
+                    if key.startswith('model_'):
+                        fields[key] = value  # Preserve evidence of an invalid model; JSON-safe.
+                    else:
+                        return None
+            else:
+                fields[key] = int(value)
+    except ValueError:
+        return None
+    required = {'sequence', 'timestamp_ms', 'previous_machine_state',
+                'new_machine_state', 'first_fault_code', 'first_fault_source'}
+    return fields if required <= fields.keys() and fields['new_machine_state'] == 'FAULT' else None
+
+
 def status_indication(drive):
     """Use ESP32 StatusIndicators colors; never guess from local machine state."""
     keys = ("led_green", "led_yellow", "led_red")
@@ -245,6 +290,10 @@ class ESP32Client:
         self._latest = {}
         self._lock = asyncio.Lock()
         self._pending = None
+        self._pending_ping = None
+        self._ping_lock = asyncio.Lock()
+        self._status_queue = asyncio.Queue(maxsize=1)
+        self._first_fault = None
         self._stopped = False
 
     @property
@@ -282,7 +331,7 @@ class ESP32Client:
         return dict(state="UNKNOWN", fault="UNKNOWN", connected=False, stale=True,
                     tcp_connected=self._connected, connection_status=self.connection_status,
                     ethernet_link=None, ipv4_configured=None,
-                    pi_heartbeat_received=None, pi_heartbeat_fresh=None,
+                    pi_heartbeat_received=None, pi_heartbeat_fresh=None, first_fault=self._first_fault,
                     estop_pressed=None, reset_required=True, motor_ok=False, sensor_ok=False,
                     pv=None, sp=None, out=None, warning="Fan may still be rotating.")
 
@@ -312,6 +361,8 @@ class ESP32Client:
                 raise ValueError("Filter out of range")
         else:
             raise ValueError("Unsupported command; START and RESET are physical only")
+        if command == "PING":
+            return await self._heartbeat()
         async with self._lock:
             if not self.fresh or self._writer is None:
                 raise ConnectionError("ESP32 not connected or status is stale")
@@ -333,7 +384,7 @@ class ESP32Client:
     async def _read(self, callback):
         while not self._stopped:
             line = await asyncio.wait_for(self._reader.readline(), 1.25)
-            if not line or len(line) > 4096:
+            if not line or len(line) > MAX_FRAME_BYTES:
                 raise ConnectionError("ESP32 lost or oversized telemetry")
             try:
                 text = line.decode("ascii").strip()
@@ -349,18 +400,50 @@ class ESP32Client:
                             data.get("ipv4_configured"), data.get("pi_tcp_connected"),
                             data.get("pi_heartbeat_fresh"),
                         )
+                    if data.get('first_fault_valid') == 0:
+                        self._first_fault = None
+                    if self._first_fault is not None:
+                        data['first_fault'] = self._first_fault
                     self._latest = data
                     self._last = time.monotonic()
-                    await callback(data)
+                    # Socket input/ACKs must not wait for storage, plotting or UI locks.
+                    if self._status_queue.full():
+                        self._status_queue.get_nowait()
+                    self._status_queue.put_nowait(data)
+            elif text.startswith("FIRST_FAULT "):
+                fault = parse_first_fault(text)
+                if fault is not None:
+                    self._first_fault = fault
+                    self._latest['first_fault'] = fault
+                    logging.error("ESP32 first fault: %s", fault)
+            elif text == "OK PING":
+                if self._pending_ping and not self._pending_ping.done():
+                    self._pending_ping.set_result(text)
             elif text.startswith(("OK ", "ERR ")) and self._pending and not self._pending.done():
                 self._pending.set_result(text)
 
+    async def _dispatch_status(self, callback):
+        while not self._stopped:
+            await callback(await self._status_queue.get())
+
+    async def _heartbeat(self):
+        # PING has an unambiguous reply and never takes the HMI command lock.
+        async with self._ping_lock:
+            if not self._connected or self._writer is None:
+                raise ConnectionError("ESP32 TCP disconnected")
+            future = asyncio.get_running_loop().create_future()
+            self._pending_ping = future
+            try:
+                self._writer.write(b"PING\n")
+                await asyncio.wait_for(self._writer.drain(), 0.5)
+                return await asyncio.wait_for(future, 1.0)
+            finally:
+                self._pending_ping = None
+
     async def _ping(self):
         while not self._stopped:
+            await self._heartbeat()
             await asyncio.sleep(0.5)
-            if not self.fresh:
-                raise ConnectionError("ESP32 telemetry stale")
-            await self.command("PING")
 
     async def run(self, on_status, on_event):
         self._stopped = False
@@ -372,16 +455,20 @@ class ESP32Client:
                     asyncio.open_connection(self.host, self.port, limit=8192), 3.0)
                 self._connected, self._last = True, 0
                 on_event("ESP32 Ethernet connected; awaiting STATUS.", "info")
+                self._first_fault = None
+                self._status_queue = asyncio.Queue(maxsize=1)
                 reader = asyncio.create_task(self._read(on_status))
+                dispatcher = asyncio.create_task(self._dispatch_status(on_status))
                 ping = asyncio.create_task(self._ping())
                 try:
-                    done, _ = await asyncio.wait((reader, ping), return_when=asyncio.FIRST_COMPLETED)
+                    done, _ = await asyncio.wait((reader, ping, dispatcher), return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
                         task.result()
                 finally:
                     reader.cancel()
                     ping.cancel()
-                    await asyncio.gather(reader, ping, return_exceptions=True)
+                    dispatcher.cancel()
+                    await asyncio.gather(reader, ping, dispatcher, return_exceptions=True)
                 delay = 0.5
             except asyncio.CancelledError:
                 raise
@@ -394,6 +481,9 @@ class ESP32Client:
                 if self._pending and not self._pending.done():
                     self._pending.set_exception(ConnectionError("ESP32 connection lost"))
                 self._pending = None
+                if self._pending_ping and not self._pending_ping.done():
+                    self._pending_ping.cancel()
+                self._pending_ping = None
                 if self._writer is not None:
                     self._writer.close()
                     try:

@@ -1,0 +1,67 @@
+test_wait_diagnostics.c
+StateMachine.c
+Generating Code...
+PASS WAIT readiness blocker diagnostics and unchanged READY transition
+PASS executable wait_diagnostics
+test_v20.c
+C:\Software\AEM_windtunnel2026\ESP32\tests\test_v20.c(130): error C2220: the following warning is treated as an error
+C:\Software\AEM_windtunnel2026\ESP32\tests\test_v20.c(130): warning C4310: cast truncates constant value
+V20Modbus.c
+Generating Code...
+FAIL v20 (compile or execution; exit 1)
+test_v20.c
+C:\Software\AEM_windtunnel2026\ESP32\tests\test_v20.c(130): error C2220: the following warning is treated as an error
+C:\Software\AEM_windtunnel2026\ESP32\tests\test_v20.c(130): warning C4310: cast truncates constant value
+V20Modbus.c
+Generating Code...
+FAIL v20_inhibited (compile or execution; exit 1)
+test_startup.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+PASS queue/event creation before tasks; unchanged scheduling; successful local initialization only
+PASS readiness independent of sensor calibration and physical health; failed init remains inhibited
+InputHandler: Output initialization failed; startup remains inhibited
+SensorTask: Sensor initialization failed; startup inhibited
+PASS executable startup
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+TorqueModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS executable control
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+FrequencyModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS executable control_frequency
+4/6 host executables passed.

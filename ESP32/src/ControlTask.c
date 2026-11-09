@@ -19,6 +19,7 @@
 #include "esp_timer.h"
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // FreeRTOS includes
@@ -33,6 +34,7 @@
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
+#include "Ethernet.h"
 #include "FanCalibration.h"
 #include "Regelaar.h"
 #include "TorqueModel.h"
@@ -106,6 +108,10 @@ typedef struct
     MachineInputs inputs;
     bool start, stop, reset;
     bool tasks_ready;
+    FaultEvent history[FAULT_HISTORY_SIZE];
+    unsigned history_next, history_count;
+    uint32_t fault_sequence, previous_disconnect_sequence;
+    bool disconnected_since_read, ethernet_link, fault_episode_active;
 } ControlContext;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -127,6 +133,7 @@ static EventBits_t Control_ReadButtonEvents(void);
 static void Control_ReadInputs(ControlContext *ctx);
 static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits);
 static void Control_CheckSafety(ControlContext *ctx);
+static void Control_UpdateConfiguration(ControlContext *ctx);
 static void Control_UpdateStateMachine(ControlContext *ctx);
 static void Control_UpdateController(ControlContext *ctx);
 static void Control_UpdateMotor(ControlContext *ctx);
@@ -135,6 +142,9 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
 static void Control_PublishStatus(ControlContext *ctx);
 static void Control_UpdateDiagnostics(ControlContext *ctx);
 static void Control_BeginCycle(ControlContext *ctx, uint32_t notifications);
+static void Control_RecordEvent(ControlContext *ctx);
+static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, const char *source);
+static void Control_Fault(ControlContext *ctx, FaultReason_t fault, const char *source);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -228,7 +238,7 @@ static void Control_Init(ControlContext *ctx)
     else
     {
         ESP_LOGE("Control", "V20 Modbus UART initialization failed; motor remains disarmed");
-        StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+        Control_Fault(ctx, FAULT_MODBUS, "control");
     }
     V20Modbus_Disarm();
     ctx->window_start_us = esp_timer_get_time();
@@ -290,7 +300,7 @@ static void Control_WaitForTasks(ControlContext *ctx)
     }
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->now_tick = xTaskGetTickCount();
-    StateMachine_Fault(&ctx->machine, FAULT_INITIALIZATION, ctx->now_ms);
+    Control_Fault(ctx, FAULT_INITIALIZATION, "control");
     V20Modbus_Disarm();
     Control_PublishStatus(ctx);
 }
@@ -312,7 +322,7 @@ static void Control_HoldInitializationFault(ControlContext *ctx)
         ctx->now_tick = xTaskGetTickCount();
         (void)Control_ReadButtonEvents();
         Control_ReadInputs(ctx);
-        StateMachine_Fault(&ctx->machine, SafetyIO_Fault(), ctx->now_ms);
+        Control_Fault(ctx, SafetyIO_Fault(), "control");
         V20Modbus_Disarm();
         Control_PublishStatus(ctx);
         Control_UpdateMotor(ctx);
@@ -364,13 +374,23 @@ static void Control_ReadInputs(ControlContext *ctx)
     V20Modbus_GetStatus(&ctx->motor);
 
     ctx->status.measurement = ctx->sample.value;
-    ctx->status.sensor_ok = ctx->sample.valid && (TickType_t)(ctx->now_tick - ctx->sample.tick) <
+    /* Producers on core 0 can publish AFTER BeginCycle. Sample the clock only
+     * after the queue reads, or a new timestamp underflows unsigned age. */
+    const TickType_t observed_tick = xTaskGetTickCount();
+    ctx->now_tick = observed_tick;
+    ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    ctx->status.sensor_ok = ctx->sample.valid && (TickType_t)(observed_tick - ctx->sample.tick) <
                                                      pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
     ctx->status.motor_ok = ctx->motor.operational_ready && ctx->motor.ok;
+    ctx->disconnected_since_read =
+        ctx->heartbeat.disconnect_sequence != ctx->previous_disconnect_sequence;
+    ctx->previous_disconnect_sequence = ctx->heartbeat.disconnect_sequence;
+    ctx->ethernet_link = Ethernet_LinkUp();
     ctx->status.pi_ok =
         !PI_HEARTBEAT_REQUIRED ||
-        (ctx->heartbeat.connected &&
-         (TickType_t)(ctx->now_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
+        (ctx->ethernet_link && !ctx->disconnected_since_read &&
+         ctx->heartbeat.tcp_connected && ctx->heartbeat.connected &&
+         (TickType_t)(observed_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
     ctx->status.safety = ctx->safety;
 }
 
@@ -453,6 +473,58 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Control_UpdateConfiguration()
+
+static void Control_UpdateConfiguration(ControlContext *ctx)
+{
+    ConfigurationDiagnostics *d = &ctx->status.configuration;
+    *d = (ConfigurationDiagnostics){.failure_reason = "NONE", .mode = ctx->status.mode,
+        .control_type = CONTROL_TYPE, .watchdog_mapping_required = V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED};
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
+    d->controller_ready = ctx->torque_model_ready;
+    d->model_commissioned = SIMULATION_MODE || MOTOR_MODEL_TORQUE_TO_V20_ENABLED;
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    d->controller_ready = ctx->frequency_controller_ready;
+    d->calibration_valid = FanCalibration_IsValid();
+    d->model_identified = ctx->frequency_model.identified_valid;
+    d->model_commissioned = SIMULATION_MODE || ctx->frequency_model.commissioned;
+    d->model_gain = ctx->frequency_model.gain_mps_per_hz;
+    d->model_tau_s = ctx->frequency_model.tau_s;
+    d->model_delay_s = ctx->frequency_model.delay_s;
+    d->model_lambda_s = ctx->frequency_model.lambda_s;
+#endif
+    if (!ctx->motor.reference_config_valid)
+        d->failure_reason = "V20_REFERENCE_INVALID";
+    else if (V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED && !ctx->motor.watchdog_config_known)
+        d->failure_reason = "V20_WATCHDOG_UNVERIFIED";
+    else if (V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED && !ctx->motor.watchdog_config_valid)
+        d->failure_reason = "V20_WATCHDOG_INVALID";
+    else if (ctx->status.mode != MODE_AUTO && ctx->status.mode != MODE_MANUAL)
+        d->failure_reason = "OPERATING_MODE_INVALID";
+    else if (ctx->status.mode == MODE_AUTO)
+    {
+#if CONTROL_TYPE == CONTROL_TORQUE_PI
+        if (!d->controller_ready) d->failure_reason = "TORQUE_CONTROLLER_INVALID";
+        else if (!d->model_commissioned) d->failure_reason = "TORQUE_MODEL_NOT_COMMISSIONED";
+#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
+        if (!d->model_identified) d->failure_reason = "FREQUENCY_MODEL_NOT_IDENTIFIED";
+        else if (!isfinite(d->model_gain) || d->model_gain <= 0)
+            d->failure_reason = "FREQUENCY_MODEL_GAIN_INVALID";
+        else if (!isfinite(d->model_tau_s) || d->model_tau_s <= 0)
+            d->failure_reason = "FREQUENCY_MODEL_TAU_INVALID";
+        else if (!isfinite(d->model_delay_s) || d->model_delay_s < 0)
+            d->failure_reason = "FREQUENCY_MODEL_DELAY_INVALID";
+        else if (!isfinite(d->model_lambda_s) || d->model_lambda_s <= 0)
+            d->failure_reason = "FREQUENCY_MODEL_LAMBDA_INVALID";
+        else if (!d->controller_ready) d->failure_reason = "FREQUENCY_CONTROLLER_INVALID";
+        else if (!d->calibration_valid) d->failure_reason = "FAN_CALIBRATION_MISSING";
+        else if (!d->model_commissioned) d->failure_reason = "FREQUENCY_MODEL_NOT_COMMISSIONED";
+#endif
+    }
+    d->start_ready = !strcmp(d->failure_reason, "NONE");
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Control_CheckSafety()
 
 /*
@@ -461,6 +533,7 @@ static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits)
  */
 static void Control_CheckSafety(ControlContext *ctx)
 {
+    Control_UpdateConfiguration(ctx);
     /* Physical reset clears a timing latch only when the input is healthy. */
     if (ctx->reset && ctx->clock_fault == FAULT_NONE && ctx->safety.valid &&
         !ctx->safety.estop_pressed &&
@@ -507,6 +580,7 @@ static void Control_CheckSafety(ControlContext *ctx)
                         .v20_configuration_valid = ctx->motor.reference_config_valid &&
                                                    (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED ||
                                                     ctx->motor.watchdog_config_valid),
+                        .start_configuration_invalid = !ctx->status.configuration.start_ready,
                         .pi_ok = ctx->status.pi_ok,
                         .stop = ctx->stop,
                         .start = ctx->start,
@@ -531,6 +605,21 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 {
     const SystemState_t previous_state = ctx->machine.state;
     StateMachine_Step(&ctx->machine, &ctx->inputs);
+    if (ctx->machine.state == STATE_FAULT)
+        Control_CaptureFault(ctx, previous_state,
+            ctx->machine.fault == FAULT_CONFIGURATION && ctx->inputs.start_configuration_invalid ?
+                "control_configuration" :
+            ctx->machine.fault != FAULT_PI_CONNECTION ? "state_machine" :
+            !ctx->ethernet_link ? "pi_link_down" :
+            (ctx->disconnected_since_read || !ctx->heartbeat.tcp_connected) ? "pi_tcp_disconnect" :
+            "pi_heartbeat");
+    else if (previous_state == STATE_FAULT)
+    {
+        /* Only the existing physical-reset state-machine path can leave FAULT. */
+        ctx->fault_episode_active = false;
+        /* Keep archived evidence available to slow log readers after RESET.
+         * A later, distinct fault episode will replace it with a new sequence. */
+    }
 
     if (ctx->machine.recovery_requested)
     {
@@ -547,20 +636,10 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
             ctx->motor.ok && ctx->motor.ready && isfinite(ctx->motor.actual_hz) &&
             ctx->motor.actual_hz >= 0 && ctx->motor.actual_hz <= MANUAL_MAX_HZ &&
             (TickType_t)(ctx->now_tick - ctx->motor.tick) < pdMS_TO_TICKS(MOTOR_STATUS_TIMEOUT_MS);
-#if CONTROL_TYPE == CONTROL_TORQUE_PI
-        if (ctx->status.mode == MODE_AUTO &&
-            (!ctx->torque_model_ready || (!SIMULATION_MODE && !MOTOR_MODEL_TORQUE_TO_V20_ENABLED)))
-            StateMachine_Fault(&ctx->machine, FAULT_CONFIGURATION, ctx->now_ms);
-#elif CONTROL_TYPE == CONTROL_FREQUENCY_PI
-        if (ctx->status.mode == MODE_AUTO &&
-            (!ctx->frequency_controller_ready || !FanCalibration_IsValid() ||
-             (!SIMULATION_MODE && !ctx->frequency_model.commissioned)))
-            StateMachine_Fault(&ctx->machine, FAULT_CONFIGURATION, ctx->now_ms);
-#endif
-        else if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
-            StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+        if (ctx->status.mode == MODE_MANUAL && !feedback_ok)
+            Control_Fault(ctx, FAULT_MODBUS, "control");
         else if (!V20Modbus_Arm())
-            StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+            Control_Fault(ctx, FAULT_MODBUS, "control");
     }
 
     /* Disarm immediately on STOP or FAULT; the separate operational VFD-enable
@@ -601,7 +680,7 @@ static void Control_UpdateController(ControlContext *ctx)
                 !SetpointCurve_Step(&ctx->frequency_curve, ctx->status.manual_hz,
                                     CONTROL_CLOCK_PERIOD_S, &ctx->status.applied_hz))
             {
-                StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+                Control_Fault(ctx, FAULT_MODBUS, "control");
                 V20Modbus_Disarm();
             }
             else
@@ -684,7 +763,7 @@ static void Control_UpdateController(ControlContext *ctx)
 #endif
             if (!valid)
             {
-                StateMachine_Fault(&ctx->machine, FAULT_INTERNAL, ctx->now_ms);
+                Control_Fault(ctx, FAULT_INTERNAL, "control");
                 V20Modbus_Disarm();
                 ctx->status.output = 0.0f;
             }
@@ -705,7 +784,7 @@ static void Control_UpdateController(ControlContext *ctx)
     if (ctx->machine.state == STATE_RUNNING && (ctx->motor.status & 0x0040u) != 0 &&
         ctx->now_ms - ctx->machine.entered_ms > RESET_FEEDBACK_WINDOW_MS)
     {
-        StateMachine_Fault(&ctx->machine, FAULT_VFD, ctx->now_ms);
+        Control_Fault(ctx, FAULT_VFD, "control");
         V20Modbus_Disarm();
     }
 }
@@ -817,6 +896,81 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Control_RecordEvent()
+
+static void Control_RecordEvent(ControlContext *ctx)
+{
+    DigitalOutputStatus outputs = {0};
+    DigitalOutputs_GetStatus(&outputs);
+    const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    const FaultEvent event = {.timestamp_ms = now, .state = ctx->machine.state,
+        .statusword = ctx->motor.status, .status_valid = ctx->motor.status_valid,
+        .do1_requested = outputs.vfd_requested, .do1_acknowledged = outputs.vfd_acknowledged,
+        .do1_valid = outputs.confirmed_valid, .tcp_connected = ctx->heartbeat.tcp_connected,
+        .heartbeat_valid = ctx->status.pi_ok};
+    const FaultEvent *previous = ctx->history_count ?
+        &ctx->history[(ctx->history_next + FAULT_HISTORY_SIZE - 1u) % FAULT_HISTORY_SIZE] : NULL;
+    if (!previous || previous->state != event.state || previous->statusword != event.statusword ||
+        previous->status_valid != event.status_valid || previous->do1_requested != event.do1_requested ||
+        previous->do1_acknowledged != event.do1_acknowledged || previous->do1_valid != event.do1_valid ||
+        previous->tcp_connected != event.tcp_connected || previous->heartbeat_valid != event.heartbeat_valid)
+    {
+        ctx->history[ctx->history_next] = event;
+        ctx->history_next = (ctx->history_next + 1u) % FAULT_HISTORY_SIZE;
+        if (ctx->history_count < FAULT_HISTORY_SIZE)
+            ctx->history_count++;
+    }
+    if (ctx->status.first_fault.valid && ctx->fault_episode_active)
+    {
+        if (!ctx->status.fault_do1_off_observed_ms && outputs.confirmed_valid &&
+            !outputs.vfd_acknowledged)
+            ctx->status.fault_do1_off_observed_ms = now;
+        if (!ctx->status.fault_off2_observed_ms && ctx->motor.status_valid && ctx->motor.off2_active)
+            ctx->status.fault_off2_observed_ms = now;
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Control_CaptureFault()
+
+static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, const char *source)
+{
+    FirstFaultSnapshot *f = &ctx->status.first_fault;
+    if (ctx->fault_episode_active || ctx->machine.state != STATE_FAULT)
+        return;
+    ctx->fault_episode_active = true;
+    ctx->status.fault_do1_off_observed_ms = 0;
+    ctx->status.fault_off2_observed_ms = 0;
+    DigitalOutputStatus outputs = {0};
+    DigitalOutputs_GetStatus(&outputs);
+    *f = (FirstFaultSnapshot){.valid = true, .sequence = ++ctx->fault_sequence,
+        .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000),
+        .previous_state = previous, .new_state = STATE_FAULT, .code = ctx->machine.fault,
+        .source = source, .heartbeat_timeout_ms = COMMAND_TIMEOUT_MS,
+        .heartbeat_age_ms = ctx->heartbeat.connected ?
+            (uint32_t)(xTaskGetTickCount() - ctx->heartbeat.tick) * portTICK_PERIOD_MS : UINT32_MAX,
+        .heartbeat_valid = ctx->status.pi_ok, .ethernet_link = ctx->ethernet_link,
+        .heartbeat = ctx->heartbeat, .configuration = ctx->status.configuration,
+        .pi_last_message_ms = (uint32_t)ctx->heartbeat.last_message_tick * portTICK_PERIOD_MS,
+        .motor = ctx->motor, .safety = ctx->safety,
+        .do1_requested = outputs.vfd_requested, .do1_acknowledged = outputs.vfd_acknowledged,
+        .do1_valid = outputs.confirmed_valid, .history_count = ctx->history_count};
+    const unsigned first = (ctx->history_next + FAULT_HISTORY_SIZE - ctx->history_count) % FAULT_HISTORY_SIZE;
+    for (unsigned i = 0; i < ctx->history_count; ++i)
+        f->history[i] = ctx->history[(first + i) % FAULT_HISTORY_SIZE];
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Control_Fault()
+
+static void Control_Fault(ControlContext *ctx, FaultReason_t fault, const char *source)
+{
+    const SystemState_t previous = ctx->machine.state;
+    StateMachine_Fault(&ctx->machine, fault, ctx->now_ms);
+    Control_CaptureFault(ctx, previous, source);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Control_PublishStatus()
 
 /*
@@ -826,6 +980,7 @@ static bool ControlTiming_Execution(ControlTiming *t, uint32_t execution_us, uin
  */
 static void Control_PublishStatus(ControlContext *ctx)
 {
+    Control_RecordEvent(ctx);
     ctx->status.control_ready = ctx->tasks_ready;
     ctx->status.control_clock_started = ctx->control_clock_started;
     ctx->status.init_deadline_exceeded =
@@ -943,7 +1098,7 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
                                  ctx->status.service_us))
     {
         ctx->latched_timing_fault = FAULT_CONTROL_OVERRUN;
-        StateMachine_Fault(&ctx->machine, ctx->latched_timing_fault, ctx->now_ms);
+        Control_Fault(ctx, ctx->latched_timing_fault, "control_timing");
         V20Modbus_Disarm();
     }
     /* State-specific drive diagnosis belongs to StateMachine_Step. Only transport
@@ -953,7 +1108,7 @@ static void Control_UpdateDiagnostics(ControlContext *ctx)
          (ctx->machine.state == STATE_STARTING || ctx->machine.state == STATE_RUNNING ||
           ctx->machine.state == STATE_READY || ctx->machine.state == STATE_STOP)))
     {
-        StateMachine_Fault(&ctx->machine, FAULT_MODBUS, ctx->now_ms);
+        Control_Fault(ctx, FAULT_MODBUS, "control");
         V20Modbus_Disarm();
     }
     ctx->status.overruns = ctx->timing_stats.overruns;
@@ -1017,6 +1172,7 @@ void ControlTask(void *argument)
         Control_BeginCycle(ctx, notifications);
         const EventBits_t buttonBits = Control_ReadButtonEvents();
         Control_ReadInputs(ctx);
+        Control_RecordEvent(ctx);
         Control_ProcessCommands(ctx, buttonBits);
         Control_CheckSafety(ctx);
         Control_UpdateStateMachine(ctx);

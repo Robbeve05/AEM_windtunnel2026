@@ -99,6 +99,7 @@ typedef struct
     bool v20_diagnostics_complete, v20_configuration_valid;
     bool stop_confirmed, stopped_prepared, start_confirmed, drive_run_locked;
     bool drive_operation_enabled, stop_command_acknowledged;
+    bool start_configuration_invalid;
     FaultReason_t urgent_fault, timing_fault;
 } MachineInputs;
 

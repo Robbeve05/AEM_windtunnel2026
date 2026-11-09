@@ -60,6 +60,17 @@ typedef struct
 } MotorRequest;
 typedef struct
 {
+    uint32_t id, type, start_ms, deadline_ms, completed_ms;
+    uint32_t first_rx_ms, last_rx_ms, rtt_us, max_rtt_us, enqueue_us, max_service_gap_us;
+    uint32_t deadline_lateness_us, uart_error_flags, discarded_before_tx;
+    uint16_t pdu_address, register_count;
+    uint8_t tx_bytes, rx_bytes, expected_rx_bytes, result;
+    bool pending, write_unconfirmed;
+    uint8_t tx_frame[32], rx_frame[32];
+} ModbusTransactionDiagnostics;
+
+typedef struct
+{
     bool ready, ok, initialized, response_received, status_healthy, communication_ok;
     bool drive_fault_free, operational_ready, run_authorized;
     bool ready_to_switch_on, ready_to_operate, operation_enabled, off2_active, off3_active;
@@ -74,6 +85,14 @@ typedef struct
     uint16_t watchdog_parameter_expected_value;
     uint16_t last_error_register, last_error_expected, last_error_actual;
     uint32_t errors, timeouts, last_success_age_ms;
+    uint32_t retries, recovered_transactions, final_comm_errors;
+    /* Monotonic boot timestamps; zero means no successful operation yet. */
+    uint32_t last_valid_response_ms, last_valid_process_data_ms, last_process_data_tx_ms;
+    uint32_t last_status_response_ms, last_status_request_ms;
+    uint32_t max_process_data_gap_ms, max_response_gap_ms, max_process_data_tx_gap_ms;
+    uint32_t valid_reads, valid_writes, crc_errors, invalid_frames, late_replies, exceptions;
+    float requested_hz;
+    ModbusTransactionDiagnostics transaction;
     uint32_t exception_code, last_error_count;
     uint8_t last_error, last_operation;
     TickType_t tick;
@@ -82,7 +101,48 @@ typedef struct
 {
     bool connected;
     TickType_t tick;
+    bool tcp_connected;
+    TickType_t last_message_tick;
+    uint32_t disconnect_sequence;
 } PiHeartbeat;
+
+typedef struct
+{
+    const char *failure_reason;
+    OperatingMode mode;
+    unsigned control_type;
+    bool start_ready, controller_ready, calibration_valid, model_identified, model_commissioned;
+    bool watchdog_mapping_required;
+    float model_gain, model_tau_s, model_delay_s, model_lambda_s;
+} ConfigurationDiagnostics;
+
+#define FAULT_HISTORY_SIZE 8u
+typedef struct
+{
+    uint32_t timestamp_ms;
+    SystemState_t state;
+    uint16_t statusword;
+    bool status_valid, do1_requested, do1_acknowledged, do1_valid;
+    bool tcp_connected, heartbeat_valid;
+} FaultEvent;
+
+typedef struct
+{
+    bool valid;
+    uint32_t sequence, timestamp_ms, heartbeat_age_ms, heartbeat_timeout_ms;
+    SystemState_t previous_state, new_state;
+    FaultReason_t code;
+    const char *source;
+    bool heartbeat_valid, ethernet_link;
+    PiHeartbeat heartbeat;
+    ConfigurationDiagnostics configuration;
+    uint32_t pi_last_message_ms;
+    MotorStatus motor;
+    SafetySnapshot safety;
+    bool do1_requested, do1_acknowledged, do1_valid;
+    FaultEvent history[FAULT_HISTORY_SIZE];
+    unsigned history_count;
+} FirstFaultSnapshot;
 typedef struct
 {
     uint32_t blocking_reasons;
@@ -128,6 +188,10 @@ typedef struct
     uint32_t control_cycle_count;
     bool control_ready, control_clock_started, modbus_initialized, init_deadline_exceeded;
     ReadyDiagnostics ready_diag;
+    FirstFaultSnapshot first_fault;
+    ConfigurationDiagnostics configuration;
+    /* First observed post-fault samples; not physical relay edge timestamps. */
+    uint32_t fault_do1_off_observed_ms, fault_off2_observed_ms;
 } Telemetry;
 
 ///////////////////////////////////////////////////////////////////////////////

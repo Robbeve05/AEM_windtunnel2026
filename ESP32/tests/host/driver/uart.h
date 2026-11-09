@@ -25,3 +25,7 @@ esp_err_t uart_set_mode(int port, int mode);
 esp_err_t uart_flush_input(int port);
 int uart_write_bytes(int port, const void *data, size_t length);
 int uart_read_bytes(int port, void *data, unsigned length, TickType_t wait);
+
+typedef struct { int type; size_t size; bool timeout_flag; } uart_event_t;
+enum { UART_DATA, UART_FIFO_OVF, UART_BUFFER_FULL, UART_PARITY_ERR, UART_FRAME_ERR };
+esp_err_t uart_get_buffered_data_len(int port, size_t *size);

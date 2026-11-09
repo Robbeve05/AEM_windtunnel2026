@@ -12,6 +12,8 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'i2c'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '' },
+    @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c', 'src\FaultSnapshot.c', 'src\StateMachine.c', 'src\StatusIndicators.c'); Flags = '' },
     @{ Name = "fan_calibration"; Sources = @("tests\test_fan_calibration.c"); Flags = "" },
     @{ Name = 'indicators'; Sources = @('tests\test_indicators.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
     @{ Name = 'wait_diagnostics'; Sources = @('tests\test_wait_diagnostics.c', 'src\StateMachine.c'); Flags = '' },
@@ -33,13 +35,14 @@ $cases = @(
     @{ Name = 'v20_fault_ack'; Sources = @('tests\test_v20_recovery.c', 'src\V20Modbus.c', 'src\V20Simulation.c', 'src\StateMachine.c'); Flags = '/DV20_RUN_COMMISSIONED=1 /DV20_FAULT_ACK_VERIFIED=1' },
     @{ Name = 'v20_simulation'; Sources = @('tests\test_v20_simulation.c', 'src\V20Modbus.c', 'src\V20Simulation.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1 /DV20_FAULT_ACK_VERIFIED=1' },
     @{ Name = 'startup'; Sources = @('tests\test_startup.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1' },
-    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=0' },
-    @{ Name = 'control_frequency'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\FrequencyModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=1' }
+    @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=0' },
+    @{ Name = 'control_frequency'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\FrequencyModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=1' }
 )
 if ($Case.Count) {
     $unknown = @($Case | Where-Object { $_ -notin $cases.Name })
     if ($unknown.Count) { throw ('Unknown test cases: ' + ($unknown -join ', ')) }
-    $cases = @($cases | Where-Object { $_.Name -in $Case })
+    $cases = @(
+    @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c', 'src\FaultSnapshot.c', 'src\StateMachine.c', 'src\StatusIndicators.c'); Flags = '' },$cases | Where-Object { $_.Name -in $Case })
 }
 $failed = @()
 foreach ($testCase in $cases) {

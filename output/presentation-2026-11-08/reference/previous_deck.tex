@@ -1,0 +1,307 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\usetheme{Madrid}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{page number in head/foot}[totalframenumber]
+\setbeamersize{text margin left=7mm,text margin right=7mm}
+\setbeamerfont{block title}{size=\normalsize}
+\setbeamerfont{block body}{size=\small}
+\definecolor{measurement}{RGB}{24,124,135}
+\definecolor{control}{RGB}{173,98,32}
+\definecolor{communication}{RGB}{121,83,163}
+\newcommand{\Cp}{\ensuremath{C_p}}
+\newcommand{\xc}{\ensuremath{x/c}}
+\newenvironment{points}{\begin{itemize}\setlength{\itemsep}{0.45em}}{\end{itemize}}
+\title[Wind Tunnel Project]{Wind Tunnel Project}
+\author[Project Leader: R. van Eekelen]{Konstantin\\[2pt]Bas\\[2pt]Dante\\[2pt]Robbe}
+\institute[]{Aerospace Engineering Minor\\[3pt]Avans University of Applied Sciences}
+\date{}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+  \vspace{-1cm}
+  \begin{center}
+    \color{structure.fg}\small\bfseries
+    RESEARCH $\longrightarrow$ DEFINE $\longrightarrow$ DESIGN
+    $\longrightarrow$ BUILD $\longrightarrow$ VALIDATE
+  \end{center}
+\end{frame}
+
+\begin{frame}{Table of Contents}
+  \begin{enumerate}\setlength{\itemsep}{1em}
+    \item Project Status
+    \item Research Status
+    \item Where Are We \& Where Are We Going?
+    \item What Has to Be Done?
+    \item System Architecture
+    \item Planning \& Next Steps
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Research Status}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.235\textwidth}
+      \begin{block}{Konstantin}
+        \begin{points}
+          \item Airfoil design
+          \item Measurement locations on the airfoil
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \begin{block}{Bas}
+        \begin{points}
+          \item XFOIL simulations
+          \item \Cp{} measurement methods
+          \item Methods for measuring \Cp{} over \xc
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \begin{block}{Dante}
+        \begin{points}
+          \item Open-loop vs. closed-loop wind tunnels
+          \item Advantages and disadvantages of both
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \begin{block}{Robbe}
+        \begin{points}
+          \item Communication protocols
+          \item Controller/ESP to Raspberry Pi communication
+        \end{points}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vfill
+  \begin{beamercolorbox}[sep=8pt,center,rounded=true]{block body}
+    Research results will be used to define the final measurement setup\newline
+    and system architecture.
+  \end{beamercolorbox}
+\end{frame}
+
+\begin{frame}{Where Are We \& Where Are We Going?}
+  \begin{columns}[c,onlytextwidth]
+    \begin{column}{0.44\textwidth}
+      \begin{block}{Where are we?}
+        \begin{points}
+          \item Existing open-loop wind tunnel available
+          \item Initial research performed
+          \item Airfoil measurement methods investigated
+          \item XFOIL as theoretical reference
+          \item Communication options investigated
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.08\textwidth}
+      \centering\color{structure.fg}\Huge$\longrightarrow$
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{block}{Where are we going?}
+        \begin{points}
+          \item Final measurement concept
+          \item Final airfoil design
+          \item Sensor and hardware selection
+          \item Control and communication system
+          \item Complete integrated wind tunnel
+          \item Experimental validation against XFOIL
+        \end{points}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{0.5em}
+  \begin{center}\color{structure.fg}\large\bfseries
+    From research $\longrightarrow$ to engineering decisions
+  \end{center}
+\end{frame}
+
+\begin{frame}{What Has to Be Done?}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Airfoil \& Measurements}
+        \begin{itemize}
+          \item Minimum pressure-point count
+          \item Optimal \xc{} locations
+          \item Literature and XFOIL basis
+          \item Final airfoil and pressure taps
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.30\textwidth}
+      \begin{block}{Sensors}
+        \begin{itemize}
+          \item Final pressure sensors
+          \item Final airspeed sensor
+          \item Required range and accuracy
+          \item Required sampling rate
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.34\textwidth}
+      \begin{block}{Electronics \& Communication}
+        \begin{itemize}
+          \item Measurement architecture
+          \item Controller/ESP to Pi protocol
+          \item Electronics and interfaces
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{0.5em}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.40\textwidth}
+      \begin{block}{Control}
+        \begin{points}
+          \item Develop airspeed control
+          \item Integrate fan/VFD control
+          \item Define feedback measurement
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.57\textwidth}
+      \begin{block}{Validation}
+        \begin{points}
+          \item Calibrate sensors and quantify uncertainty
+          \item Measure \Cp(\xc) and compare with XFOIL
+          \item Define final wind tunnel acceptance criteria
+        \end{points}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{System Architecture}
+  \small Proposed architecture: hardware and protocol to be selected
+  \begin{center}
+  \begin{tikzpicture}[
+    x=1cm,y=1cm,
+    unit/.style={draw,thick,rounded corners=2pt,minimum height=0.58cm,
+      text width=2.8cm,align=center,font=\small,fill=white},
+    meas/.style={unit,draw=measurement,text=measurement},
+    ctrl/.style={unit,draw=control,text=control},
+    comm/.style={unit,draw=communication,text=communication},
+    vis/.style={unit,draw=structure.fg,text=structure.fg},
+    flow/.style={-{Stealth[length=2mm]},thick},
+    label/.style={font=\scriptsize,fill=white,inner sep=2pt}
+  ]
+    \node[meas] (air) at (5.8,0) {Airflow};
+    \node[meas] (taps) at (5.8,-1.0) {Airfoil + Pressure Taps};
+    \node[meas] (pressure) at (5.8,-2.0) {Pressure Sensors};
+    \node[ctrl] (esp) at (5.8,-3.15) {Controller / ESP};
+    \node[comm] (pi) at (10.6,-3.15) {Raspberry Pi};
+    \node[vis] (view) at (10.6,-4.4) {Data Processing\newline\& Visualization};
+    \node[meas] (speed) at (1.5,-2.0) {Airspeed Sensor};
+    \node[ctrl] (vfd) at (1.5,-4.25) {VFD};
+    \node[ctrl] (fan) at (1.5,0) {Fan};
+    \draw[flow,measurement] (air) -- (taps);
+    \draw[flow,measurement] (taps) -- (pressure);
+    \draw[flow,measurement] (pressure) -- (esp);
+    \draw[flow,measurement] (air.west) -- (3.5,0) -- (3.5,-1.3)
+      -- (1.5,-1.3) -- (speed.north);
+    \draw[flow,measurement] (speed.east) -- (3.4,-2.0)
+      -- (3.4,-3.15) -- (esp.west);
+    \node[label,text=measurement] at (2.0,-2.8) {Airspeed feedback};
+    \draw[flow,control] (esp.south) |- (vfd.east);
+    \draw[flow,control] (vfd.west) -- (-0.3,-4.25)
+      -- (-0.3,0) -- (fan.west);
+    \draw[flow,control] (fan.east) -- (air.west);
+    \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]},thick,communication] (esp.east) --
+      node[above,font=\scriptsize,text=communication] {Communication} (pi.west);
+    \draw[flow,structure.fg] (pi) -- (view);
+  \end{tikzpicture}
+  \par\vspace{0.2em}
+  {\small\color{measurement}Measurement}\qquad
+  {\small\color{control}Control}\qquad
+  {\small\color{communication}Communication}\qquad
+  {\small\color{structure.fg}Visualization}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Planning \& Next Steps}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.235\textwidth}
+      \textcolor{structure.fg}{Phase 1}
+      \begin{block}{DEFINE}
+        \begin{points}
+          \item Measurement points
+          \item Airfoil
+          \item Sensors
+          \item Communication
+          \item Requirements
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \textcolor{structure.fg}{Phase 2}
+      \begin{block}{DESIGN}
+        \begin{points}
+          \item Mechanical design
+          \item Electronics
+          \item PCB/wiring
+          \item Software architecture
+          \item Control system
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \textcolor{structure.fg}{Phase 3}
+      \begin{block}{BUILD \& INTEGRATE}
+        \begin{points}
+          \item Manufacture airfoil
+          \item Install sensors
+          \item Implement software
+          \item Integrate VFD/fan control
+          \item Integrate complete system
+        \end{points}
+      \end{block}
+    \end{column}
+    \begin{column}{0.235\textwidth}
+      \textcolor{structure.fg}{Phase 4}
+      \begin{block}{VALIDATE}
+        \begin{points}
+          \item Calibration
+          \item Wind tunnel testing
+          \item \Cp{} measurements
+          \item XFOIL comparison
+          \item Accuracy evaluation
+        \end{points}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vfill
+  \begin{center}\color{structure.fg}\small\bfseries
+    DEFINE $\longrightarrow$ DESIGN $\longrightarrow$
+    BUILD \& INTEGRATE $\longrightarrow$ VALIDATE
+  \end{center}
+\end{frame}
+
+\begin{frame}{Concrete Next Steps}
+  \small
+  \renewcommand{\arraystretch}{1.15}
+  \begin{tabular}{@{}p{0.31\textwidth}@{\hspace{0.04\textwidth}}p{0.63\textwidth}@{}}
+    \textcolor{structure.fg}{\textbf{Action}} &
+    \textcolor{structure.fg}{\textbf{Deliverable}} \\[6pt]
+    \textbf{1. Define requirements} &
+    Requirements list: airspeed, measurement range, accuracy, sampling rate and acceptance criteria. \\[9pt]
+    \textbf{2. Define the measurement setup} &
+    Pressure-point count and \xc{} locations, justified by literature and XFOIL. \\[9pt]
+    \textbf{3. Select components} &
+    Sensor, electronics and communication choices, checked against the requirements. \\[9pt]
+    \textbf{4. Complete the design} &
+    Airfoil drawing, wiring diagram, software architecture and control loop. \\[9pt]
+    \textbf{5. Prepare the test plan} &
+    Calibration procedure, uncertainty assessment and \Cp{} comparison with XFOIL.
+  \end{tabular}
+  \vfill
+  \begin{center}\color{structure.fg}\small\bfseries
+    Requirements $\longrightarrow$ Decisions $\longrightarrow$ Design $\longrightarrow$ Test plan
+  \end{center}
+\end{frame}
+\end{document}
+

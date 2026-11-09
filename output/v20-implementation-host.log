@@ -1,0 +1,132 @@
+test_fan_calibration.c
+'C:\Software\AEM_windtunnel2026\ESP32\.pio\host-tests\fan_calibration_tests.exe' was blocked by your organization's Device Guard policy.
+Contact your support person for more info.
+FAIL fan_calibration (compile or execution; exit 4551)
+test_indicators.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+PASS INIT/WAIT/READY/RUNNING/STOP/FAULT, emergency press/release, blink boundaries, missing telemetry, existing text
+PASS executable indicators
+test_wait_diagnostics.c
+StateMachine.c
+Generating Code...
+Assertion failed: machine.state == STATE_READY, file C:\Software\AEM_windtunnel2026\ESP32\tests\test_wait_diagnostics.c, line 45
+FAIL wait_diagnostics (compile or execution; exit -1073740791)
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS executable outputs_default
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+'C:\Software\AEM_windtunnel2026\ESP32\.pio\host-tests\outputs_disabled_tests.exe' was blocked by your organization's Device Guard policy.
+Contact your support person for more info.
+FAIL outputs_disabled (compile or execution; exit 4551)
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_enabled
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_active_low
+test_ota_safety.c
+PASS OTA disabled by default; physical maintenance, isolation, contactor and safety authorization
+PASS executable ota_safety
+test_sensors.c
+PressureSensors.c
+Generating Code...
+'C:\Software\AEM_windtunnel2026\ESP32\.pio\host-tests\sensors_tests.exe' was blocked by your organization's Device Guard policy.
+Contact your support person for more info.
+FAIL sensors (compile or execution; exit 4551)
+test_core.c
+PiProtocol.c
+Generating Code...
+PASS Pi protocol validation, no frequency-domain PI
+PASS executable core
+test_regelaar.c
+Regelaar.c
+Generating Code...
+PASS ISA NONE/P/PI/PID, known Tustin vectors, first sample, legacy conversion, reset, invalid/NaN/Inf, derivative, single rejection
+PASS executable regulator
+test_models.c
+calibration_stub.c
+Regelaar.c
+TorqueModel.c
+FrequencyModel.c
+Generating Code...
+PASS single torque acceleration/load/correction, calibrated replacement, SIMC, invalid calibration, fresh tracking, saturation recomputation and 10000-cycle recovery
+PASS executable models
+test_torque_inverse.c
+TorqueModel.c
+calibration_stub.c
+Generating Code...
+PASS motor-model tests
+PASS executable motor_model
+test_torque_design.c
+TorqueModel.c
+calibration_stub.c
+Generating Code...
+Kp=1.77074 Ti=7.95775 Td=2.38732 Tf=0.0795775 PM=108.182 error=0.427797
+PASS
+PASS executable torque_design
+test_curve.c
+SetpointCurve.c
+Generating Code...
+PASS frequency quintic 0..50Hz endpoints, 2Hz/s peak, acceleration, jerk and continuity
+PASS: quintic profile endpoints, monotonicity, duration, acceleration/jerk limits, queued retarget, reset, invalid input
+PASS executable curve
+test_v20.c
+V20Modbus.c
+Generating Code...
+'C:\Software\AEM_windtunnel2026\ESP32\.pio\host-tests\v20_tests.exe' was blocked by your organization's Device Guard policy.
+Contact your support person for more info.
+FAIL v20 (compile or execution; exit 4551)
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS default uncommissioned firmware cannot arm or transmit RUN
+PASS executable v20_inhibited
+test_startup.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+PASS queue/event creation before tasks; unchanged scheduling; successful local initialization only
+PASS readiness independent of sensor calibration and physical health; failed init remains inhibited
+InputHandler: Output initialization failed; startup remains inhibited
+SensorTask: Sensor initialization failed; startup inhibited
+PASS executable startup
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+TorqueModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+test_control.obj : error LNK2019: unresolved external symbol I2CBus_Init referenced in function InputHandlerTask
+control_tests.exe : fatal error LNK1120: 1 unresolved externals
+FAIL control (compile or execution; exit 1)
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+FrequencyModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+test_control.obj : error LNK2019: unresolved external symbol I2CBus_Init referenced in function InputHandlerTask
+control_frequency_tests.exe : fatal error LNK1120: 1 unresolved externals
+FAIL control_frequency (compile or execution; exit 1)
+13/20 host executables passed.

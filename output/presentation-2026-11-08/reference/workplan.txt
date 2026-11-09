@@ -1,0 +1,158 @@
+Werkplan  
+  Page: 1 of 3  
+ 
+WORK PLAN  Version: 
+Project title:  Date:  14/9/2026  
+Client contact:  Ivo Gels  
+Project leader:  Robbe  van Eekelen  
+Project members:  Bas Keultjes, Dante Bloemendaal, Konstantin Nikitin , Robbe van Eekelen  
+Client organisation:  Avans Hogeschool  
+ 
+Background (facts, current situation and organisational goals)  
+Avans University of Applied Sciences currently has an unfinished open-return wind tunnel available in the 
+Aerospace Engineering laboratory. The main mechanical structure of the wind tunnel is already present, but  
+the system is not yet fully operational and does not currently provide the measurement and data-acquisition  
+functionality required for aerodynamic experiments. 
+ 
+The purpose of this project is to further develop the existing wind tunnel into a functional aerodynamic test  
+facility that can be used for educational purposes. The system should allow students to perform practical ex 
+periments on airfoils and compare physical measurements with theoretical aerodynamic models. 
+A major part of the project is the development and integration of an instrumentation and data-acquisition 
+system. Static pressure measurements on an airfoil will be used to determine the pressure distribution over  
+the airfoil. These measurements will subsequently be processed into a pressure coefficient 𝐶௣and plotted  
+against the dimensionless chord position 𝑥/𝑐. 
+ 
+The experimental results should be compared with theoretical results obtained using XFOIL. In this way, the  
+wind tunnel will provide students with a physical test setup that connects aerodynamic theory, simulation,  
+measurement technology and data processing.  
+ 
+ 
+ 
+ 
+Problem (description of the undesired situation)  
+-missing software to run the wind tunnel  
+-wrong sensor suite  
+-minor hardware problems (leaks, loose door)  
+-flow regulator (honeycomb structure) missing  
+ 
+ 
+ 
+Objective (description of the desired situation)  
+Complete the wind tunnel so it can be used for educational purposes.  
+ 
+ 
+Results and deliverables (what will be completed by the end of the project, including intermediate results)  
+A wind tunnel suitable for: 
+- measuring Cp agains x/c diagrams. 
+- The ability to work standalone 
+- Plot the data live on a display 
+- Record the data to a usb drive 
+- Adjust the angle of attack (manually and elek 
+- Set desired windspeed 
+Documentation for: 
+- A user manual for operating and using the windtunnel 
+- A database with research, software and electrical schematics 
+- A motivation for project decisions 
+- A global planning  
+Werkplan  
+  Page: 2 of 3  
+ 
+- Test results for validating it’s functioning 
+ 
+ 
+Scope exclusions (what is outside the project)  
+ 
+-airspeeds above mach 0.3  
+-high accuracy measurements  
+- Achieving an exact correlation between the theoretical XFOIL simulations and the practical wind-tunnel 
+measurements is outside the scope of this project. The project focuses on comparing both results and identi-
+fying and explaining possible deviations. 
+ 
+ 
+Dependencies  
+The project depends on the available project time, budget and delivery times of required components. Long  
+or unexpected delivery times for sensors, electronics or mechanical components may delay the  
+implementation and testing phases. 
+The available budget limits the selection of components. Where possible, existing hardware and laboratory 
+equipment will therefore be reused to reduce both costs and lead times. 
+ 
+ 
+ 
+ 
+Activities by project phase  
+Analysis Inspect the complete existing wind tunnel and document the 
+current mechanical, electrical and software condition.  
+Analysis Define functional requirements and acceptance criteria 
+based on successful measurement.  
+Research Research pressure coefficient theory and practical Cp mea-
+surement methods.  
+Risks Likeli-
+hood 
+Impact Mitigation measures 
+Airflow in the test section is in-
+sufficient or unstable 
+Mid High Measure the actual flow conditions, locate major 
+losses/leaks and improve local flow conditioning 
+where possible. Select a practical operating velocity 
+rather than targeting the original maximum airflow. 
+Pressure sensors have insufficient 
+range or resolution 
+Mid High Bench-test and calibrate the sensors before final inte-
+gration. Select a suitable measurement range for the 
+expected pressure differences. 
+Pressure tubing or pressure taps 
+cause incorrect measurements 
+Mid High Perform leakage and blockage checks, use consistent 
+tubing and verify every pressure channel before test-
+ing. 
+Electrical or software integration 
+problems delay testing 
+Mid Mid Develop and test the DAQ, sensor system and plot-
+ting software as separate modules before full integra-
+tion. 
+Experimental Cp differs signifi-
+cantly from theory 
+Mid Mid Check flow uniformity, sensor calibration, pressure 
+reference and model alignment. Repeat measure-
+ments and document remaining experimental limita-
+tions. 
+ 
+Components or sensors are una-
+vailable within the project pe-
+riod 
+Reuse available hardware where suitable and define 
+the minimum viable measurement setup early in the 
+project. 
+Werkplan  
+  Page: 3 of 3  
+ 
+Research Research suitable pressure sensors and required measure-
+ment ranges/resolution.  
+Research Investigate software methods for automatic Cp calculation 
+and plotting.  
+Research Investigate suitable DAQ hardware and communication me-
+thods.  
+Research Investigate the existing fan performance and major pressure 
+losses in the  tunnel.  
+Research Investigate airflow quality, turbulence and flow-condition-
+ing methods applicable to the existing tunnel.  
+Design Design the complete pressure-measurement and DAQ archi-
+tecture.  
+Design Design the mechanical integration of the test model, pres-
+sure taps, tubing and sensors.  
+Design  Design the data-processing and Cp -visualisation software. 
+Implementation Repair and modify the required mechanical and airflow-re-
+lated components of the tunnel.  
+Implementation Install and integrate the pressure measurement, electronics 
+and software systems.  
+Testing  Calibrate and verify all pressure measurement channels.  
+Testing Measure airflow velocity and evaluate test-section flow 
+conditions.  
+Testing  Perform initial pressure measurements on the test model.  
+Testing  Generate the experimental Cp curve.  
+Testing  Repeat the experiment to evaluate measurement repeatabi-
+lity.  
+Testing  Compare the experimental Cp distribution with 
+XFOIL/theoretical results and analyse deviations.  
+Recommendations   
+ 

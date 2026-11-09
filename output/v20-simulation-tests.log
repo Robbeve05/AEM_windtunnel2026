@@ -1,0 +1,8 @@
+test_v20_simulation.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS real driver + state machine + relay-dependent simulated V20: boot/reset/prepare/start/enabled/stop, independent OFF1/OFF3, drive fault ACK and reboot
+PASS executable v20_simulation
+1/1 host executables passed.

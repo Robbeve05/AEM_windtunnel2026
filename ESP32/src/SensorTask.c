@@ -56,6 +56,8 @@ void SensorTask(void *argument)
         if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS)) || !ready)
             continue;
         Sample sample = {0};
+        /* Bus contention skips this slot; successful samples alone refresh
+         * feedback. The bus permits one quick NACK retry on reads only. */
         if (SensorLib_PitotStep(&sample))
         {
             memcpy(sample.taps, taps.taps, sizeof(sample.taps));

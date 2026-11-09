@@ -1,0 +1,7 @@
+In file included from [01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:27[m[K:
+[01m[KC:\Software\AEM_windtunnel2026\output\v20-final-io\invalid_k2_polarity/AppConfig.h:787:2:[m[K [01;31m[Kerror: [m[K#error Active levels must be zero or one
+  787 | #[01;31m[Kerror[m[K Active levels must be zero or one
+      |  [01;31m[K^~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:52:1:[m[K [01;31m[Kerror: [m[Kstatic assertion failed: "Invalid VFD relay polarity"
+   52 | [01;31m[K_Static_assert[m[K(VFD_ENABLE_ACTIVE_LEVEL == 0 || VFD_ENABLE_ACTIVE_LEVEL == 1,
+      | [01;31m[K^~~~~~~~~~~~~~[m[K

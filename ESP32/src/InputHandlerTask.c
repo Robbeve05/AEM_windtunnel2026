@@ -151,6 +151,8 @@ void InputHandlerTask(void *argument)
             last_init_retry_ms = s.tick_ms;
             (void)I2CBus_Init();
         }
+        /* Keep the 10 ms acknowledgement probe, even for an unchanged image.
+         * Never hide an unknown DO1 write behind an automatic retry or grace. */
         s.outputs_ok = DigitalOutputs_Set(enable, indicators);
         xQueueOverwrite(safety_status, &s);
         SafetyIO_PublishButtonEvents(&s, &previous);

@@ -1,0 +1,73 @@
+test_indicators.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+PASS INIT/WAIT/READY/RUNNING/STOP/FAULT, emergency press/release, blink boundaries, missing telemetry, existing text
+PASS executable indicators
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_enabled
+test_ota_safety.c
+PASS OTA disabled by default; physical maintenance, isolation, contactor and safety authorization
+PASS executable ota_safety
+test_regelaar.c
+Regelaar.c
+Generating Code...
+PASS ISA NONE/P/PI/PID, known Tustin vectors, first sample, legacy conversion, reset, invalid/NaN/Inf, derivative, single rejection
+PASS executable regulator
+test_torque_design.c
+TorqueModel.c
+calibration_stub.c
+Generating Code...
+Kp=1.77074 Ti=7.95775 Td=2.38732 Tf=0.0795775 PM=108.182 error=0.427797
+PASS
+PASS executable torque_design
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+TorqueModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness
+PASS recovered task barrier resumes INIT without reset acceptance or RUN
+PASS executable control
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+FrequencyModel.c
+Regelaar.c
+SetpointCurve.c
+Generating Code...
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness
+PASS recovered task barrier resumes INIT without reset acceptance or RUN
+PASS executable control_frequency
+7/7 host executables passed.

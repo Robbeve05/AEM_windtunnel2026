@@ -13,7 +13,7 @@ static void test_safe_stop_after_fault(void)
     assert(V20Modbus_Arm());
     run_until_command(&r);
     fake.fail_read = true;
-    pump(&r, 20);
+    pump(&r, 40);
     assert(status().run_locked && !V20Modbus_Arm());
     fake.fail_read = false;
     pump(&r, 80);
@@ -66,11 +66,11 @@ static void test_enabled_feedback_and_delayed_reply(void)
     r = request(false, 0);
     /* Leave a response in the UART until after its timeout by fragmenting zero
      * available bytes; inject it during quarantine, never as a new response. */
-    fake.damage = 1;
     unsigned reads = fake.reads;
     while (fake.reads == reads) step(&r, true, true);
-    pump(&r, 9);
-    assert(status().run_locked);
+    fake.rx_size = fake.rx_offset = 0; /* Lose this specific read reply. */
+    pump(&r, 8);
+    assert(!status().run_locked); /* First read timeout is recoverable. */
     unsigned errors = status().errors;
     uint8_t late[] = {1, 3, 4, 0x02, 0x37, 0, 0, 0, 0};
     uint16_t crc = V20Modbus_Crc16(late, 7);
@@ -80,7 +80,8 @@ static void test_enabled_feedback_and_delayed_reply(void)
     assert(fake.rx_offset == fake.rx_size);
     assert(!status().operation_enabled); /* Drained, not decoded. */
     pump(&r, 80);
-    assert(status().errors >= errors && status().run_locked && !V20Modbus_Arm());
+    assert(status().errors >= errors && !status().run_locked);
+    assert(status().recovered_transactions == 1 && status().retries == 1);
 
     /* Stop confirmation needs a read REQUEST after the acknowledged OFF1. */
     V20Modbus_RequestRecheck(); pump(&r, 40);
@@ -88,7 +89,8 @@ static void test_enabled_feedback_and_delayed_reply(void)
     V20Modbus_Disarm();
     run_until_command(&r);
     assert(!V20Modbus_StopConfirmed(stop_us, .1f));
-    pump(&r, 30);
+    for (unsigned i=0; i<40 && !V20Modbus_StopConfirmed(stop_us,.1f); ++i)
+        step(&r,true,true);
     assert(V20Modbus_StopConfirmed(stop_us, .1f));
     /* MCU reboot destroys previous arm/ack history; stale RUN intent is inert. */
     assert(V20Modbus_Init());

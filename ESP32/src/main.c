@@ -12,6 +12,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 // System includes
 
+#include <string.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -30,6 +31,8 @@
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
 #include "Ethernet.h"
+#include "FaultSnapshot.h"
+#include "I2CBus.h"
 #include "SafetyIO.h"
 #include "StatusOutput.h"
 #include "TaskData.h"
@@ -140,11 +143,13 @@ static void LogApplicationStatus(void)
 {
     static uint32_t last_fault_transition;
     static FaultReason_t last_logged_fault;
+    static uint32_t last_snapshot_sequence, last_do1_off, last_off2;
     const EventBits_t ready =
         handle_ThreadEventGroup ? xEventGroupGetBits(handle_ThreadEventGroup) : 0;
     const bool queues_ready = commands && sensors && motor_requests && motor_status && telemetry &&
                               safety_status && pi_heartbeat;
-    Telemetry state = {0};
+    /* Private queue copies, used only by the main diagnostic task. */
+    static Telemetry state;
     const bool state_available = telemetry && xQueuePeek(telemetry, &state, 0) == pdTRUE;
     ESP_LOGI("Diag",
              "init queues=%d input=%d sensor=%d pi_listener=%d control=%d timer=%d "
@@ -165,8 +170,10 @@ static void LogApplicationStatus(void)
 
     Sample sample = {0};
     const bool sample_available = sensors && xQueuePeek(sensors, &sample, 0) == pdTRUE;
-    MotorStatus motor = {0};
+    static MotorStatus motor;
     const bool motor_available = motor_status && xQueuePeek(motor_status, &motor, 0) == pdTRUE;
+    if (!motor_available)
+        memset(&motor, 0, sizeof(motor));
     PiHeartbeat heartbeat = {0};
     const bool heartbeat_available =
         pi_heartbeat && xQueuePeek(pi_heartbeat, &heartbeat, 0) == pdTRUE;
@@ -177,12 +184,51 @@ static void LogApplicationStatus(void)
 
     if (state_available)
     {
+        if (state.first_fault.valid && state.first_fault.sequence != last_snapshot_sequence)
+        {
+            static char fault_buffer[4096];
+            const FirstFaultSnapshot *f = &state.first_fault;
+            const ModbusTransactionDiagnostics *t = &f->motor.transaction;
+            ESP_LOGE("FirstFault", "sequence=%lu timestamp_ms=%lu fault=%s operation=%s "
+                     "result=%u rx=%u/%u uart_flags=%lu",
+                     (unsigned long)f->sequence, (unsigned long)f->timestamp_ms,
+                     FaultReason_Name(f->code), V20Modbus_OperationName((V20Operation)t->type),
+                     (unsigned)t->result, t->rx_bytes, t->expected_rx_bytes,
+                     (unsigned long)t->uart_error_flags);
+            size_t length = FaultSnapshot_Format(f, fault_buffer, sizeof(fault_buffer));
+            char *line = fault_buffer;
+            while (length > 0)
+            {
+                size_t count = length < 192u ? length : 192u;
+                if (count < length)
+                {
+                    while (count > 1u && line[count] != ' ')
+                        --count;
+                    if (line[count] != ' ')
+                        count = 192u;
+                }
+                ESP_LOGE("FirstFault", "%.*s", (int)count, line);
+                line += count;
+                length -= count;
+            }
+            last_snapshot_sequence = state.first_fault.sequence;
+        }
         if (state.state == STATE_FAULT &&
             (state.transitions != last_fault_transition || state.fault != last_logged_fault))
         {
             LogFaultEntry(&state);
             last_fault_transition = state.transitions;
             last_logged_fault = state.fault;
+        }
+        if (state.first_fault.valid &&
+            (state.fault_do1_off_observed_ms != last_do1_off || state.fault_off2_observed_ms != last_off2))
+        {
+            last_do1_off = state.fault_do1_off_observed_ms;
+            last_off2 = state.fault_off2_observed_ms;
+            ESP_LOGI("FirstFaultPost", "sequence=%lu do1_off_observed_ms=%lu off2_observed_ms=%lu "
+                     "(sample observations, not physical edge order)",
+                     (unsigned long)state.first_fault.sequence, (unsigned long)last_do1_off,
+                     (unsigned long)last_off2);
         }
         ESP_LOGI("Diag",
                  "machine state=%s fault=%s last_fault=%s running=%d transitions=%lu "
@@ -324,6 +370,27 @@ static void LogApplicationStatus(void)
              motor.control_word_requested_valid, motor.control_word_acknowledged,
              motor.control_word_acknowledged_valid, (unsigned long)motor.errors,
              (unsigned long)motor.timeouts);
+    ESP_LOGI("Diag", "Modbus retries=%lu recovered=%lu final_errors=%lu",
+             (unsigned long)motor.retries, (unsigned long)motor.recovered_transactions,
+             (unsigned long)motor.final_comm_errors);
+    /* Snapshot only: diagnostics must never issue bus commands or reset errors. */
+    for (unsigned address = 0; address < 128; ++address)
+    {
+        I2CBusDiagnostics bus;
+        if (!I2CBus_GetDiagnostics((uint8_t)address, &bus)) continue;
+        uint32_t attempts = 0;
+        for (unsigned i = 0; i < I2C_RESULT_COUNT; ++i) attempts |= bus.results[i];
+        if (!attempts) continue;
+        ESP_LOGI("I2CDiag", "addr=0x%02x ok=%lu busy=%lu nack=%lu timeout=%lu driver=%lu "
+                 "last_us=%lu max_us=%lu max_call_us=%lu retries=%lu recovered=%lu final_errors=%lu "
+                 "last_failure=%u driver_error=%d failure_ms=%lu",
+                 address, (unsigned long)bus.results[I2C_RESULT_OK],
+                 (unsigned long)bus.results[I2C_RESULT_BUSY], (unsigned long)bus.results[I2C_RESULT_NACK],
+                 (unsigned long)bus.results[I2C_RESULT_TIMEOUT], (unsigned long)bus.results[I2C_RESULT_DRIVER],
+                 (unsigned long)bus.last_us, (unsigned long)bus.max_us, (unsigned long)bus.max_call_us,
+                 (unsigned long)bus.retries, (unsigned long)bus.recovered, (unsigned long)bus.final_errors,
+                 (unsigned)bus.last_failure, bus.last_failure_driver_error, (unsigned long)bus.last_failure_ms);
+    }
     esp_netif_ip_info_t ip_info = {0};
     const bool ip_info_available = Ethernet_GetIpInfo(&ip_info);
     const bool ethernet_link = Ethernet_LinkUp();
@@ -378,5 +445,7 @@ void app_main(void)
         ESP_LOGI("Startup", "Main task alive; free_heap=%lu",
                  (unsigned long)esp_get_free_heap_size());
         LogApplicationStatus();
+        ESP_LOGI("Diag", "main_stack_min_free_bytes=%u main_stack_size_bytes=%u",
+                 (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)CONFIG_ESP_MAIN_TASK_STACK_SIZE);
     }
 }

@@ -35,6 +35,7 @@
 #include "DigitalOutputs.h"
 #include "Ethernet.h"
 #include "FanCalibration.h"
+#include "FaultSnapshot.h"
 #include "PiProtocol.h"
 #include "PressureSensors.h"
 #include "SafetyIO.h"
@@ -55,6 +56,7 @@ typedef struct
 // File-local variables
 
 static int client = -1;
+static PiHeartbeat connection;
 static const WaitBlockerLabel wait_blocker_labels[] = {
     {WAIT_BLOCK_ESTOP_PRESSED, "estop_pressed"},
     {WAIT_BLOCK_STOP_INPUT, "stop_input"},
@@ -137,8 +139,10 @@ static void disconnect_client(void)
         close(client);
         client = -1;
     }
-    PiHeartbeat heartbeat = {0};
-    xQueueOverwrite(pi_heartbeat, &heartbeat);
+    connection.disconnect_sequence++;
+    connection.connected = false;
+    connection.tcp_connected = false;
+    xQueueOverwrite(pi_heartbeat, &connection);
     xEventGroupSetBits(events, STOP_REQUEST);
     xQueueReset(commands);
 }
@@ -149,8 +153,15 @@ static void disconnect_client(void)
 static void reply(const char *text)
 {
     size_t remaining = strlen(text);
+    const TickType_t started = xTaskGetTickCount();
     while (remaining && client >= 0)
     {
+        /* Bound the complete reply, including repeated partial sends. */
+        if ((TickType_t)(xTaskGetTickCount() - started) >= pdMS_TO_TICKS(100))
+        {
+            disconnect_client();
+            return;
+        }
         int n = send(client, text, remaining, 0);
         if (n <= 0)
         {
@@ -167,6 +178,8 @@ static void reply(const char *text)
 
 static void process(const char *line)
 {
+    connection.last_message_tick = xTaskGetTickCount();
+    xQueueOverwrite(pi_heartbeat, &connection);
 #if SIMULATION_MODE
     char name[32], extra;
     int active;
@@ -198,8 +211,9 @@ static void process(const char *line)
     }
     if (c.type == CMD_PING)
     {
-        PiHeartbeat heartbeat = {.connected = true, .tick = xTaskGetTickCount()};
-        xQueueOverwrite(pi_heartbeat, &heartbeat);
+        connection.connected = true;
+        connection.tick = xTaskGetTickCount();
+        xQueueOverwrite(pi_heartbeat, &connection);
         reply("OK PING\n");
         return;
     }
@@ -284,6 +298,7 @@ void PiCommunicationTask(void *argument)
     SystemState_t diagnostic_state = STATE_INIT;
     uint32_t previous_blockers = UINT32_MAX;
     TickType_t last_wait_log = 0;
+    uint32_t sent_fault_sequence = 0;
     xEventGroupSetBits(handle_ThreadEventGroup, EVT_PI_TASK_READY);
     for (;;)
     {
@@ -299,6 +314,10 @@ void PiCommunicationTask(void *argument)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
             timeout.tv_usec = 100000;
             setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+            sent_fault_sequence = 0;
+            connection = (PiHeartbeat){.tcp_connected = true,
+                .disconnect_sequence = connection.disconnect_sequence};
+            xQueueOverwrite(pi_heartbeat, &connection);
             used = 0;
             overflow = false;
             ESP_LOGI("PiCommunication", "TCP client connected");
@@ -348,7 +367,7 @@ void PiCommunicationTask(void *argument)
                     xQueuePeek(pi_heartbeat, &heartbeat, 0) == pdTRUE && heartbeat.connected;
                 const bool heartbeat_fresh =
                     heartbeat_received &&
-                    (TickType_t)(now - heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS);
+                    (TickType_t)(xTaskGetTickCount() - heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS);
                 const bool ethernet_link = Ethernet_LinkUp();
                 const bool ipv4_configured = Ethernet_HasIp();
                 Sample sample = {0};
@@ -420,6 +439,25 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.transitions, ALLOW_REMOTE_START, (unsigned long)t.crc_errors,
                     (unsigned long)t.exceptions, (unsigned long)t.exception_code,
                     (unsigned long)t.late_replies);
+                PitotDiagnostics pitot;
+                SensorLib_GetPitotDiagnostics(&pitot);
+                if (length > 0 && length < (int)sizeof(buffer) - 768)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " pitot_raw_count=%u pitot_status_bits=%u pitot_raw_pressure_pa=%.3f pitot_zero_offset_pa=%.3f pitot_corrected_pressure_pa=%.3f pitot_filtered_pressure_pa=%.3f pitot_pressure_pa=%.3f pitot_airspeed_ms=%.3f pitot_zero_samples=%lu pitot_calibrated=%lu pitot_sample_seq=%lu pitot_read_ok=%lu pitot_valid=%lu pitot_age_ms=%lu",
+                        (unsigned)pitot.pitot_raw_count,
+                        (unsigned)pitot.pitot_status_bits,
+                        pitot.pitot_raw_pressure_pa,
+                        pitot.pitot_zero_offset_pa,
+                        pitot.pitot_corrected_pressure_pa,
+                        pitot.pitot_filtered_pressure_pa,
+                        pitot.pitot_pressure_pa,
+                        pitot.pitot_airspeed_ms,
+                        (unsigned long)pitot.pitot_zero_samples,
+                        (unsigned long)pitot.pitot_calibrated,
+                        (unsigned long)pitot.pitot_sample_seq,
+                        (unsigned long)pitot.pitot_read_ok,
+                        (unsigned long)pitot.pitot_valid,
+                        (unsigned long)((xTaskGetTickCount() - pitot.pitot_tick) * portTICK_PERIOD_MS));
                 const StatusIndicator indication =
                     StatusOutput_Get(&t, true, (uint32_t)(now * portTICK_PERIOD_MS));
                 if (length > 0 && length < (int)sizeof(buffer) - 256)
@@ -462,6 +500,40 @@ void PiCommunicationTask(void *argument)
                                        (unsigned long)outputs.write_errors, outputs.requested_image,
                                        outputs.confirmed_image, outputs.confirmed_valid,
                                        EXTERNAL_STATUS_LEDS_ENABLED);
+                if (length > 0 && length < (int)sizeof(buffer) - 160)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " first_fault_valid=%d first_fault_sequence=%lu"
+                        " fault_do1_off_observed_ms=%lu fault_off2_observed_ms=%lu",
+                        t.first_fault.valid, (unsigned long)t.first_fault.sequence,
+                        (unsigned long)t.fault_do1_off_observed_ms,
+                        (unsigned long)t.fault_off2_observed_ms);
+                if (length > 0 && length < (int)sizeof(buffer) - 448)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " modbus_last_valid_response_ms=%lu modbus_last_valid_process_data_ms=%lu"
+                        " modbus_max_process_data_gap_ms=%lu modbus_max_process_data_tx_gap_ms=%lu"
+                        " modbus_max_response_gap_ms=%lu modbus_valid_reads=%lu modbus_valid_writes=%lu"
+                        " modbus_crc_errors=%lu modbus_invalid_frames=%lu modbus_late_replies=%lu modbus_exceptions=%lu",
+                        (unsigned long)motor.last_valid_response_ms,
+                        (unsigned long)motor.last_valid_process_data_ms,
+                        (unsigned long)motor.max_process_data_gap_ms,
+                        (unsigned long)motor.max_process_data_tx_gap_ms,
+                        (unsigned long)motor.max_response_gap_ms,
+                        (unsigned long)motor.valid_reads, (unsigned long)motor.valid_writes,
+                        (unsigned long)motor.crc_errors, (unsigned long)motor.invalid_frames,
+                        (unsigned long)motor.late_replies, (unsigned long)motor.exceptions);
+                if (length > 0 && length < (int)sizeof(buffer) - 240)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " configuration_failure_reason=%s configuration_start_ready=%d control_type=%u",
+                        t.configuration.failure_reason ? t.configuration.failure_reason : "NONE",
+                        t.configuration.start_ready, t.configuration.control_type);
+                if (length > 0 && length < (int)sizeof(buffer) - 256)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " modbus_transaction_id=%lu modbus_transaction_pending=%d modbus_rtt_us=%lu"
+                        " modbus_rtt_max_us=%lu modbus_enqueue_us=%lu modbus_rx_bytes=%u modbus_expected_rx_bytes=%u",
+                        (unsigned long)motor.transaction.id, motor.transaction.pending,
+                        (unsigned long)motor.transaction.rtt_us, (unsigned long)motor.transaction.max_rtt_us,
+                        (unsigned long)motor.transaction.enqueue_us, motor.transaction.rx_bytes,
+                        motor.transaction.expected_rx_bytes);
                 const ReadyDiagnostics *diag = &t.ready_diag;
                 if (length > 0 && length < (int)sizeof(buffer) - 3072)
                     length += snprintf(
@@ -553,6 +625,15 @@ void PiCommunicationTask(void *argument)
                     buffer[length] = 0;
                 }
                 reply(buffer);
+                if (client >= 0 && t.first_fault.valid &&
+                    t.first_fault.sequence != sent_fault_sequence)
+                {
+                    if (FaultSnapshot_Format(&t.first_fault, buffer, sizeof(buffer)))
+                    {
+                        reply(buffer);
+                        if (client >= 0) sent_fault_sequence = t.first_fault.sequence;
+                    }
+                }
                 if (t.state == STATE_WAIT && (diagnostic_state != STATE_WAIT ||
                                               previous_blockers != diag->blocking_reasons ||
                                               (TickType_t)(now - last_wait_log) >=

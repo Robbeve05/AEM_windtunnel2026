@@ -83,7 +83,7 @@
 
 // [us, fixed] V20 service execution budget; increasing leaves less time within
 // the control deadline.
-#define V20_SERVICE_BUDGET_US 1000u
+#define V20_SERVICE_BUDGET_US 5000u
 
 // RTU framing, service cadence and drive verification. Match settings to the
 // V20. Retained legacy timing constants are documented even where no source
@@ -106,9 +106,9 @@
 // [Fixed] UART stop-bit format; must match the drive framing.
 #define MODBUS_STOP_BITS UART_STOP_BITS_1
 
-// [ms, adjustable] Default response wait; increasing tolerates slower replies
-// but delays timeout detection.
-#define MODBUS_RESPONSE_TIMEOUT_MS 80
+// [ms, legacy] Retained compatibility constant; V20Modbus uses the separate
+// bounded V20_RESPONSE_TIMEOUT_MS below.
+#define MODBUS_RESPONSE_TIMEOUT_MS 1500
 
 // [ms, safety-critical] Maximum status age; increasing permits older drive
 // feedback.
@@ -135,7 +135,7 @@
 #ifndef V20_COMMAND_PERIOD_MS
 // [ms, adjustable] Running command interval; reducing increases command
 // traffic.
-#define V20_COMMAND_PERIOD_MS 10
+#define V20_COMMAND_PERIOD_MS 100
 #endif
 
 #ifndef V20_STOP_HEARTBEAT_MS
@@ -167,9 +167,8 @@
 #endif
 
 #ifndef V20_RESPONSE_TIMEOUT_MS
-// [ms, adjustable] Driver response timeout, defaults to the RTU timeout;
-// increasing delays failed-reply detection.
-#define V20_RESPONSE_TIMEOUT_MS MODBUS_RESPONSE_TIMEOUT_MS
+// [ms] Response deadline below the expected P2014=500 ms watchdog.
+#define V20_RESPONSE_TIMEOUT_MS 80u
 #endif
 
 // Installed fan: Ruck EL 710 D4 02, article 146531.
@@ -199,11 +198,11 @@
 
 // [Hz/s, adjustable] Maximum first derivative of frequency; lowering slows
 // manual transitions.
-#define MANUAL_MAX_SLEW_HZ_PER_S 2.0f
+#define MANUAL_MAX_SLEW_HZ_PER_S 10.0f
 
 // [Hz/s^2, adjustable] Maximum second derivative of frequency; lowering smooths
 // changes in frequency slope.
-#define MANUAL_MAX_ACCEL_HZ_PER_S2 0.5f
+#define MANUAL_MAX_ACCEL_HZ_PER_S2 1.0f
 
 // [Hz/s^3, adjustable] Maximum third derivative of frequency; lowering further
 // lengthens/smooths manual transitions.

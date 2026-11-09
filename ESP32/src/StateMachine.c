@@ -323,7 +323,14 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
         break;
     case STATE_READY:
         if (i->start && !i->reset && !i->stop && i->safety.stop_ok && healthy && process)
-            transition(m, STATE_STARTING, i->now_ms);
+        {
+            /* Accept physical START and its mode-specific configuration as one
+             * operation. Never enter STARTING with an unusable controller. */
+            if (i->start_configuration_invalid)
+                StateMachine_Fault(m, FAULT_CONFIGURATION, i->now_ms);
+            else
+                transition(m, STATE_STARTING, i->now_ms);
+        }
         break;
     case STATE_STARTING:
         if (i->stop || !i->safety.stop_ok)

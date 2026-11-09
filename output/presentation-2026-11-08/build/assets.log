@@ -1,0 +1,21 @@
+{
+  "frequency": {
+    "rise_10_90_s": 10.100000000000001,
+    "settling_2percent_after_step_s": 15.850000000000001,
+    "overshoot_percent": 0.2896400000000021,
+    "steady_state_error_40_45_ms": 0.0,
+    "max_command_hz": 30.826672,
+    "IAE_shaped_5_45_m": 8.310997149999999,
+    "disturbance_RMSE_ms": 0.43328763053924557
+  },
+  "torque": {
+    "rise_10_90_s": 10.149999999999999,
+    "settling_2percent_after_step_s": 16.35,
+    "overshoot_percent": 0.05986000000000047,
+    "steady_state_error_40_45_ms": -0.009919060000000002,
+    "max_command_hz": 25.016209,
+    "IAE_shaped_5_45_m": 10.1813118,
+    "disturbance_RMSE_ms": 3.16928043756138
+  }
+}
+Saved real native HMI dashboard, control and analytics captures (simulation only).

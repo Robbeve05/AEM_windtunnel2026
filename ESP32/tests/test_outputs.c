@@ -80,7 +80,7 @@ int main(void) {
     inhibited=true;assert(DigitalOutputs_Set(true,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);assert(!s.vfd_requested && !vfd_on(s.confirmed_image));
     assert(s.confirmed_image==0xffu);
     inhibited=false;fail_write=writes+1;assert(!DigitalOutputs_Set(true,(StatusIndicator){0}));
-    DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && s.write_errors==1);
+    DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && !s.vfd_acknowledged && s.write_errors==1);
     fail_write=0;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);assert(s.confirmed_valid && !vfd_on(s.confirmed_image));
     // Failing direction setup never publishes initialized/confirmed outputs.
     fail_write=writes+2;assert(!DigitalOutputs_Init());DigitalOutputs_GetStatus(&s);

@@ -1,0 +1,24 @@
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS V20 scaling, arm/disarm, OFF1, fresh stop confirmation and explicit re-arm
+PASS all eight legacy reply failures, UART failures, fault latch and explicit recovery
+PASS invalid demand, stale/null requests, lost safety permissive and epoch-independent lockout
+PASS unhealthy drive status, signed speed and fragmented replies
+PASS executable v20
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_recovery
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_fault_ack
+3/3 host executables passed.

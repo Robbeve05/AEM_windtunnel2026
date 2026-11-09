@@ -11,7 +11,10 @@
 #include <string.h>
 #include "../src/ControlTask.c"
 #include "../src/InputHandlerTask.c"
+#include "FaultSnapshot.h"
 
+static bool ethernet_up = true;
+bool Ethernet_LinkUp(void) { return ethernet_up; }
 static DigitalOutputStatus output_status;
 bool I2CBus_Init(void) { return true; }
 void DigitalOutputs_GetStatus(DigitalOutputStatus *status)
@@ -34,6 +37,7 @@ EventGroupHandle_t handle_ButtonEventGroup = &button_bits, handle_ThreadEventGro
 TaskHandle_t control_task_handle, sensor_task_handle;
 static int64_t fake_us;
 static unsigned watchdog_resets, arms, disarms, timer_starts;
+static bool publish_heartbeat_during_read;
 static bool stop_confirmed;
 static TaskHandle_t notified[4];
 static unsigned notification_count;
@@ -117,6 +121,12 @@ int xQueuePeek(QueueHandle_t p, void *dst, TickType_t wait)
     assert(wait == 0);
     if (!p->count)
         return 0;
+    if (p == pi_heartbeat && publish_heartbeat_during_read)
+    {
+        publish_heartbeat_during_read = false;
+        fake_us += 1000;
+        ((PiHeartbeat *)p->data)->tick = xTaskGetTickCount();
+    }
     memcpy(dst, p->data, p->size);
     return 1;
 }
@@ -238,10 +248,212 @@ static void healthy_context(ControlContext *c)
         .nominal_air_omega_gain=0.25f, .max_command_hz=50};
 #else
     c->frequency_controller_ready = true;
-    c->frequency_model = (FrequencyModel){.max_hz=50, .commissioned=true};
+    c->frequency_model = (FrequencyModel){.max_hz=50, .commissioned=true,
+        .identified_valid=true, .gain_mps_per_hz=0.8f, .tau_s=2, .delay_s=0.1f, .lambda_s=1};
     calibration_enabled = true;
 #endif
 }
+static void test_start_configuration(void)
+{
+    ControlContext c;
+    healthy_context(&c);
+    c.status.mode=MODE_AUTO;
+    c.motor.status=0xeb31; c.motor.operation_enabled=false;
+    c.motor.watchdog_config_known=c.motor.watchdog_config_valid=false;
+    const unsigned initial_arms=arms;
+    /* READY has validated drive/safety readiness; no START means no arm. */
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c); Control_PublishStatus(&c);
+    assert(c.machine.state==STATE_READY && arms==initial_arms);
+    assert(c.status.configuration.start_ready); /* Optional unknown watchdog mapping is not a failure. */
+    c.safety.start_sequence=1; c.safety.start_ms=950;
+    Control_ProcessCommands(&c,0); Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_STARTING && c.machine.fault==FAULT_NONE && arms==initial_arms+1);
+    Control_UpdateController(&c); Control_PublishStatus(&c);
+    MotorRequest request; xQueuePeek(motor_requests,&request,0);
+    assert(request.run && request.permissive && request.output==0); /* First RUN is a zero reference. */
+    c.motor.operation_enabled=true; c.motor.status=0xeb37; drive.operation_enabled=true;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_RUNNING); drive.operation_enabled=false;
+    healthy_context(&c); c.status.mode=MODE_AUTO;
+#if CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    c.frequency_model.gain_mps_per_hz=0; c.frequency_model.tau_s=0;
+    c.frequency_controller_ready=false;
+#else
+    c.torque_model_ready=false;
+#endif
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_READY); /* Operator can still select MANUAL in READY. */
+    const unsigned before=arms;
+    c.safety.start_sequence=1; c.safety.start_ms=950;
+    Control_ProcessCommands(&c,0); Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_FAULT && c.machine.fault==FAULT_CONFIGURATION && arms==before);
+    assert(c.machine.fault_from==STATE_READY && c.status.first_fault.previous_state==STATE_READY);
+#if CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    assert(!strcmp(c.status.first_fault.configuration.failure_reason,"FREQUENCY_MODEL_GAIN_INVALID"));
+#else
+    assert(!strcmp(c.status.first_fault.configuration.failure_reason,"TORQUE_CONTROLLER_INVALID"));
+#endif
+    const uint32_t sequence=c.status.first_fault.sequence;
+    c.status.mode=MODE_MANUAL; c.start=false;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c); Control_PublishStatus(&c);
+    xQueuePeek(motor_requests,&request,0);
+    assert(c.machine.state==STATE_FAULT && !request.run && !request.permissive && arms==before);
+    assert(c.status.first_fault.sequence==sequence); /* Recovery cannot overwrite the first reason. */
+    healthy_context(&c); c.status.mode=MODE_MANUAL; c.motor.tick=c.now_tick;
+#if CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    c.frequency_controller_ready=false; calibration_enabled=false;
+#else
+    c.torque_model_ready=false;
+#endif
+    c.safety.start_sequence=1; c.safety.start_ms=950;
+    Control_ProcessCommands(&c,0); Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state==STATE_STARTING && c.machine.fault==FAULT_NONE);
+    healthy_context(&c); c.status.mode=MODE_AUTO; c.motor.reference_config_valid=false;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.fault==FAULT_CONFIGURATION);
+    assert(!strcmp(c.status.first_fault.configuration.failure_reason,"V20_REFERENCE_INVALID"));
+#if CONTROL_TYPE == CONTROL_FREQUENCY_PI
+    healthy_context(&c); c.status.mode=MODE_AUTO; c.frequency_model.tau_s=0;
+    Control_UpdateConfiguration(&c);
+    assert(!strcmp(c.status.configuration.failure_reason,"FREQUENCY_MODEL_TAU_INVALID"));
+    healthy_context(&c); c.status.mode=MODE_AUTO; calibration_enabled=false;
+    Control_UpdateConfiguration(&c);
+    assert(!strcmp(c.status.configuration.failure_reason,"FAN_CALIBRATION_MISSING"));
+    healthy_context(&c);
+#endif
+    /* Do not leak mock arm counts into older tests' independent expectations. */
+    arms=initial_arms;
+    puts("PASS EB31 AUTO/MANUAL start preflight, optional watchdog mapping, precise invalid-model reasons, latch/no restart");
+}
+
+static void test_connection_and_first_fault(void)
+{
+    ControlContext c;
+    healthy_context(&c);
+    c.machine.state = STATE_RUNNING;
+    c.machine.permissive = true;
+    drive.operation_enabled = true;
+    drive.status = 0x0237;
+    c.motor = drive;
+    PiHeartbeat hb = {.connected = true, .tcp_connected = true};
+    Sample sample = {.valid = true};
+    fake_us = 1000000;
+    /* Ten simulated minutes at 100 Hz, heartbeat every 500 ms, no HMI command. */
+    for (unsigned cycle = 0; cycle < 60000; ++cycle)
+    {
+        fake_us += CONTROL_PERIOD_US;
+        Control_BeginCycle(&c, 1);
+        sample.tick = xTaskGetTickCount();
+        c.safety.tick_ms = (uint32_t)(fake_us / 1000);
+        if (cycle % 50 == 0) hb.tick = xTaskGetTickCount();
+        xQueueOverwrite(sensors, &sample);
+        xQueueOverwrite(safety_status, &c.safety);
+        xQueueOverwrite(pi_heartbeat, &hb);
+        Control_ReadInputs(&c);
+        Control_CheckSafety(&c);
+        Control_UpdateStateMachine(&c);
+        Control_PublishStatus(&c);
+        assert(c.machine.state == STATE_RUNNING && c.machine.permissive);
+    }
+    /* Actual cross-core ordering: BeginCycle's clock is older than the queue item. */
+    Control_BeginCycle(&c, 1);
+    const TickType_t old_tick = c.now_tick;
+    publish_heartbeat_during_read = true;
+    Control_ReadInputs(&c);
+    assert((TickType_t)(old_tick - c.heartbeat.tick) >= pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
+    assert(c.status.pi_ok);
+    /* Deadline is unchanged: 1999 ms accepted, exactly 2000 ms rejected. */
+    hb.tick = xTaskGetTickCount() - 1999u;
+    xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    assert(c.status.pi_ok);
+    hb.tick--; xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    assert(!c.status.pi_ok);
+    c.safety.tick_ms = c.now_ms;
+    c.status.sensor_ok = true;
+    output_status = (DigitalOutputStatus){.initialized=true, .vfd_requested=true,
+        .vfd_acknowledged=true, .confirmed_valid=true};
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.fault == FAULT_PI_CONNECTION && !c.machine.permissive);
+    assert(c.status.first_fault.valid && c.status.first_fault.code == FAULT_PI_CONNECTION);
+    assert(c.status.first_fault.previous_state == STATE_RUNNING);
+    assert(c.status.first_fault.heartbeat_age_ms == COMMAND_TIMEOUT_MS);
+    assert(c.status.first_fault.do1_acknowledged && c.status.first_fault.do1_requested);
+    const FirstFaultSnapshot first = c.status.first_fault;
+    /* Concurrent/later Modbus failures and even emergency priority must not rewrite evidence. */
+    Control_Fault(&c, FAULT_MODBUS, "later_modbus");
+    Control_Fault(&c, FAULT_EMERGENCY_STOP, "later_estop");
+    assert(!memcmp(&first, &c.status.first_fault, sizeof(first)));
+    Control_PublishStatus(&c);
+    MotorRequest request;
+    xQueuePeek(motor_requests, &request, 0);
+    assert(!request.run && !request.permissive && request.coast && request.output == 0);
+    output_status.vfd_requested = output_status.vfd_acknowledged = false;
+    fake_us += 10000; Control_RecordEvent(&c);
+    assert(c.status.fault_do1_off_observed_ms && !c.status.fault_off2_observed_ms);
+    c.motor.off2_active = true; c.motor.status_valid = true;
+    fake_us += 10000; Control_RecordEvent(&c);
+    assert(c.status.fault_off2_observed_ms > c.status.fault_do1_off_observed_ms);
+    char formatted[4096];
+    assert(FaultSnapshot_Format(&first, formatted, sizeof(formatted)) > 0);
+    assert(strstr(formatted, "first_fault_code=PI_CONNECTION") && strstr(formatted, "do1_acknowledged=1"));
+    assert(FaultSnapshot_Format(&first, formatted, 16) == 0);
+    FirstFaultSnapshot largest=first;
+    largest.history_count=FAULT_HISTORY_SIZE;
+    for(unsigned i=0;i<FAULT_HISTORY_SIZE;++i)
+        largest.history[i]=(FaultEvent){.timestamp_ms=UINT32_MAX,.state=STATE_STOPPED_PREPARE,
+            .statusword=UINT16_MAX,.status_valid=true,.do1_requested=true,.do1_acknowledged=true,
+            .do1_valid=true,.tcp_connected=true,.heartbeat_valid=true};
+    largest.motor.transaction.tx_bytes=13; largest.motor.transaction.rx_bytes=32;
+    memset(largest.motor.transaction.tx_frame,255,13);
+    memset(largest.motor.transaction.rx_frame,255,32);
+    largest.motor.transaction.id=largest.motor.transaction.start_ms=largest.motor.transaction.deadline_ms=UINT32_MAX;
+    largest.motor.errors=largest.motor.timeouts=largest.motor.max_process_data_gap_ms=UINT32_MAX;
+    largest.configuration.failure_reason="FREQUENCY_MODEL_NOT_COMMISSIONED";
+    assert(FaultSnapshot_Format(&largest, formatted, sizeof(formatted)) > 0);
+    assert(strstr(formatted,"modbus_rx_hex=ffffffff"));
+
+    /* Recovering heartbeat/socket never resets a fault or re-arms RUN. */
+    hb.tick = xTaskGetTickCount(); hb.disconnect_sequence++;
+    xQueueOverwrite(pi_heartbeat, &hb);
+    c.machine.fault = FAULT_PI_CONNECTION;
+    c.safety.tick_ms = c.now_ms;
+    Control_ReadInputs(&c); c.status.sensor_ok = true;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.state == STATE_FAULT && !c.machine.permissive);
+    /* A complete disconnect/reconnect between two control reads is still latched. */
+    healthy_context(&c); c.machine.state=STATE_RUNNING; c.motor=drive;
+    c.previous_disconnect_sequence = hb.disconnect_sequence;
+    hb.disconnect_sequence++; hb.tick=xTaskGetTickCount();
+    xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    c.status.sensor_ok=true; c.safety.tick_ms=c.now_ms;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.fault==FAULT_PI_CONNECTION);
+    assert(!strcmp(c.status.first_fault.source, "pi_tcp_disconnect"));
+    /* Simultaneous faults retain the existing state-machine ordering, not Pi relabeling. */
+    healthy_context(&c); c.machine.state=STATE_RUNNING; c.motor=drive;
+    c.motor.communication_ok=false; c.status.pi_ok=false;
+    Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
+    assert(c.machine.fault==FAULT_MODBUS && c.status.first_fault.code==FAULT_MODBUS);
+    assert(!c.status.first_fault.heartbeat_valid && !c.status.first_fault.motor.communication_ok);
+    /* A real disconnect and physical Ethernet loss also fail closed. */
+    healthy_context(&c); c.machine.state=STATE_RUNNING; c.motor=drive;
+    hb.connected=false; hb.tcp_connected=false; hb.disconnect_sequence=0;
+    xQueueOverwrite(pi_heartbeat,&hb); Control_ReadInputs(&c);
+    assert(!c.status.pi_ok);
+    hb.connected=hb.tcp_connected=true; hb.tick=xTaskGetTickCount();
+    xQueueOverwrite(pi_heartbeat,&hb); ethernet_up=false; Control_ReadInputs(&c);
+    assert(!c.status.pi_ok); ethernet_up=true;
+    /* Unsigned age remains correct across RTOS tick wrap. */
+    fake_us = ((int64_t)UINT32_MAX + 50LL) * 1000;
+    hb.tick=UINT32_MAX-100u; xQueueOverwrite(pi_heartbeat,&hb);
+    Control_ReadInputs(&c); assert(c.status.pi_ok);
+    hb.tick=xTaskGetTickCount()-2000u; xQueueOverwrite(pi_heartbeat,&hb);
+    Control_ReadInputs(&c); assert(!c.status.pi_ok);
+    drive.operation_enabled=false; drive.status=0x0231;
+    output_status=(DigitalOutputStatus){0}; fake_us=0;
+    puts("PASS 10min RUN, heartbeat race/deadline/wrap, disconnect/reconnect, first-fault before DO1, no restart");
+}
+
 int main(void)
 {
     const unsigned sizes[] = {sizeof(PiCommand),   sizeof(Sample),    sizeof(MotorRequest),
@@ -249,6 +461,8 @@ int main(void)
                               sizeof(PiHeartbeat)};
     for (unsigned i = 0; i < 7; i++)
         q[i].size = sizes[i];
+    test_start_configuration();
+    test_connection_and_first_fault();
     ControlContext c;
     healthy_context(&c);
     const SystemState_t blocked[] = {STATE_INIT, STATE_WAIT, STATE_STOP, STATE_FAULT};
@@ -356,8 +570,9 @@ int main(void)
     puts("PASS physical RESET recovery without arm; unsafe emergency latch cannot clear");
 
     healthy_context(&c);
+    fake_us = 1000000;
     Sample sample = {.value = 12, .valid = true, .tick = 1000};
-    PiHeartbeat hb = {.connected = true, .tick = 1000};
+    PiHeartbeat hb = {.connected = true, .tick = 1000, .tcp_connected = true};
     xQueueOverwrite(sensors, &sample);
     xQueueOverwrite(safety_status, &c.safety);
     xQueueOverwrite(pi_heartbeat, &hb);
@@ -365,6 +580,7 @@ int main(void)
     Control_ReadInputs(&c);
     assert(c.status.sensor_ok && c.status.pi_ok && c.sample.value == 12);
     c.now_tick = 3000;
+    fake_us = 3000000;
     Control_ReadInputs(&c);
     assert(!c.status.sensor_ok && !c.status.pi_ok);
     healthy_context(&c);
@@ -501,7 +717,7 @@ int main(void)
            execution_fault.fault_reason == FAULT_CONTROL_OVERRUN &&
            execution_fault.fault_execution_us == CONTROL_PERIOD_US &&
            execution_fault.fault_service_us == 999);
-    assert(!ControlTiming_Execution(&timing, 4999, 1000) && timing.overruns == 2);
+    assert(!ControlTiming_Execution(&timing, 4999, V20_SERVICE_BUDGET_US) && timing.overruns == 2);
     ControlTiming tolerated_timing = {0};
     assert(ControlTiming_Tick(&tolerated_timing, CONTROL_PERIOD_US, 1) == FAULT_NONE);
     assert(ControlTiming_Tick(&tolerated_timing, 3 * CONTROL_PERIOD_US, 1) == FAULT_NONE &&
@@ -551,10 +767,13 @@ int main(void)
     assert(c.frequency_running && c.status.applied_hz>=10 && c.status.applied_hz<10.001f);
     assert(memcmp(&before,&c.controller,sizeof(before))==0);
     float previous_hz=c.status.applied_hz;
-    for(int n=0;n<3000;n++) {
+    const int active_steps = (int)(c.frequency_curve.duration / CONTROL_CLOCK_PERIOD_S) - 2;
+    assert(active_steps > 100);
+    for(int n=0;n<active_steps;n++) {
         if(n==100) c.status.manual_hz=0;
         Control_UpdateController(&c);
-        assert(fabsf(c.status.applied_hz-previous_hz)<=2.0f*CONTROL_CLOCK_PERIOD_S+0.00001f);
+        assert(fabsf(c.status.applied_hz-previous_hz)<=
+               MANUAL_MAX_SLEW_HZ_PER_S*CONTROL_CLOCK_PERIOD_S+0.00001f);
         previous_hz=c.status.applied_hz;
         assert(c.frequency_curve.target==50); /* Latest request deferred. */
     }

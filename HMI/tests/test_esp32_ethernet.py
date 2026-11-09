@@ -1,7 +1,7 @@
 """ESP32 TCP integration tests. Author: R.E. van Eekelen."""
 import asyncio
 import unittest
-from backend.esp32 import ESP32Client, parse_status, status_indication, wait_diagnostics
+from backend.esp32 import ESP32Client, parse_status, parse_first_fault, status_indication, wait_diagnostics
 from backend.models import ManualFrequency
 from pydantic import ValidationError
 
@@ -59,6 +59,14 @@ class ParserTests(unittest.TestCase):
                     FRAME + " state=READY", FRAME.replace("mode=MANUAL", "mode=BAD"),
                     FRAME.replace("manual_hz=50", "manual_hz=nan")):
             self.assertIsNone(parse_status(bad))
+
+    def test_full_firmware_frame_size_limit(self):
+        # New counters and lifetime timestamps must not cause a reconnect at 4 KiB.
+        large = FRAME + ''.join(f' reserved{i}=4294967295' for i in range(200))
+        self.assertGreater(len(large), 4096)
+        self.assertLess(len(large), 6144)
+        self.assertIsNotNone(parse_status(large))
+        self.assertIsNone(parse_status(large + ' padding=' + 'x'*6144))
 
     def test_wait_diagnostics_protocol_and_multiple_blockers(self):
         frame = parse_status(
@@ -122,6 +130,7 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.commands = []
         self.send_status = True
+        self.callback_gate = None
         async def handler(reader, writer):
             async def send_frames():
                 while True:
@@ -151,6 +160,8 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.client.fresh)
 
     async def _frame(self, frame):
+        if self.callback_gate is not None:
+            await self.callback_gate.wait()
         self.latest = frame
 
     async def asyncTearDown(self):
@@ -185,6 +196,47 @@ class TCPTests(unittest.IsolatedAsyncioTestCase):
                       {"TCP_CONNECTED_NO_FRESH_STATUS", "OFFLINE"})
         with self.assertRaises(ConnectionError):
             await self.client.command("STOP")
+
+    async def test_heartbeat_independent_of_callback_and_command_lock(self):
+        self.callback_gate = asyncio.Event()
+        before = self.commands.count('PING')
+        async with self.client._lock:
+            await asyncio.sleep(2.1)
+        self.assertGreaterEqual(self.commands.count('PING') - before, 3)
+        self.assertTrue(self.client.fresh)
+        self.assertFalse(self.task.done())
+        self.callback_gate.set()
+        self.assertEqual(await self.client.command('FREQ 50'), 'OK QUEUED')
+
+    async def test_ping_ack_is_not_a_command_ack(self):
+        before = self.commands.count('PING')
+        for _ in range(4):
+            results = await asyncio.gather(self.client.command('FREQ 50'), self.client.command('PING'))
+            self.assertEqual(results, ['OK QUEUED', 'OK PING'])
+        self.assertGreaterEqual(self.commands.count('PING') - before, 4)
+
+    def test_first_fault_parser(self):
+        line = ('FIRST_FAULT sequence=1 timestamp_ms=2000 previous_machine_state=RUNNING '
+                'new_machine_state=FAULT first_fault_code=PI_CONNECTION '
+                'first_fault_source=pi_heartbeat heartbeat_age_ms=2000 v20_setpoint_hz=50.0 '
+                'configuration_failure_reason=FREQUENCY_MODEL_GAIN_INVALID configuration_mode=AUTO '
+                'model_gain=0 model_tau_s=0 '
+                'modbus_transaction_id=42 modbus_transaction_type=WRITE_CONTROL '
+                'modbus_transaction_start_ms=1000 modbus_transaction_deadline_ms=1080 '
+                'modbus_rx_bytes=3 modbus_expected_rx_bytes=8 modbus_tx_hex=011000630002 '
+                'modbus_rx_hex=011000 '
+                'event0=1990,RUNNING,567,1,1,1,1,1,1')
+        result = parse_first_fault(line)
+        self.assertEqual(result['heartbeat_age_ms'], 2000)
+        self.assertEqual(result['modbus_transaction_id'], 42)
+        self.assertEqual(result['modbus_transaction_type'], 'WRITE_CONTROL')
+        self.assertEqual(result['modbus_tx_hex'], '011000630002')
+        self.assertEqual(result['first_fault_code'], 'PI_CONNECTION')
+        self.assertEqual(result['v20_setpoint_hz'], 50.0)
+        self.assertEqual(result['configuration_failure_reason'], 'FREQUENCY_MODEL_GAIN_INVALID')
+        self.assertEqual(parse_first_fault(line.replace('model_gain=0', 'model_gain=nan'))['model_gain'], 'nan')
+        self.assertIsNone(parse_first_fault(line+' sequence=2'))
+        self.assertIsNone(parse_first_fault(line.replace('50.0','nan')))
 
     async def test_network_health_classification(self):
         cases = (

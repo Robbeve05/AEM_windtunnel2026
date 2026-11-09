@@ -1,0 +1,204 @@
+test_i2c.c
+I2CBus.c
+Generating Code...
+PASS I2C busy/NACK/timeout/driver classification, per-address timing, bounded read retry, no DO write retries, persistent outage
+PASS executable i2c
+test_main_diagnostics.c
+FaultSnapshot.c
+StateMachine.c
+StatusIndicators.c
+Generating Code...
+PASS 24 simulated hours of periodic diagnostics and 1440 full fault reports
+PASS executable main_diagnostics
+test_fan_calibration.c
+CRC vector: 364007285
+PASS CRC, incomplete upload, duplicate/order/checksum rejection, interpolation, fallback, NVS readback/reboot/failure/reset and control gate
+PASS executable fan_calibration
+test_indicators.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+PASS INIT/WAIT/READY/RUNNING/STOP/FAULT, emergency press/release, blink boundaries, missing telemetry, existing text
+PASS executable indicators
+test_wait_diagnostics.c
+StateMachine.c
+Generating Code...
+PASS WAIT readiness blocker diagnostics and unchanged READY transition
+PASS executable wait_diagnostics
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS executable outputs_default
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_disabled
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_enabled
+test_outputs.c
+DigitalOutputs.c
+Generating Code...
+DigitalOutputs: Output mutex allocation failed
+DigitalOutputs: Inactive image/direction initialization failed; motor inhibited
+PASS pin uniqueness, inactive output startup, DO1-only authorization, unassigned DO2-DO4, serialized requests, initialization/write failures
+PASS executable outputs_active_low
+test_ota_safety.c
+PASS OTA disabled by default; physical maintenance, isolation, contactor and safety authorization
+PASS executable ota_safety
+test_sensors.c
+PressureSensors.c
+Generating Code...
+PASS 10ms pitot slots, configured average, 200-sample calibration, timestamps, sensor timeout, incremental taps, one tap transaction per slot
+PASS executable sensors
+test_core.c
+PiProtocol.c
+Generating Code...
+PASS Pi protocol validation, no frequency-domain PI
+PASS executable core
+test_regelaar.c
+Regelaar.c
+Generating Code...
+PASS ISA NONE/P/PI/PID, known Tustin vectors, first sample, legacy conversion, reset, invalid/NaN/Inf, derivative, single rejection
+PASS executable regulator
+test_models.c
+calibration_stub.c
+Regelaar.c
+TorqueModel.c
+FrequencyModel.c
+Generating Code...
+PASS single torque acceleration/load/correction, calibrated replacement, SIMC, invalid calibration, fresh tracking, saturation recomputation and 10000-cycle recovery
+PASS executable models
+test_torque_inverse.c
+TorqueModel.c
+calibration_stub.c
+Generating Code...
+PASS motor-model tests
+PASS executable motor_model
+test_torque_design.c
+TorqueModel.c
+calibration_stub.c
+Generating Code...
+Kp=1.77074 Ti=7.95775 Td=2.38732 Tf=0.0795775 PM=108.182 error=0.427797
+PASS
+PASS executable torque_design
+test_curve.c
+SetpointCurve.c
+Generating Code...
+PASS frequency quintic 0..50Hz endpoints, 2Hz/s peak, acceleration, jerk and continuity
+PASS: quintic profile endpoints, monotonicity, duration, acceleration/jerk limits, queued retarget, reset, invalid input
+PASS executable curve
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS single read timeout/CRC recovery counters, bounded outage, STOP/E-stop/stale-request cancellation, no retry START
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS exact EB31 OFF1 -> physical-arm RUN/zero -> enabled EB37, no implicit restart
+PASS 10s controlled STOP, cyclic OFF1/zero gap=110 ms, status polling continues
+PASS measured enqueue/70ms response, unchanged 80ms window, partial ACK timeout and UART errors fail closed
+PASS 10min constant 50Hz, max TX gap=110 ms, process ACKs distinguished from reads/timeouts
+PASS V20 scaling, arm/disarm, OFF1, fresh stop confirmation and explicit re-arm
+PASS all eight legacy reply failures, UART failures, fault latch and explicit recovery
+PASS invalid demand, stale/null requests, lost safety permissive and epoch-independent lockout
+PASS unhealthy drive status, signed speed and fragmented replies
+PASS executable v20
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS single read timeout/CRC recovery counters, bounded outage, STOP/E-stop/stale-request cancellation, no retry START
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS default uncommissioned firmware cannot arm or transmit RUN
+PASS executable v20_inhibited
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_recovery
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_fault_ack
+test_v20_simulation.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS real driver + state machine + relay-dependent simulated V20: boot/reset/prepare/start/enabled/stop, independent OFF1/OFF3, drive fault ACK and reboot
+PASS executable v20_simulation
+test_startup.c
+StatusIndicators.c
+StateMachine.c
+Generating Code...
+InputHandler: Output initialization failed; startup remains inhibited
+InputHandler: Output initialization failed; startup remains inhibited
+SensorTask: Sensor initialization failed; startup inhibited
+SensorTask: Sensor initialization failed; startup inhibited
+PASS queue/event creation before tasks; unchanged scheduling; successful local initialization only
+PASS readiness independent of sensor calibration and physical health; failed init remains inhibited
+PASS executable startup
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+TorqueModel.c
+Regelaar.c
+SetpointCurve.c
+FaultSnapshot.c
+Generating Code...
+PASS EB31 AUTO/MANUAL start preflight, optional watchdog mapping, precise invalid-model reasons, latch/no restart
+PASS 10min RUN, heartbeat race/deadline/wrap, disconnect/reconnect, first-fault before DO1, no restart
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness
+PASS recovered task barrier resumes INIT without reset acceptance or RUN
+PASS executable control
+test_control.c
+StateMachine.c
+SafetyIO.c
+StatusIndicators.c
+FrequencyModel.c
+Regelaar.c
+SetpointCurve.c
+FaultSnapshot.c
+Generating Code...
+PASS EB31 AUTO/MANUAL start preflight, optional watchdog mapping, precise invalid-model reasons, latch/no restart
+PASS 10min RUN, heartbeat race/deadline/wrap, disconnect/reconnect, first-fault before DO1, no restart
+PASS fresh START, no replay in any inhibited state, independent STOP, OFF1 transition
+PASS physical RESET recovery without arm; unsafe emergency latch cannot clear
+PASS unconditional freshness checks and same-cycle timing/communication fault publication
+PASS bounded startup timeout, sticky ready bits, watchdog servicing and safe output
+PASS debounced START/RESET actions and one-shot STOP notification
+PASS timing boundaries, missed deadlines and state epoch publication
+PASS manual quintic, no torque PID in MANUAL, AUTO torque PID only, deferred target, stale feedback inhibits arm, immediate fault bypass
+PASS alternating 5ms sensor/control phases preserve 10ms control period
+All focused control regression checks passed (mocked hardware/RTOS).
+PASS invalid selected model and unavailable frequency calibration inhibit AUTO start without arming
+PASS invalid negative airspeed cannot enter either automatic plant
+PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness
+PASS recovered task barrier resumes INIT without reset acceptance or RUN
+PASS executable control_frequency
+25/25 host executables passed.

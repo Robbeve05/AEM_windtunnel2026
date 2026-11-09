@@ -5,6 +5,7 @@ idf_component_register(
         ControlTask.c
         DigitalOutputs.c
         Ethernet.c
+        FaultSnapshot.c
         FanCalibration.c
         FrequencyModel.c
         HeartbeatTask.c

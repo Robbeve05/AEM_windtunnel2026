@@ -1,0 +1,7 @@
+PASS active_high compiles
+PASS active_low compiles
+PASS invalid_board_polarity rejected by configuration assertions
+PASS invalid_k2_polarity rejected by configuration assertions
+PASS negative_bit rejected by configuration assertions
+PASS duplicate_bit rejected by configuration assertions
+PASS out_of_range rejected by configuration assertions

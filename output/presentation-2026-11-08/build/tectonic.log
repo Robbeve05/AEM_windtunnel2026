@@ -1,0 +1,13 @@
+note: "version 2" Tectonic command-line interface activated
+note: using only cached resource files
+note: Running TeX ...
+Fontconfig error: Cannot load default config file: No such file: (null)
+note: Rerunning TeX because "wind_tunnel_progress.nav" changed ...
+note: Running xdvipdfmx ...
+note: Not writing `wind_tunnel_progress.out`: it would be empty.
+note: Not writing `wind_tunnel_progress.snm`: it would be empty.
+note: Writing `build\wind_tunnel_progress.log` (35.025390625 KiB)
+note: Not writing `wind_tunnel_progress.toc`: it would be empty.
+note: Writing `build\wind_tunnel_progress.pdf` (443.2021484375 KiB)
+note: Writing `build\wind_tunnel_progress.aux` (2.828125 KiB)
+note: Writing `build\wind_tunnel_progress.nav` (1.2646484375 KiB)

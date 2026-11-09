@@ -1,0 +1,11 @@
+Note: install `control` to generate linear plant step-response and Bode plots.
+SIMULATION ONLY — unvalidated motor/slip, V20 ramp and frequency model.
+Torque ISA params: ISAParameters(kp=1.7707386242807786, ti_s=7.957747154594767, td_s=2.3873241463784303, tf_s=0.07957747154594767, mode='PI')
+Frequency ISA params: ISAParameters(kp=0.75, ti_s=2.142857142857143, td_s=0.0, tf_s=0.0, mode='PI')
+Torque 25-38s {'max_error_ms': 1.2445615817270799, 'mean_abs_error_ms': 0.7852727389925939}
+Torque 60-69s {'max_error_ms': 0.7856367300561757, 'mean_abs_error_ms': 0.45736081787508714}
+Torque 99-114s {'max_error_ms': 9.452586018101764, 'mean_abs_error_ms': 7.149852770912321}
+Frequency 25-38s {'max_error_ms': 0.11105570853909086, 'mean_abs_error_ms': 0.0430177672079786}
+Frequency 60-69s {'max_error_ms': 0.019902860789692056, 'mean_abs_error_ms': 0.009942321279926464}
+Frequency 99-114s {'max_error_ms': 0.36850399600462147, 'mean_abs_error_ms': 0.22120495808784643}
+Plots and CSV: C:\Software\AEM_windtunnel2026\output\presentation-2026-11-08\plots\original

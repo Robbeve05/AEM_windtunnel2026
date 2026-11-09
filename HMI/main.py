@@ -204,6 +204,9 @@ class Controller:
             simulation=self.simulation,
             hardware_mode=not self.simulation,
             pressure_filter=pressure_filter,
+            pitot_diagnostics=({k: v for k, v in self.esp32_frame.items() if k.startswith('pitot_') or k == 'sample_seq'}
+                               if self.esp32_mode and not self.simulation and self.esp32_frame.get("sim") == 0 else {}),
+            pitot_transport_fresh=bool(self.esp32_mode and self.esp32.fresh),
             sensor_fresh=self.sensor_fresh() if not self.simulation else True,
             sample_age_s=age,
             events=list(self.events),

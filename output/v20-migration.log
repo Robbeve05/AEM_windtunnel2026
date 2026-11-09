@@ -1,0 +1,7 @@
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.000s
+
+OK
+Migrating legacy 60 m/s maximum: AUTO motor limit = 40 m/s, graph Y-axis = 70 m/s.
+Migrating legacy 50 m/s maximum: AUTO motor limit = 40 m/s, graph Y-axis = 50 m/s.

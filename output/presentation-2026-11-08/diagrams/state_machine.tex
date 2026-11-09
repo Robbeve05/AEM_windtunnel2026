@@ -1,0 +1,20 @@
+\begin{tikzpicture}[x=1cm,y=1cm,
+state/.style={draw=AvansBlue,fill=AvansBlue!4,rounded corners=2pt,align=center,font=\small,minimum height=.72cm,text width=2.05cm},
+flow/.style={-{Stealth[length=2mm]},thick},lab/.style={font=\scriptsize,align=center,fill=white,inner sep=1pt}]
+\node[state] (init) at (0,0) {INIT};
+\node[state] (wait) at (3.5,0) {WAIT};
+\node[state] (prep) at (7.2,0) {STOPPED\\PREPARE};
+\node[state] (ready) at (11,0) {READY};
+\node[state] (stop) at (0,-2) {STOP};
+\node[state] (run) at (3.5,-2) {RUNNING};
+\node[state] (start) at (7.2,-2) {STARTING};
+\node[state,draw=AvansRed,fill=AvansRed!5] (fault) at (11,-2) {FAULT};
+\draw[flow] (init)--node[lab,above]{Services +\\fresh diagnostics}(wait);
+\draw[flow] (wait)--node[lab,above]{Physical RESET\\and safe inputs}(prep);
+\draw[flow] (prep)--node[lab,above]{OFF1 + fresh\\stopped feedback}(ready);
+\draw[flow] (ready.south)--++(0,-.65)-|node[lab,pos=.7,above]{Physical START}(start.north);
+\draw[flow] (start)--node[lab,above]{Fresh enabled\\feedback after RUN}(run);
+\draw[flow] (run)--node[lab,above]{STOP / OFF1}(stop);
+\draw[flow] (stop.south)--++(0,-.7)--++(12.25,0)|-node[lab,pos=.65,right]{Stopped +\\STOP released}(ready.east);
+\draw[flow,AvansRed] (start)--node[lab,above]{Fault / timeout}(fault);
+\end{tikzpicture}

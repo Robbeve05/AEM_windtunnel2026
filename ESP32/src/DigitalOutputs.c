@@ -186,7 +186,10 @@ bool DigitalOutputs_Set(bool enabled, StatusIndicator indicators)
         state.vfd_acknowledged = authorized;
     }
     else
+    {
+        state.vfd_acknowledged = false;
         state.write_errors++;
+    }
     portEXIT_CRITICAL(&state_lock);
     xSemaphoreGive(writer_lock);
     return ok;

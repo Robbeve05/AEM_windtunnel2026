@@ -176,6 +176,8 @@ class FlowChart(QWidget):
         self.setMinimumHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.points = []
+        self.y_min = 0.0
+        self.series = (("mean", "#2f3338", 2, True), ("speed", RED, 2.6, False))
         self.y_max = 45.0
 
     def set_points(self, points, y_max):
@@ -194,7 +196,7 @@ class FlowChart(QWidget):
         for step in range(5):
             y = rect.top() + rect.height() * step / 4
             painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
-            value = self.y_max * (1 - step / 4)
+            value = self.y_min + (self.y_max - self.y_min) * (1 - step / 4)
             painter.setPen(QColor("#666662"))
             painter.drawText(0, int(y - 9), 49, 18, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{value:.0f}")
             painter.setPen(QPen(QColor(LINE), 1))
@@ -216,16 +218,13 @@ class FlowChart(QWidget):
                     points.append(None)
                     continue
                 x = rect.left() + rect.width() * max(0.0, min(1.0, 1 - (newest - item["t"]) / 60))
-                y = rect.bottom() - rect.height() * max(0.0, min(1.0, float(value) / self.y_max))
+                y = rect.bottom() - rect.height() * max(0.0, min(1.0, (float(value) - self.y_min) / (self.y_max - self.y_min)))
                 points.append((x, y))
             return points
 
         painter.save()
         painter.setClipRect(rect)
-        for key, color, width, dashed in (
-            ("mean", "#2f3338", 2, True),
-            ("speed", RED, 2.6, False),
-        ):
+        for key, color, width, dashed in self.series:
             points = path_for(key)
             pen = QPen(QColor(color), width)
             if dashed:
@@ -1032,8 +1031,11 @@ class HMIWindow(QMainWindow):
         self.pages.addWidget(page)
 
     def _build_raw(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        content = QWidget()
+        page.setWidget(content)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         self.raw_empty = self._empty_state(
             "USB",
@@ -1054,6 +1056,18 @@ class HMIWindow(QMainWindow):
         json_box.addWidget(self.raw_json)
         self.raw_card.hide()
         self.raw_json_card.hide()
+        _, box = self._card(layout, "Pitot diagnostics", "Pressure Pa: raw blue / corrected orange / filtered green")
+        self.pitot_state = QLabel("NO ESP32 DIAGNOSTICS")
+        self.pitot_values = QLabel()
+        self.pitot_values.setWordWrap(True)
+        self.pitot_chart = FlowChart()
+        self.pitot_chart.series = (("raw", "#2675c9", 2, False), ("corrected", "#c97420", 2, False), ("filtered", "#20804a", 2, False))
+        self.pitot_speed_chart = FlowChart()
+        self.pitot_history = []
+        self.pitot_last_seq = None
+        self.pitot_last_progress = 0.0
+        for widget in (self.pitot_state, self.pitot_values, self.pitot_chart, QLabel("Airspeed m/s"), self.pitot_speed_chart):
+            box.addWidget(widget)
         self.pages.addWidget(page)
 
     def _build_cp(self):
@@ -1945,6 +1959,7 @@ class HMIWindow(QMainWindow):
             f" · overruns {drive.get('overruns', '—')}"
             f" · missed {drive.get('missed_deadlines', '—')}"
         )
+        self._render_pitot(data)
         sample = data.get("sample") or {}
         measurement = data.get("measurement") or {}
         live = bool(data.get("sensor_fresh"))
@@ -2047,6 +2062,35 @@ class HMIWindow(QMainWindow):
         if time.monotonic() - self.last_refresh > 3 and self.page_key in ("measurements", "storage"):
             self.last_refresh = time.monotonic()
             self._refresh_data()
+
+    def _render_pitot(self, data):
+        d = data.get("pitot_diagnostics") or {}
+        now = time.monotonic()
+        seq = d.get("pitot_sample_seq")
+        new = seq is not None and seq != self.pitot_last_seq
+        if new:
+            self.pitot_last_seq = seq
+            self.pitot_last_progress = now
+        fresh = bool(d and data.get("pitot_transport_fresh") and
+                     d.get("pitot_age_ms", 999999) < 150 and now - self.pitot_last_progress < 0.3)
+        valid = fresh and d.get("pitot_read_ok") == 1
+        state = ("NO ESP32 DIAGNOSTICS" if not d else "STALE" if not fresh else
+                 "INVALID I2C / STATUS" if not valid else "CALIBRATING" if not d.get("pitot_calibrated") else
+                 "LIVE" if d.get("pitot_valid") else "INVALID")
+        self.pitot_state.setText(state)
+        self.pitot_state.setStyleSheet("color: #20804a" if state == "LIVE" else "color: #c8291e")
+        self.pitot_values.setText("\n".join(f"{key}: {value}" for key, value in sorted(d.items())))
+        if new and valid:
+            values = [d.get(k) for k in ("pitot_raw_pressure_pa", "pitot_corrected_pressure_pa", "pitot_filtered_pressure_pa", "pitot_airspeed_ms")]
+            if all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+                if self.pitot_history and now - self.pitot_history[-1]["t"] > 0.3:
+                    self.pitot_history.append({"t": now - 0.001})
+                self.pitot_history.append(dict(t=now, raw=values[0], corrected=values[1], filtered=values[2], speed=values[3] if d.get("pitot_valid") else None))
+        self.pitot_history = [p for p in self.pitot_history if now - p["t"] <= 60]
+        pressures = [p[k] for p in self.pitot_history for k in ("raw", "corrected", "filtered") if k in p]
+        self.pitot_chart.y_min = min([0.0] + pressures) - 1
+        self.pitot_chart.set_points(self.pitot_history, max([1.0] + pressures) + 1)
+        self.pitot_speed_chart.set_points(self.pitot_history, self.config.get("graph_max_airspeed_ms", 50))
 
     def _render_raw(self, sample, live):
         self.raw_empty.setVisible(not live)

@@ -1,0 +1,563 @@
+{
+  "metadata": {
+    "id": "2026-11-08_20-31-57_185615_aero_08df90ff",
+    "name": "SIM_Wing_AoA5",
+    "timestamp": "2026-11-08T20:31:57.185615+00:00",
+    "kind": "aerodynamic",
+    "state": "COMPLETED",
+    "analysis_status": "FULL",
+    "source": "simulation",
+    "simulated": true,
+    "configuration": {
+      "name": "SIM_Wing_AoA5",
+      "airfoil": "Synthetic diamond section",
+      "chord_mm": 100.0,
+      "alpha_deg": 5.0,
+      "averaging_s": 0.5,
+      "description": "",
+      "source": "simulation",
+      "sample_rate_hz": 20.0,
+      "simulation_airspeed_ms": 15,
+      "simulation_noise_pa": 0.1,
+      "simulation_seed": 42,
+      "taps": [
+        {
+          "tap_id": "U0",
+          "surface": "upper",
+          "x_c": 0.0,
+          "z_c": 0.0,
+          "channel": "sim:upper:0",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U1",
+          "surface": "upper",
+          "x_c": 0.08,
+          "z_c": 0.0096,
+          "channel": "sim:upper:1",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U2",
+          "surface": "upper",
+          "x_c": 0.2,
+          "z_c": 0.024,
+          "channel": "sim:upper:2",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U3",
+          "surface": "upper",
+          "x_c": 0.4,
+          "z_c": 0.048,
+          "channel": "sim:upper:3",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U4",
+          "surface": "upper",
+          "x_c": 0.6,
+          "z_c": 0.048,
+          "channel": "sim:upper:4",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U5",
+          "surface": "upper",
+          "x_c": 0.8,
+          "z_c": 0.023999999999999994,
+          "channel": "sim:upper:5",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "U6",
+          "surface": "upper",
+          "x_c": 1.0,
+          "z_c": 0.0,
+          "channel": "sim:upper:6",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L0",
+          "surface": "lower",
+          "x_c": 0.0,
+          "z_c": -0.0,
+          "channel": "sim:lower:0",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L1",
+          "surface": "lower",
+          "x_c": 0.08,
+          "z_c": -0.0096,
+          "channel": "sim:lower:1",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L2",
+          "surface": "lower",
+          "x_c": 0.2,
+          "z_c": -0.024,
+          "channel": "sim:lower:2",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L3",
+          "surface": "lower",
+          "x_c": 0.4,
+          "z_c": -0.048,
+          "channel": "sim:lower:3",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L4",
+          "surface": "lower",
+          "x_c": 0.6,
+          "z_c": -0.048,
+          "channel": "sim:lower:4",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L5",
+          "surface": "lower",
+          "x_c": 0.8,
+          "z_c": -0.023999999999999994,
+          "channel": "sim:lower:5",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        },
+        {
+          "tap_id": "L6",
+          "surface": "lower",
+          "x_c": 1.0,
+          "z_c": -0.0,
+          "channel": "sim:lower:6",
+          "enabled": true,
+          "physical_location": {},
+          "sensor_config": {
+            "adapter": "simulation"
+          },
+          "calibration": {
+            "status": "synthetic fixture"
+          }
+        }
+      ]
+    },
+    "samples": 10,
+    "duration_s": 0.5,
+    "average_airspeed_ms": 15.006959691056409,
+    "exported": false,
+    "progress": 100,
+    "error": null,
+    "geometry_source": "explicit synthetic fixture or operator-supplied coordinates",
+    "air_density_kg_m3": 1.225,
+    "started_at": "2026-11-08T20:31:57.202123+00:00",
+    "reynolds_setpoint": null,
+    "message": "Analysis finished: FULL",
+    "finished_at": "2026-11-08T20:31:57.731420+00:00",
+    "analysis_revision": 1,
+    "analysis_version": "1.0.0"
+  },
+  "analysis": {
+    "analysis_version": "1.0.0",
+    "generated_at": "2026-11-08T20:31:57.762911+00:00",
+    "experiment_id": "2026-11-08_20-31-57_185615_aero_08df90ff",
+    "experiment_name": "SIM_Wing_AoA5",
+    "airfoil": "Synthetic diamond section",
+    "alpha_deg": 5.0,
+    "chord_mm": 100.0,
+    "source": "simulation",
+    "simulated": true,
+    "status": "FULL",
+    "settings": {
+      "minimum_q_pa": 1,
+      "minimum_samples_per_tap": 5,
+      "max_reference_age_s": 0.1,
+      "moment_reference_x_c": 0.25
+    },
+    "summary": {
+      "mean_airspeed_ms": 15.006959691056409,
+      "mean_dynamic_pressure_pa": 137.94042463380546,
+      "air_density_kg_m3": 1.225,
+      "valid_samples": 10,
+      "tap_count": 14,
+      "duration_s": 0.5,
+      "observed_span_s": 0.4732142857142857,
+      "actual_reynolds": 101375.68099073472,
+      "requested_reynolds": null,
+      "temperature_c": 20.0,
+      "dynamic_viscosity_pa_s": 1.8134058821488238e-05,
+      "applied_airspeed_setpoint_ms": null,
+      "airspeed_std_ms": 0.004168452544935879
+    },
+    "quality": {
+      "status": "FULL",
+      "valid_taps": 14,
+      "configured_taps": 14,
+      "valid_observations": 140,
+      "raw_observations": 140,
+      "rejected_observations": 0,
+      "data_completeness": 1,
+      "sensor_validity": "SIMULATED",
+      "warnings": [
+        "SIMULATION: synthetic pressure/geometry fixtures are not validated airfoil performance."
+      ],
+      "expected_observations": 140
+    },
+    "cp": [
+      {
+        "tap_id": "U0",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.0,
+        "z_c": 0.0,
+        "mean_pressure_pa": 101324.97165175146,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93426049283968,
+        "cp": -0.00020541409791282605,
+        "pressure_std_pa": 0.1038192997935279,
+        "cp_std": 0.0007525829542036402,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U1",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.08,
+        "z_c": 0.0096,
+        "mean_pressure_pa": 101283.93802266828,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93521040811532,
+        "cp": -0.29769038339746745,
+        "pressure_std_pa": 0.0660479618131619,
+        "cp_std": 0.0004876167841778429,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U2",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.2,
+        "z_c": 0.024,
+        "mean_pressure_pa": 101235.75381632923,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93615993524756,
+        "cp": -0.6470109523063217,
+        "pressure_std_pa": 0.10046018212820514,
+        "cp_std": 0.0007826080906323928,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U3",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.4,
+        "z_c": 0.048,
+        "mean_pressure_pa": 101191.13564458909,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93710907120462,
+        "cp": -0.9704738898618295,
+        "pressure_std_pa": 0.10207813859801927,
+        "cp_std": 0.000600461803478831,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U4",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.6,
+        "z_c": 0.048,
+        "mean_pressure_pa": 101191.0880367285,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93805781295586,
+        "cp": -0.970812332427364,
+        "pressure_std_pa": 0.08321151296551313,
+        "cp_std": 0.00036676738771745986,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U5",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 0.8,
+        "z_c": 0.023999999999999994,
+        "mean_pressure_pa": 101235.68744856004,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93900615747197,
+        "cp": -0.6474785826175948,
+        "pressure_std_pa": 0.12990543298163618,
+        "cp_std": 0.0008745461286685138,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "U6",
+        "source": "simulation",
+        "surface": "upper",
+        "x_c": 1.0,
+        "z_c": 0.0,
+        "mean_pressure_pa": 101325.00764688183,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.93995410172482,
+        "cp": 5.546013714851668e-05,
+        "pressure_std_pa": 0.11817337923447957,
+        "cp_std": 0.0008564278749475686,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L0",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.0,
+        "z_c": -0.0,
+        "mean_pressure_pa": 101324.96194116322,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.94090164268755,
+        "cp": -0.0002758962242427316,
+        "pressure_std_pa": 0.10079019894348597,
+        "cp_std": 0.0007306986004606162,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L1",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.08,
+        "z_c": -0.0096,
+        "mean_pressure_pa": 101317.3019014431,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.94184877733454,
+        "cp": -0.0558068109775091,
+        "pressure_std_pa": 0.0878455072476669,
+        "cp_std": 0.0006336217081882414,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L2",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.2,
+        "z_c": -0.024,
+        "mean_pressure_pa": 101308.31292622774,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.94279550264145,
+        "cp": -0.12097100374192796,
+        "pressure_std_pa": 0.058082764613247025,
+        "cp_std": 0.00042537591623352733,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L3",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.4,
+        "z_c": -0.048,
+        "mean_pressure_pa": 101300.03326491118,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.94374181558524,
+        "cp": -0.1809922576232579,
+        "pressure_std_pa": 0.0927878592367438,
+        "cp_std": 0.0006924147169382361,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L4",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.6,
+        "z_c": -0.048,
+        "mean_pressure_pa": 101300.0157255398,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.94468771314408,
+        "cp": -0.1811180336017471,
+        "pressure_std_pa": 0.11138944847116872,
+        "cp_std": 0.0007949622329609788,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L5",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 0.8,
+        "z_c": -0.023999999999999994,
+        "mean_pressure_pa": 101308.3673730328,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.9456331922975,
+        "cp": -0.12057385469705748,
+        "pressure_std_pa": 0.05114961982264858,
+        "cp_std": 0.0003875932241292387,
+        "valid_sample_count": 10,
+        "valid": true
+      },
+      {
+        "tap_id": "L6",
+        "source": "simulation",
+        "surface": "lower",
+        "x_c": 1.0,
+        "z_c": -0.0,
+        "mean_pressure_pa": 101324.96140757305,
+        "reference_pressure_pa": 101325.0,
+        "dynamic_pressure_pa": 137.9465782500263,
+        "cp": -0.0002798157635466239,
+        "pressure_std_pa": 0.08915552096651906,
+        "cp_std": 0.000646464421565753,
+        "valid_sample_count": 10,
+        "valid": true
+      }
+    ],
+    "coefficients": {
+      "cn": {
+        "value": 0.5295345339341213,
+        "status": "FULL",
+        "reason": "Full measured chord"
+      },
+      "ca": {
+        "value": -0.0005480087925757392,
+        "status": "FULL",
+        "reason": "Full measured chord"
+      },
+      "cl": {
+        "value": 0.5275672572750044,
+        "status": "FULL",
+        "reason": "Full measured chord"
+      },
+      "cm": {
+        "value": -0.13115055745627927,
+        "status": "FULL",
+        "reason": "Full measured chord"
+      },
+      "cd": {
+        "value": null,
+        "status": "UNAVAILABLE",
+        "reason": "Total drag requires viscous/shear or independent force/wake measurements"
+      }
+    },
+    "full_chord": true,
+    "coverage": [
+      0.0,
+      1.0
+    ],
+    "method": "piecewise-linear Cp and supplied geometry; exact panel moments; no extrapolation",
+    "coordinates": "x/c downstream from LE, z/c upward; Cn up, Ca downstream, Cm nose-up",
+    "averaging": "Arithmetic mean of instantaneous Cp from each time-aligned pressure/reference pair; population standard deviation.",
+    "assumptions": [
+      "Piecewise-linear segments between measured taps; no invented taps or endpoint extrapolation.",
+      "2D sectional pressure coefficients only; total drag is unavailable without viscous/independent measurements."
+    ],
+    "raw_sha256": "4b72289ca85e51d684b3948302a1542130c2eda8101979a7f7bb58cd97bfeaf3",
+    "revision": 1
+  },
+  "physical_available": false,
+  "files": [
+    "analysis.json",
+    "analysis_report.pdf",
+    "coefficients.csv",
+    "cp_curve.csv",
+    "cp_distribution.png",
+    "cp_distribution.svg",
+    "experiment.json",
+    "processed_data.csv",
+    "raw_data.csv"
+  ]
+}

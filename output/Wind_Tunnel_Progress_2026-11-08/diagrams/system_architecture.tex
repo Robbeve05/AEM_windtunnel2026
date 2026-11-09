@@ -1,0 +1,13 @@
+\begin{tikzpicture}[x=1cm,y=1cm,
+unit/.style={draw=AvansBlue,thick,rounded corners=2pt,fill=AvansBlue!4,align=center,font=\small,text width=2.65cm,minimum height=.8cm},
+flow/.style={-{Stealth[length=2mm]},thick},lab/.style={font=\scriptsize,fill=white,inner sep=2pt}]
+\node[unit] (hmi) at (0,0) {Raspberry Pi / PC\\Native HMI + FastAPI};
+\node[unit] (esp) at (0,-1.7) {ESP32-S3 / FreeRTOS\\100 Hz control};
+\node[unit] (vfd) at (4,-1.7) {Siemens V20\\Frequency reference};
+\node[unit] (sensor) at (0,-3.5) {Pitot + sensors\\Pressure data};
+\node[unit,draw=AvansRed,fill=AvansRed!4] (safety) at (4,-3.5) {Physical safety chain\\E-stop + permission};
+\draw[flow,<->] (hmi)--node[lab,right]{Ethernet TCP}(esp);
+\draw[flow,<->] (esp)--node[lab,above]{Modbus RTU}(vfd);
+\draw[flow] (sensor)--(esp);
+\draw[flow,AvansRed] (safety)--node[lab,right]{Independent action}(vfd);
+\end{tikzpicture}

@@ -1,0 +1,3 @@
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:45:1:[m[K [01;31m[Kerror: [m[Kstatic assertion failed: "All eight output assignments must be unique"
+   45 | [01;31m[K_Static_assert[m[K((OUTPUT_BIT(VFD_ENABLE_DO_BIT) | OUTPUT_BIT(RED_INDICATOR_DO_BIT) |
+      | [01;31m[K^~~~~~~~~~~~~~[m[K

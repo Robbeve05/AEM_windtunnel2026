@@ -1,0 +1,7 @@
+v20_audit_probe.c
+V20Modbus.c
+StateMachine.c
+Generating Code...
+CONFIRMED: runtime RX failure latches driver; no OFF1 is sent even after transport recovers
+CONFIRMED: READY to RUNNING has no operation-enabled feedback prerequisite
+CONFIRMED: released E-stop plus physical RESET cannot initiate recovery while software urgent latch persists

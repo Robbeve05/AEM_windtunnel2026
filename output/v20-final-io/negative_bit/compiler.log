@@ -1,0 +1,21 @@
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:36:22:[m[K [01;31m[Kerror: [m[Kstatic assertion failed: "Output index must be 0..7"
+   36 | #define CHECK_BIT(n) [01;31m[K_Static_assert[m[K((n) >= 0 && (n) <= 7, "Output index must be 0..7")
+      |                      [01;31m[K^~~~~~~~~~~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:40:1:[m[K [01;36m[Knote: [m[Kin expansion of macro '[01m[KCHECK_BIT[m[K'
+   40 | [01;36m[KCHECK_BIT[m[K(YELLOW_INDICATOR_DO_BIT);
+      | [01;36m[K^~~~~~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:35:27:[m[K [01;35m[Kwarning: [m[Kleft shift count is negative [[01;35m[K-Wshift-count-negative[m[K]
+   35 | #define OUTPUT_BIT(n) (1u [01;35m[K<<[m[K (n))
+      |                           [01;35m[K^~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:46:54:[m[K [01;36m[Knote: [m[Kin expansion of macro '[01m[KOUTPUT_BIT[m[K'
+   46 |                 OUTPUT_BIT(GREEN_INDICATOR_DO_BIT) | [01;36m[KOUTPUT_BIT[m[K(YELLOW_INDICATOR_DO_BIT) |
+      |                                                      [01;36m[K^~~~~~~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:48:44:[m[K [01;31m[Kerror: [m[Kexpression in static assertion is not constant
+   45 | _Static_assert([01;31m[K(OUTPUT_BIT(VFD_ENABLE_DO_BIT) | OUTPUT_BIT(RED_INDICATOR_DO_BIT) |[m[K
+      |                [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   46 | [01;31m[K                OUTPUT_BIT(GREEN_INDICATOR_DO_BIT) | OUTPUT_BIT(YELLOW_INDICATOR_DO_BIT) |[m[K
+      |                 [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   47 | [01;31m[K                OUTPUT_BIT(SPARE_DO5_BIT) | OUTPUT_BIT(SPARE_DO6_BIT) | OUTPUT_BIT(SPARE_DO7_BIT) |[m[K
+      |                 [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   48 | [01;31m[K                OUTPUT_BIT(SPARE_DO8_BIT)) == 0xffu[m[K,
+      |                 [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~[m[K

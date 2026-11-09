@@ -1,0 +1,44 @@
+{
+  "frequency": {
+    "rise_10_90_s": 9.88,
+    "settling_2percent_after_start_s": 14.66,
+    "overshoot_percent": 1.2935885001179592,
+    "max_frequency_hz": 37.263183113346294,
+    "IAE_shaped_all_m": 40.26725660912184,
+    "windows": {
+      "25-38s": {
+        "max_error_ms": 0.11105570853909086,
+        "mean_abs_error_ms": 0.0430177672079786
+      },
+      "60-69s": {
+        "max_error_ms": 0.019902860789692056,
+        "mean_abs_error_ms": 0.009942321279926464
+      },
+      "99-114s": {
+        "max_error_ms": 0.36850399600462147,
+        "mean_abs_error_ms": 0.22120495808784643
+      }
+    }
+  },
+  "torque": {
+    "rise_10_90_s": 9.969999999999999,
+    "settling_2percent_after_start_s": 30.590000000000003,
+    "overshoot_percent": 6.222807908635399,
+    "max_frequency_hz": 43.43605791813504,
+    "IAE_shaped_all_m": 331.0031678394704,
+    "windows": {
+      "25-38s": {
+        "max_error_ms": 1.2445615817270799,
+        "mean_abs_error_ms": 0.7852727389925939
+      },
+      "60-69s": {
+        "max_error_ms": 0.7856367300561757,
+        "mean_abs_error_ms": 0.45736081787508714
+      },
+      "99-114s": {
+        "max_error_ms": 9.452586018101764,
+        "mean_abs_error_ms": 7.149852770912321
+      }
+    }
+  }
+}

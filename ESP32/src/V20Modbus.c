@@ -57,6 +57,7 @@ _Static_assert(V20_REFERENCE_HZ == 50.0f && MANUAL_MAX_HZ <= 50.0f,
 #define V20_FC_READ 3u
 #define V20_FC_WRITE_MULTI 16u
 #define V20_MAX_FRAME 32u
+_Static_assert(V20_RESPONSE_TIMEOUT_MS <= 100u, "Response timeout must fit P2014=500 ms");
 #define V20_MAX_REQUEST_AGE_MS 50u
 #define US_PER_MS 1000LL
 #define V20_TX_BUFFER 256
@@ -81,6 +82,10 @@ typedef enum
 
 typedef struct
 {
+    V20Operation retry_operation;
+    unsigned retry_attempt;
+    bool verify_unknown_write;
+    uint32_t retries, recovered_transactions, final_comm_errors;
     bool uart_ok;
     bool transport_error;
     bool operation_seen, operation_lost;
@@ -111,6 +116,13 @@ typedef struct
     V20CommError last_error;
     V20Operation last_operation;
     int64_t last_rx_success_us;
+    int64_t last_valid_response_us, last_process_data_us, last_process_data_tx_us;
+    uint32_t max_response_gap_ms, max_process_data_gap_ms, max_process_data_tx_gap_ms;
+    uint32_t valid_reads, valid_writes, crc_errors, invalid_frames, late_replies, exceptions;
+    float requested_hz;
+    ModbusTransactionDiagnostics transaction;
+    uint32_t transaction_sequence, max_rtt_us;
+    int64_t previous_service_us;
     int64_t last_status_us;
     int64_t last_command_us;
     int64_t tx_started_us;
@@ -129,6 +141,9 @@ typedef struct
 // File-local variables
 
 static V20Context d;
+#if !SIMULATION_MODE
+static QueueHandle_t uart_events;
+#endif
 #if SIMULATION_MODE
 static V20Simulation simulated_drive;
 static int64_t simulation_previous_us;
@@ -159,6 +174,7 @@ static void simulate_response(int64_t now_us);
 #endif
 static void receive_pending(int64_t now_us);
 static void restart_commissioning(void);
+static void finish_transaction(V20CommError result, int64_t now_us);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -187,17 +203,23 @@ bool V20Modbus_Init(void)
         uart_set_pin(MODBUS_UART_PORT, MODBUS_TX_PIN, MODBUS_RX_PIN, MODBUS_DE_PIN,
                      UART_PIN_NO_CHANGE) != ESP_OK)
     {
+        d.errors++;
+        d.final_comm_errors++;
         record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
         return false;
     }
-    if (uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 0, NULL, 0) != ESP_OK)
+    if (uart_driver_install(MODBUS_UART_PORT, V20_RX_BUFFER, V20_TX_BUFFER, 16, &uart_events, 0) != ESP_OK)
     {
+        d.errors++;
+        d.final_comm_errors++;
         record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
         return false;
     }
     if (uart_set_mode(MODBUS_UART_PORT, UART_MODE_RS485_HALF_DUPLEX) != ESP_OK)
     {
         (void)uart_driver_delete(MODBUS_UART_PORT);
+        d.errors++;
+        d.final_comm_errors++;
         record_error(V20_COMM_UART_INIT_FAILED, 0, 0);
         return false;
     }
@@ -395,17 +417,65 @@ static uint16_t expected_pdu_address(V20Operation operation)
  * writes. */
 
 ///////////////////////////////////////////////////////////////////////////////
+// finish_transaction()
+
+static void finish_transaction(V20CommError result, int64_t now_us)
+{
+    ModbusTransactionDiagnostics *t = &d.transaction;
+    t->pending = false;
+    t->result = (uint8_t)result;
+    t->completed_ms = (uint32_t)(now_us / US_PER_MS);
+    t->rx_bytes = (uint8_t)d.rx_used;
+    t->expected_rx_bytes = (uint8_t)d.rx_expected;
+    memcpy(t->rx_frame, d.rx, d.rx_used);
+    t->write_unconfirmed = result != V20_COMM_NONE && d.active_operation == V20_OP_WRITE_CONTROL;
+    if (result == V20_COMM_NONE)
+    {
+        t->rtt_us = (uint32_t)(now_us - d.tx_started_us);
+        if (t->rtt_us > d.max_rtt_us) d.max_rtt_us = t->rtt_us;
+    }
+    t->max_rtt_us = d.max_rtt_us;
+    const int64_t late = now_us - d.tx_started_us - (int64_t)V20_RESPONSE_TIMEOUT_MS * US_PER_MS;
+    t->deadline_lateness_us = late > 0 ? (uint32_t)late : 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // fail_transaction()
 
 static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual,
                              uint32_t exception_code)
 {
+    finish_transaction(error, now_us);
     d.errors++;
+    if (error == V20_COMM_CRC_ERROR) d.crc_errors++;
+    if (error == V20_COMM_INVALID_FRAME) d.invalid_frames++;
     if (error == V20_COMM_TIMEOUT)
         d.timeouts++;
     if (d.active_operation == V20_OP_WRITE_CONTROL)
         d.control_word_acknowledged_valid = false;
     record_error(error, actual, exception_code);
+    /* Read-only retry, at most once. Reserve 30 ms for scheduling and the
+     * following process-data write, with 50 ms margin below P2014=500 ms. */
+    const bool read = d.active_operation == V20_OP_READ_STATUS ||
+        d.active_operation == V20_OP_READ_REFERENCE || d.active_operation == V20_OP_READ_WATCHDOG;
+    const bool budget = !d.demand_run || now_us - d.last_process_data_tx_us +
+        (int64_t)(V20_LATE_REPLY_QUARANTINE_MS + V20_RESPONSE_TIMEOUT_MS + 30u) * US_PER_MS < 450000;
+    if (read && d.retry_attempt == 0 && budget &&
+        (error == V20_COMM_TIMEOUT || error == V20_COMM_CRC_ERROR || error == V20_COMM_UART_RX_FAILED))
+    {
+        d.retry_operation = d.active_operation;
+        d.retry_attempt = 1;
+        d.phase = PH_RECOVERY;
+        d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
+        d.rx_used = 0;
+        d.active_operation = V20_OP_NONE;
+        return;
+    }
+    d.final_comm_errors++;
+    d.retry_operation = V20_OP_NONE;
+    d.retry_attempt = 0;
+    if (d.active_operation == V20_OP_WRITE_CONTROL)
+        d.verify_unknown_write = true;
     d.armed = false;
     d.demand_run = false;
     if (!d.diagnostics_complete)
@@ -432,7 +502,12 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
 
 static void accept_exception(int64_t now_us, uint32_t exception_code)
 {
+    finish_transaction(V20_COMM_MODBUS_EXCEPTION, now_us);
     d.errors++;
+    d.exceptions++;
+    d.final_comm_errors++;
+    d.retry_operation = V20_OP_NONE;
+    d.retry_attempt = 0;
     d.transport_error = false;
     d.last_rx_success_us = now_us;
     d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
@@ -515,11 +590,23 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
         d.rx_expected = 5u + 2u * count;
     }
 
+    d.rx_used = 0;
+    d.tx_started_us = now_us;
+    d.transaction = (ModbusTransactionDiagnostics){.id = ++d.transaction_sequence,
+        .type = (uint32_t)operation, .start_ms = (uint32_t)(now_us / US_PER_MS),
+        .deadline_ms = (uint32_t)(now_us / US_PER_MS) + V20_RESPONSE_TIMEOUT_MS,
+        .pdu_address = d.active_address, .register_count = d.active_count,
+        .tx_bytes = (uint8_t)size, .expected_rx_bytes = (uint8_t)d.rx_expected,
+        .pending = true, .max_rtt_us = d.max_rtt_us};
+    memcpy(d.transaction.tx_frame, d.tx, size);
 #if SIMULATION_MODE
     (void)size;
     /* The simulator completes this operation on a later Service() call. */
 #else
     /* Flush *before* a new transaction, never in the middle of a reply. */
+    size_t buffered = 0;
+    if (uart_get_buffered_data_len(MODBUS_UART_PORT, &buffered) == ESP_OK)
+        d.transaction.discarded_before_tx = (uint32_t)buffered;
     if (uart_flush_input(MODBUS_UART_PORT) != ESP_OK ||
         uart_write_bytes(MODBUS_UART_PORT, (const char *)d.tx, size) != (int)size)
     {
@@ -527,8 +614,25 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
         return false;
     }
 #endif
+    /* The response window starts when the TX API has accepted the frame, not
+     * before UART mutex/ring-buffer waits. This is enqueue time, not a claim
+     * about the physical final stop bit on RS485. */
+    const int64_t queued_us = esp_timer_get_time();
+    d.transaction.enqueue_us = (uint32_t)(queued_us - now_us);
+    d.transaction.start_ms = (uint32_t)(queued_us / US_PER_MS);
+    d.transaction.deadline_ms = (uint32_t)((queued_us + (int64_t)V20_RESPONSE_TIMEOUT_MS * US_PER_MS) / US_PER_MS);
+    if (operation == V20_OP_WRITE_CONTROL)
+    {
+        if (d.last_process_data_tx_us > 0)
+        {
+            const uint32_t gap = (uint32_t)((queued_us - d.last_process_data_tx_us) / US_PER_MS);
+            if (gap > d.max_process_data_tx_gap_ms) d.max_process_data_tx_gap_ms = gap;
+        }
+        d.last_process_data_tx_us = queued_us;
+        d.requested_hz = (float)d.active_hsw * V20_REFERENCE_HZ / 16384.0f;
+    }
     d.rx_used = 0;
-    d.tx_started_us = now_us;
+    d.tx_started_us = queued_us;
     d.phase = PH_WAIT_RESPONSE;
     return true;
 }
@@ -569,6 +673,31 @@ static V20CommError verify_reply(uint32_t *exception_code)
 
 static void accept_reply(int64_t now_us)
 {
+    finish_transaction(V20_COMM_NONE, now_us);
+    if (d.retry_attempt && d.active_operation == d.retry_operation)
+    {
+        d.recovered_transactions++;
+        d.retry_attempt = 0;
+        d.retry_operation = V20_OP_NONE;
+    }
+    if (d.last_valid_response_us > 0)
+    {
+        const uint32_t gap = (uint32_t)((now_us - d.last_valid_response_us) / US_PER_MS);
+        if (gap > d.max_response_gap_ms) d.max_response_gap_ms = gap;
+    }
+    d.last_valid_response_us = now_us;
+    if (d.active_operation == V20_OP_WRITE_CONTROL)
+    {
+        if (d.last_process_data_us > 0)
+        {
+            const uint32_t gap = (uint32_t)((now_us - d.last_process_data_us) / US_PER_MS);
+            if (gap > d.max_process_data_gap_ms) d.max_process_data_gap_ms = gap;
+        }
+        d.last_process_data_us = now_us;
+        d.valid_writes++;
+    }
+    else
+        d.valid_reads++;
     d.transport_error = false;
     d.last_rx_success_us = now_us;
     d.bus_quiet_until_us = now_us + V20_FRAME_GAP_US;
@@ -700,6 +829,8 @@ static void receive_pending(int64_t now_us)
 {
 #if SIMULATION_MODE
     simulate_response(now_us);
+    if (d.rx_used && !d.transaction.first_rx_ms)
+        d.transaction.first_rx_ms = d.transaction.last_rx_ms = (uint32_t)(now_us / US_PER_MS);
 #else
     uint8_t bytes[V20_MAX_FRAME];
     /* timeout=0: read immediately available bytes only. */
@@ -717,15 +848,21 @@ static void receive_pending(int64_t now_us)
             return;
         }
         memcpy(d.rx + d.rx_used, bytes, (size_t)n);
+        if (!d.rx_used) d.transaction.first_rx_ms = (uint32_t)(esp_timer_get_time() / US_PER_MS);
+        d.transaction.last_rx_ms = (uint32_t)(esp_timer_get_time() / US_PER_MS);
         d.rx_used += (size_t)n;
+        d.transaction.rx_bytes = (uint8_t)d.rx_used;
+        memcpy(d.transaction.rx_frame, d.rx, d.rx_used);
     }
 #endif
+    now_us = esp_timer_get_time();
     if (d.rx_used)
     {
         /* A Modbus exception reply is 5 bytes instead of the normal length. */
         if (d.rx_used >= 2 && d.rx[1] == (uint8_t)(d.tx[1] | 0x80u))
         {
             d.rx_expected = 5;
+            d.transaction.expected_rx_bytes = 5;
         }
         if (d.rx_used >= d.rx_expected)
         {
@@ -749,6 +886,9 @@ static void receive_pending(int64_t now_us)
 
 static void restart_commissioning(void)
 {
+    d.retry_operation = V20_OP_NONE;
+    d.retry_attempt = 0;
+    d.verify_unknown_write = false;
     d.latched_fault = false;
     d.transport_error = false;
     d.operation_seen = d.operation_lost = false;
@@ -846,6 +986,29 @@ bool V20Modbus_RequestFaultAck(void)
 void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
 {
     const int64_t now_us = esp_timer_get_time();
+    if (d.transaction.pending && d.previous_service_us > 0)
+    {
+        const uint32_t gap = (uint32_t)(now_us - d.previous_service_us);
+        if (gap > d.transaction.max_service_gap_us) d.transaction.max_service_gap_us = gap;
+    }
+    d.previous_service_us = now_us;
+#if !SIMULATION_MODE
+    uart_event_t event;
+    uint32_t uart_errors = 0;
+    for (unsigned i = 0; i < 16u && uart_events && xQueueReceive(uart_events, &event, 0) == pdTRUE; ++i)
+    {
+        if (event.type == UART_FIFO_OVF) uart_errors |= 1u;
+        else if (event.type == UART_BUFFER_FULL) uart_errors |= 2u;
+        else if (event.type == UART_PARITY_ERR) uart_errors |= 4u;
+        else if (event.type == UART_FRAME_ERR) uart_errors |= 8u;
+    }
+    if (uart_errors && d.phase == PH_WAIT_RESPONSE)
+    {
+        d.transaction.uart_error_flags |= uart_errors;
+        fail_transaction(V20_COMM_UART_RX_FAILED, now_us, 0, 0);
+        return;
+    }
+#endif
 #if SIMULATION_MODE
     portENTER_CRITICAL(&simulation_lock);
     uint32_t inputs = simulation_inputs;
@@ -888,11 +1051,27 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     }
     if (d.phase == PH_RECOVERY)
     {
+        /* Late noise must not extend a running retry beyond its watchdog
+         * budget. Fault immediately even while draining the quiet interval. */
+        if (d.retry_operation != V20_OP_NONE && d.demand_run &&
+            now_us - d.last_process_data_tx_us +
+            (int64_t)(V20_RESPONSE_TIMEOUT_MS + 30u) * US_PER_MS >= 450000)
+        {
+            d.final_comm_errors++;
+            d.retry_operation = V20_OP_NONE;
+            d.retry_attempt = 0;
+            d.armed = d.demand_run = false;
+            d.latched_fault = d.transport_error = true;
+            d.pending_stop = true;
+        }
 #if !SIMULATION_MODE
         uint8_t discard[V20_MAX_FRAME];
         const int received = uart_read_bytes(MODBUS_UART_PORT, discard, sizeof(discard), 0);
         if (received > 0)
+        {
+            d.late_replies++;
             d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
+        }
 #endif
         if (now_us < d.bus_quiet_until_us)
             return;
@@ -915,12 +1094,42 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         d.last_error != V20_COMM_STALE_RESPONSE)
     {
         d.errors++;
+        d.final_comm_errors++;
         record_error(V20_COMM_STALE_RESPONSE, 0, 0);
         d.armed = false;
         d.latched_fault = d.diagnostics_complete;
     }
     if (now_us < d.bus_quiet_until_us)
         return;
+    if (d.retry_operation != V20_OP_NONE)
+    {
+        if (d.diagnostics_complete && (((SIMULATION_MODE || V20_RUN_COMMISSIONED) && d.pending_stop) ||
+            !safety_ok || d.recheck_pending))
+        {
+            d.retry_operation = V20_OP_NONE;
+            d.retry_attempt = 0;
+        }
+        else
+        {
+            /* Recheck the budget after quarantine, including any late bytes. */
+            if (d.demand_run && now_us - d.last_process_data_tx_us +
+                (int64_t)(V20_RESPONSE_TIMEOUT_MS + 30u) * US_PER_MS >= 450000)
+            {
+                d.final_comm_errors++;
+                d.retry_operation = V20_OP_NONE;
+                d.retry_attempt = 0;
+                d.armed = d.demand_run = false;
+                d.latched_fault = true;
+                d.pending_stop = true;
+            }
+            else
+            {
+                d.retries++;
+                (void)send_operation(d.retry_operation, false, 0, now_us);
+                return;
+            }
+        }
+    }
     if (d.bootstrap_next != V20_OP_NONE)
     {
         (void)send_operation(d.bootstrap_next, false, 0, now_us);
@@ -956,22 +1165,29 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
         return;
     }
+    if (d.verify_unknown_write)
+    {
+        d.verify_unknown_write = false;
+        (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
+        return;
+    }
+    /* Cyclic STW/HSW writes are independent of setpoint changes. Schedule
+     * from accepted TX time, not reply completion, to avoid accumulating RTT.
+     * An enabled stopped request includes controlled OFF1 ramp-down. */
+    const uint32_t stopped_period_ms = request != NULL && request->permissive && !request->coast &&
+        V20_STOP_HEARTBEAT_MS > V20_COMMAND_PERIOD_MS ? V20_COMMAND_PERIOD_MS : V20_STOP_HEARTBEAT_MS;
+    const uint32_t period_ms = d.demand_run ? V20_COMMAND_PERIOD_MS : stopped_period_ms;
+    if (!d.latched_fault && d.configured &&
+        now_us - d.last_process_data_tx_us >= (int64_t)period_ms * US_PER_MS)
+    {
+        (void)send_operation(V20_OP_WRITE_CONTROL, d.demand_run,
+                             d.demand_run ? request->output : 0, now_us);
+        return;
+    }
     if (!d.status_valid || now_us - d.last_status_us >= (int64_t)V20_STATUS_PERIOD_MS * US_PER_MS)
     {
         (void)send_operation(V20_OP_READ_STATUS, false, 0, now_us);
         return;
-    }
-    if (d.latched_fault)
-        return;
-    if (d.demand_run)
-    {
-        if (now_us - d.last_command_us >= (int64_t)V20_COMMAND_PERIOD_MS * US_PER_MS)
-            (void)send_operation(V20_OP_WRITE_CONTROL, true, request->output, now_us);
-    }
-    else if (d.configured &&
-             now_us - d.last_command_us >= (int64_t)V20_STOP_HEARTBEAT_MS * US_PER_MS)
-    {
-        (void)send_operation(V20_OP_WRITE_CONTROL, false, 0, now_us);
     }
 }
 
@@ -1042,8 +1258,22 @@ void V20Modbus_GetStatus(MotorStatus *status)
         .last_error_register = d.last_error_register,
         .last_error_expected = d.last_error_expected,
         .last_error_actual = d.last_error_actual,
+        .last_status_response_ms = (uint32_t)(d.last_status_us / US_PER_MS),
+        .last_status_request_ms = (uint32_t)(d.status_request_us / US_PER_MS),
+        .transaction = d.transaction,
+        .last_valid_response_ms = (uint32_t)(d.last_valid_response_us / US_PER_MS),
+        .last_valid_process_data_ms = (uint32_t)(d.last_process_data_us / US_PER_MS),
+        .last_process_data_tx_ms = (uint32_t)(d.last_process_data_tx_us / US_PER_MS),
+        .max_process_data_gap_ms = d.max_process_data_gap_ms,
+        .max_response_gap_ms = d.max_response_gap_ms,
+        .max_process_data_tx_gap_ms = d.max_process_data_tx_gap_ms,
+        .valid_reads = d.valid_reads, .valid_writes = d.valid_writes,
+        .crc_errors = d.crc_errors, .invalid_frames = d.invalid_frames,
+        .late_replies = d.late_replies, .exceptions = d.exceptions, .requested_hz = d.requested_hz,
         .errors = d.errors,
         .timeouts = d.timeouts,
+        .retries = d.retries, .recovered_transactions = d.recovered_transactions,
+        .final_comm_errors = d.final_comm_errors,
         .last_success_age_ms =
             d.last_rx_success_us > 0 ? (uint32_t)(age_us / US_PER_MS) : UINT32_MAX,
         .exception_code = d.exception_code,

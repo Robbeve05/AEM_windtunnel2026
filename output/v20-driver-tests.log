@@ -1,0 +1,12 @@
+test_v20.c
+V20Modbus.c
+Generating Code...
+Assertion failed: fake.good_status_responses > 0, file C:\Software\AEM_windtunnel2026\ESP32\tests\test_v20.c, line 120
+FAIL v20 (compile or execution; exit -1073740791)
+test_v20.c
+V20Modbus.c
+Generating Code...
+PASS UART initialization errors, CRC and read-only configuration diagnostics
+PASS default uncommissioned firmware cannot arm or transmit RUN
+PASS executable v20_inhibited
+1/2 host executables passed.

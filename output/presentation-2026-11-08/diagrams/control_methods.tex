@@ -1,0 +1,18 @@
+\begin{tikzpicture}[x=1cm,y=1cm,
+unit/.style={draw=AvansBlue,thick,rounded corners=2pt,align=center,font=\small,minimum height=.85cm},
+flow/.style={-{Stealth[length=2mm]},thick},lab/.style={font=\scriptsize,align=center}]
+\node[anchor=west,text=AvansRed,font=\normalsize\bfseries] at (-.8,.85) {A. Frequency PI -- selected};
+\node[unit,text width=2.2cm] (a1) at (.7,0) {Airspeed error\\ISA PI};
+\node[unit,text width=2.2cm] (a2) at (4.1,0) {Frequency FF\\Correction [Hz]};
+\node[unit,text width=2.2cm] (a3) at (7.5,0) {Limit / ramp\\Modbus [Hz]};
+\node[unit,text width=1.9cm] (a4) at (10.8,0) {V20 + fan};
+\draw[flow] (a1)--node[lab,above]{Hz}(a2); \draw[flow] (a2)--(a3); \draw[flow] (a3)--(a4);
+\draw[flow] (a4.south)--++(0,-.6)-|node[lab,pos=.6,below]{Filtered Pitot feedback}(a1.south);
+\node[anchor=west,text=AvansBlue,font=\normalsize\bfseries] at (-.8,-1.55) {B. Torque-model PI -- experimental};
+\node[unit,text width=2.2cm] (b1) at (.7,-2.45) {Airspeed error\\ISA PI [Nm]};
+\node[unit,text width=2.2cm] (b2) at (4.1,-2.45) {Inertia + load FF\\Slip inversion};
+\node[unit,text width=2.2cm] (b3) at (7.5,-2.45) {Limit / ramp\\Modbus [Hz]};
+\node[unit,text width=1.9cm] (b4) at (10.8,-2.45) {Same V20 + fan};
+\draw[flow] (b1)--node[lab,above]{Nm}(b2); \draw[flow] (b2)--node[lab,above]{Hz}(b3); \draw[flow] (b3)--(b4);
+\draw[flow] (b4.south)--++(0,-.6)-|node[lab,pos=.6,below]{Filtered Pitot feedback}(b1.south);
+\end{tikzpicture}

@@ -36,6 +36,7 @@
 // File-local variables
 
 static portMUX_TYPE config_lock = portMUX_INITIALIZER_UNLOCKED;
+static PitotDiagnostics diagnostics;
 static float filter_hz = PITOT_FILTER_HZ;
 static uint32_t error_count, sequence_count;
 static bool pitot_communication_ok;
@@ -57,6 +58,10 @@ static float sim_drive, sim_velocity;
 
 bool SensorLib_Init(void)
 {
+    portENTER_CRITICAL(&config_lock);
+    memset(&diagnostics, 0, sizeof(diagnostics));
+    diagnostics.pitot_status_bits = 255;
+    portEXIT_CRITICAL(&config_lock);
     error_count = sequence_count = zero_samples = samples_in_window = 0;
     window_pressure = window_temperature = 0.0f;
     zero_sum = 0;
@@ -110,7 +115,7 @@ void Simulation_SetOutput(float value)
 #endif
 }
 
-/* SensorTask only. Return true whenever a new valid 10-sample average exists.
+/* SensorTask only. Return true whenever a new valid five-sample average exists.
  * Even during calibration, publish a fresh invalid sample to the queue. */
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -132,7 +137,13 @@ bool SensorLib_PitotStep(Sample *out)
     valid_read = true;
 #else
     uint8_t raw[4];
-    if (I2CBus_TryRead(PITOT_ADDRESS, raw, sizeof(raw)) && !(raw[0] >> 6))
+    const bool received = I2CBus_TryRead(PITOT_ADDRESS, raw, sizeof(raw));
+    portENTER_CRITICAL(&config_lock);
+    diagnostics.pitot_status_bits = received ? raw[0] >> 6 : 255;
+    if (received)
+        diagnostics.pitot_raw_count = (uint16_t)(((raw[0] & 0x3fu) << 8) | raw[1]);
+    portEXIT_CRITICAL(&config_lock);
+    if (received && !(raw[0] >> 6))
     {
         const uint32_t count = (((uint32_t)raw[0] & 0x3fu) << 8) | raw[1];
         if (count >= 1638u && count <= 14746u)
@@ -152,12 +163,14 @@ bool SensorLib_PitotStep(Sample *out)
     {
         portENTER_CRITICAL(&config_lock);
         pitot_communication_ok = false;
+        diagnostics.pitot_read_ok = diagnostics.pitot_valid = false;
         portEXIT_CRITICAL(&config_lock);
         error_count++;
         return false;
     }
     portENTER_CRITICAL(&config_lock);
     pitot_communication_ok = true;
+    diagnostics.pitot_read_ok = true;
     portEXIT_CRITICAL(&config_lock);
     window_pressure += p;
     window_temperature += temp;
@@ -165,10 +178,12 @@ bool SensorLib_PitotStep(Sample *out)
     if (samples_in_window < PITOT_AVERAGE_SAMPLES)
         return false;
 
+    float raw_average = 0.0f;
     /* Five 100 Hz sensor slots per published 20 Hz average. */
     if (valid_read)
     {
         p = window_pressure / PITOT_AVERAGE_SAMPLES;
+        raw_average = p;
         temperature_c = window_temperature / PITOT_AVERAGE_SAMPLES;
         window_pressure = window_temperature = 0.0f;
         samples_in_window = 0;
@@ -214,6 +229,19 @@ bool SensorLib_PitotStep(Sample *out)
     out->sequence = ++sequence_count;
     out->tick = xTaskGetTickCount();
     out->valid = sample_valid && isfinite(out->value);
+    portENTER_CRITICAL(&config_lock);
+    diagnostics.pitot_raw_pressure_pa = raw_average;
+    diagnostics.pitot_zero_offset_pa = zero_pressure;
+    diagnostics.pitot_corrected_pressure_pa = raw_average - zero_pressure;
+    diagnostics.pitot_filtered_pressure_pa = filtered_pressure;
+    diagnostics.pitot_pressure_pa = pressure_pa;
+    diagnostics.pitot_airspeed_ms = out->value;
+    diagnostics.pitot_zero_samples = zero_samples;
+    diagnostics.pitot_calibrated = zero_samples >= PITOT_ZERO_SAMPLES;
+    diagnostics.pitot_sample_seq = out->sequence;
+    diagnostics.pitot_tick = out->tick;
+    diagnostics.pitot_valid = out->valid;
+    portEXIT_CRITICAL(&config_lock);
     return true;
 }
 
@@ -346,4 +374,12 @@ bool SensorLib_TapsStep(Sample *out)
     (void)out;
     return false;
 #endif
+}
+
+void SensorLib_GetPitotDiagnostics(PitotDiagnostics *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&config_lock);
+    *out = diagnostics;
+    portEXIT_CRITICAL(&config_lock);
 }

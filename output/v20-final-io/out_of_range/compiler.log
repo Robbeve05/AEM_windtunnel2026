@@ -1,0 +1,9 @@
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:36:22:[m[K [01;31m[Kerror: [m[Kstatic assertion failed: "Output index must be 0..7"
+   36 | #define CHECK_BIT(n) [01;31m[K_Static_assert[m[K((n) >= 0 && (n) <= 7, "Output index must be 0..7")
+      |                      [01;31m[K^~~~~~~~~~~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:38:1:[m[K [01;36m[Knote: [m[Kin expansion of macro '[01m[KCHECK_BIT[m[K'
+   38 | [01;36m[KCHECK_BIT[m[K(RED_INDICATOR_DO_BIT);
+      | [01;36m[K^~~~~~~~~[m[K
+[01m[KC:\Software\AEM_windtunnel2026\ESP32\src\DigitalOutputs.c:45:1:[m[K [01;31m[Kerror: [m[Kstatic assertion failed: "All eight output assignments must be unique"
+   45 | [01;31m[K_Static_assert[m[K((OUTPUT_BIT(VFD_ENABLE_DO_BIT) | OUTPUT_BIT(RED_INDICATOR_DO_BIT) |
+      | [01;31m[K^~~~~~~~~~~~~~[m[K

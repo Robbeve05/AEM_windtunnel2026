@@ -26,10 +26,13 @@ typedef struct
     unsigned chunk;
     uint8_t rx[32];
     size_t rx_size, rx_offset;
-    int64_t last_tx_us;
+    int64_t last_tx_us, rx_available_us;
+    uint32_t enqueue_delay_us, response_delay_us;
 } Fake;
 
 static Fake fake;
+static Queue uart_event_queue;
+static int injected_uart_event;
 static int64_t now_us;
 
 int64_t esp_timer_get_time(void)
@@ -77,8 +80,24 @@ esp_err_t uart_driver_install(int port, int rx_size, int tx_size, int queue_size
                               int flags)
 {
     assert(port == MODBUS_UART_PORT && rx_size == 256 && tx_size == 256);
-    assert(queue_size == 0 && queue == NULL && flags == 0);
+    assert(queue_size == 16 && queue != NULL && flags == 0);
+    *(QueueHandle_t *)queue = &uart_event_queue;
     return init_result();
+}
+
+int xQueueReceive(QueueHandle_t queue, void *event, TickType_t wait)
+{
+    assert(queue==&uart_event_queue && wait==0);
+    if (!injected_uart_event) return pdFALSE;
+    *(uart_event_t *)event=(uart_event_t){.type=injected_uart_event};
+    injected_uart_event=0;
+    return pdTRUE;
+}
+esp_err_t uart_get_buffered_data_len(int port, size_t *size)
+{
+    assert(port==MODBUS_UART_PORT);
+    *size=fake.rx_size-fake.rx_offset;
+    return ESP_OK;
 }
 
 esp_err_t uart_driver_delete(int port) { assert(port == MODBUS_UART_PORT); return ESP_OK; }
@@ -105,7 +124,9 @@ int uart_write_bytes(int port, const void *data, size_t length)
     const uint8_t *tx = data;
     assert(port == MODBUS_UART_PORT && length >= 8);
     assert(now_us - fake.last_tx_us >= MODBUS_SILENCE_US);
+    now_us += fake.enqueue_delay_us;
     fake.last_tx_us = now_us;
+    fake.rx_available_us = now_us + fake.response_delay_us;
     uint16_t crc = V20Modbus_Crc16(tx, length - 2);
     assert(tx[length - 2] == (uint8_t)crc && tx[length - 1] == (uint8_t)(crc >> 8));
     assert(tx[0] == MODBUS_SLAVE_ADDRESS);
@@ -197,6 +218,7 @@ int uart_read_bytes(int port, void *data, unsigned length, TickType_t wait)
     assert(port == MODBUS_UART_PORT && wait == 0);
     if (fake.fail_read)
         return -1;
+    if (now_us < fake.rx_available_us) return 0;
     size_t count = fake.rx_size - fake.rx_offset;
     if (count > length)
         count = length;
@@ -241,6 +263,7 @@ static void reset_mock(void)
 {
     fake = (Fake){.reference = 5000, .watchdog = 1000, .status = 0x0231};
     now_us = 1000000;
+    injected_uart_event=0;
 }
 
 static void boot(void)
@@ -275,6 +298,8 @@ static void test_nonrunning_wait_heartbeat(void)
     MotorRequest r = request(false, 0);
     pump(&r, 40);
     MotorStatus current = status();
+    for (unsigned i=0; i<8 && !current.control_word_acknowledged_valid; ++i)
+    { step(&r,true,true); current=status(); }
     assert(current.control_word_requested_valid &&
            current.control_word_acknowledged_valid);
     assert(current.control_word_requested == 0x047E &&
@@ -315,6 +340,154 @@ static void recover(void)
     assert(fake.stw == 0x047f && fake.hsw == 8192);
 }
 
+static void test_eb31_start_handshake(void)
+{
+    boot();
+    MotorRequest r=request(false,0);
+    fake.status=0xeb31; pump(&r,12);
+    MotorStatus m=status();
+    assert(m.ready && m.ok && !m.operation_enabled && !m.off2_active && !m.switch_on_inhibited);
+    assert(!m.watchdog_config_known && !m.watchdog_config_valid);
+    assert(fake.stw==0x047e && V20Modbus_Arm());
+    r.run=true; r.permissive=true;
+    run_until_command(&r);
+    assert(fake.stw==0x047f && fake.hsw==0);
+    fake.status=0xeb37; pump(&r,12);
+    assert(status().operation_enabled && status().run_authorized);
+    V20Modbus_Disarm(); r.run=false; pump(&r,12);
+    unsigned runs=fake.run_commands;
+    r.run=true; pump(&r,12);
+    assert(fake.run_commands==runs); /* No implicit re-arm. */
+    puts("PASS exact EB31 OFF1 -> physical-arm RUN/zero -> enabled EB37, no implicit restart");
+}
+
+static void test_cyclic_controlled_stop(void)
+{
+    boot(); MotorRequest r=request(true,50); assert(V20Modbus_Arm());
+    run_until_command(&r);
+    V20Modbus_Disarm(); r.run=false; r.permissive=true; fake.actual=8192;
+    unsigned commands_before=fake.commands, runs=fake.run_commands;
+    int64_t previous=0; uint32_t max_gap=0;
+    for(unsigned i=0;i<1000;++i)
+    {
+        step(&r,true,true);
+        if(fake.commands!=commands_before)
+        {
+            if(previous && (uint32_t)((now_us-previous)/1000)>max_gap)
+                max_gap=(uint32_t)((now_us-previous)/1000);
+            previous=now_us; commands_before=fake.commands;
+            assert(fake.stw==0x047e && fake.hsw==0);
+        }
+    }
+    assert(max_gap<=V20_COMMAND_PERIOD_MS+CONTROL_PERIOD_US/1000u);
+    assert(fake.run_commands==runs && status().errors==0 && status().valid_reads>10);
+    assert(!V20Modbus_StopConfirmed(0,.1f)); /* Frequency is still nonzero. */
+    printf("PASS 10s controlled STOP, cyclic OFF1/zero gap=%lu ms, status polling continues\n",(unsigned long)max_gap);
+}
+
+static void test_transaction_timing_and_uart_errors(void)
+{
+    boot(); MotorRequest r=request(true,50); assert(V20Modbus_Arm());
+    fake.enqueue_delay_us=7000; fake.response_delay_us=70000;
+    unsigned before=fake.run_commands;
+    while(fake.run_commands==before) step(&r,true,true);
+    MotorStatus m=status();
+    const uint32_t id=m.transaction.id;
+    assert(m.transaction.pending && m.transaction.type==V20_OP_WRITE_CONTROL);
+    assert(m.transaction.enqueue_us==7000);
+    assert(m.transaction.start_ms==(uint32_t)(now_us/1000));
+    assert(m.transaction.deadline_ms-m.transaction.start_ms==V20_RESPONSE_TIMEOUT_MS);
+    assert(m.transaction.pdu_address==99 && m.transaction.register_count==2);
+    pump(&r,6); assert(status().transaction.pending && status().timeouts==0);
+    step(&r,true,true); m=status();
+    assert(m.transaction.id==id && !m.transaction.pending && !m.transaction.write_unconfirmed);
+    assert(m.transaction.rtt_us==70000 && m.transaction.rx_bytes==8 && m.transaction.result==V20_COMM_NONE);
+    /* Partial echo at the deadline cannot be treated as a successful write. */
+    fake.enqueue_delay_us=fake.response_delay_us=0;
+    before=fake.run_commands; while(fake.run_commands==before) step(&r,true,true);
+    fake.rx_size=3;
+    step(&r,true,true); m=status();
+    assert(m.transaction.pending && m.transaction.rx_bytes==3 &&
+           !memcmp(m.transaction.rx_frame,fake.rx,3));
+    pump(&r,7); m=status();
+    assert(m.timeouts==1 && m.transaction.write_unconfirmed && m.transaction.rx_bytes==3);
+    assert(m.transaction.result==V20_COMM_TIMEOUT && !m.communication_ok && m.run_locked);
+    /* Repeated lost RUN echoes on the same driver instance. Each recovery
+     * requires an explicit recheck and arm through the existing test fixture. */
+    for (unsigned episode = 0; episode < 32; ++episode)
+    {
+        recover();
+        before = fake.run_commands;
+        while (fake.run_commands == before)
+            step(&r, true, true);
+        fake.rx_size = fake.rx_offset = 0;
+        unsigned timeouts = status().timeouts;
+        pump(&r, 8);
+        m = status();
+        assert(m.timeouts == timeouts + 1 && m.transaction.result == V20_COMM_TIMEOUT);
+        assert(m.transaction.write_unconfirmed && m.transaction.rx_bytes == 0 && m.run_locked);
+    }
+    const int uart_error_events[]={UART_FIFO_OVF,UART_BUFFER_FULL,UART_PARITY_ERR,UART_FRAME_ERR};
+    for(unsigned i=0;i<4;++i)
+    {
+        boot(); r=request(true,50); assert(V20Modbus_Arm());
+        before=fake.run_commands; while(fake.run_commands==before) step(&r,true,true);
+        injected_uart_event=uart_error_events[i]; step(&r,true,true); m=status();
+        assert(m.transaction.result==V20_COMM_UART_RX_FAILED && m.transaction.uart_error_flags==(1u<<i));
+        assert(m.transaction.write_unconfirmed && !m.communication_ok && m.run_locked);
+    }
+    puts("PASS measured enqueue/70ms response, unchanged 80ms window, partial ACK timeout and UART errors fail closed");
+}
+
+static void test_constant_process_data(void)
+{
+    boot();
+    MotorRequest r = request(true, 100);
+    assert(V20Modbus_Arm());
+    unsigned writes = fake.run_commands;
+    int64_t previous_tx = 0;
+    uint32_t max_tx_gap = 0;
+    /* Ten minutes, constant 50 Hz, no new HMI commands. */
+    for (unsigned i=0; i<60000; ++i)
+    {
+        step(&r, true, true);
+        if (fake.run_commands != writes)
+        {
+            if (previous_tx > 0)
+            {
+                uint32_t gap=(uint32_t)((now_us-previous_tx)/1000);
+                if (gap > max_tx_gap) max_tx_gap=gap;
+            }
+            previous_tx=now_us;
+            writes=fake.run_commands;
+        }
+    }
+    MotorStatus m=status();
+    assert(writes >= 600000u/(V20_COMMAND_PERIOD_MS + CONTROL_PERIOD_US/1000u)-5u &&
+           max_tx_gap<=V20_COMMAND_PERIOD_MS + CONTROL_PERIOD_US/1000u);
+    assert(m.valid_reads>1000 && m.valid_writes >= 600000u/(V20_COMMAND_PERIOD_MS + CONTROL_PERIOD_US/1000u)-5u);
+    /* Lifetime maxima also include stopped/bootstrap/transition intervals. */
+    assert(m.max_process_data_gap_ms <= V20_STOP_HEARTBEAT_MS + 4u * (CONTROL_PERIOD_US/1000u));
+    assert(m.max_response_gap_ms <= V20_STATUS_PERIOD_MS + 4u * (CONTROL_PERIOD_US/1000u));
+    assert(m.last_valid_response_ms && m.last_valid_process_data_ms && m.last_process_data_tx_ms);
+    assert(m.requested_hz==50 && m.errors==0 && m.timeouts==0);
+    /* A successful read is not a successful process write; missing echo never counts. */
+    while (fake.run_commands==writes) step(&r,true,true);
+    unsigned confirmed=status().valid_writes;
+    uint8_t delayed[32];
+    const size_t delayed_size=fake.rx_size;
+    memcpy(delayed,fake.rx,delayed_size);
+    fake.rx_size=fake.rx_offset=0;
+    pump(&r,8);
+    assert(status().timeouts==1 && status().valid_writes==confirmed);
+    assert(!status().run_authorized && status().run_locked);
+    memcpy(fake.rx,delayed,delayed_size); fake.rx_size=delayed_size; fake.rx_offset=0;
+    step(&r,true,true);
+    assert(status().late_replies==1 && status().valid_writes==confirmed);
+    printf("PASS 10min constant 50Hz, max TX gap=%lu ms, process ACKs distinguished from reads/timeouts\n",
+           (unsigned long)max_tx_gap);
+}
+
 static void test_run_stop(void)
 {
     boot();
@@ -342,7 +515,8 @@ static void test_run_stop(void)
     assert(fake.stw == 0x047e && fake.hsw == 0);
     assert(!V20Modbus_StopConfirmed(stopped_us, .1f)); /* Speed still nonzero. */
     fake.actual = 0;
-    pump(&r, 30);
+    for (unsigned i=0; i<40 && !V20Modbus_StopConfirmed(stopped_us,.1f); ++i)
+        step(&r,true,true);
     assert(V20Modbus_StopConfirmed(stopped_us, .1f));
     assert(!V20Modbus_StopConfirmed(now_us, .1f)); /* Old status is insufficient. */
     assert(!V20Modbus_StopConfirmed(stopped_us, NAN));
@@ -483,14 +657,14 @@ static void test_nonrunning_status_transitions(void)
     boot();
     MotorRequest r = request(false, 0);
     fake.status = 0x0233;
-    pump(&r, 12);
+    pump(&r, 16);
     MotorStatus current = status();
     assert(current.ready_to_switch_on && current.ready_to_operate &&
            !current.operation_enabled && current.operational_ready);
     assert(!current.run_authorized && fake.run_commands == 0);
 
     fake.status = 0x0237;
-    pump(&r, 12);
+    pump(&r, 16);
     current = status();
     assert(current.ready_to_switch_on && current.ready_to_operate &&
            current.operation_enabled && !current.run_authorized);
@@ -531,11 +705,77 @@ static void test_initial_status_timeout_retries_read_only(void)
 #endif
 }
 
+static void test_bounded_read_retries(void)
+{
+    for (unsigned damage = 1; damage <= 5; damage += 4)
+    {
+        boot(); MotorRequest r = request(false, 0);
+        /* Damage exactly one status read, including applied/lost response. */
+        for (unsigned i=0; i<50; ++i)
+        {
+            if (status().transaction.pending && status().transaction.type == V20_OP_READ_STATUS) break;
+            step(&r,true,true);
+        }
+        assert(status().transaction.pending && status().transaction.type == V20_OP_READ_STATUS);
+        if (damage == 1) fake.rx_size = fake.rx_offset = 0;
+        else fake.rx[fake.rx_size-1] ^= 1;
+        unsigned runs = fake.run_commands;
+        pump(&r,45);
+        MotorStatus m=status();
+        assert(m.retries==1 && m.recovered_transactions==1 && m.final_comm_errors==0);
+        assert(!m.run_authorized && !m.run_locked && fake.run_commands==runs);
+    }
+#if V20_RUN_COMMISSIONED
+    /* A running read can recover without replaying a captured control word. */
+    boot(); MotorRequest running=request(true,50);assert(V20Modbus_Arm());
+    while (!(status().transaction.pending && status().transaction.type==V20_OP_READ_STATUS))
+        step(&running,true,true);
+    fake.rx_size=fake.rx_offset=0;
+    pump(&running,45);
+    assert(status().retries==1 && status().recovered_transactions==1 && !status().run_locked);
+    assert(status().max_process_data_tx_gap_ms < 500);
+    /* Noise during quarantine cannot defer the fault beyond the watchdog budget. */
+    boot();running=request(true,50);assert(V20Modbus_Arm());
+    while (!(status().transaction.pending && status().transaction.type==V20_OP_READ_STATUS))
+        step(&running,true,true);
+    fake.rx_size=fake.rx_offset=0; pump(&running,8);
+    for (unsigned i=0;i<40 && !status().run_locked;++i)
+    {
+        fake.rx[0]=0xff;fake.rx_size=1;fake.rx_offset=0;
+        step(&running,true,true);
+    }
+    assert(status().run_locked && !V20Modbus_Arm());
+    assert(now_us - (int64_t)status().last_process_data_tx_ms*1000 < 450000);
+    /* Fail both attempts, then recover wire health: the fault stays latched. */
+    boot(); MotorRequest r=request(false,0);
+    while (!(status().transaction.pending && status().transaction.type==V20_OP_READ_STATUS))
+        step(&r,true,true);
+    fake.fail_read=true; pump(&r,45);
+    MotorStatus m=status();assert(m.run_locked && m.final_comm_errors>0 && m.retries==1);
+    fake.fail_read=false; r.run=true; pump(&r,80);
+    assert(status().run_locked && !V20Modbus_Arm() && fake.run_commands==0);
+    /* STOP, E-stop and stale safety during read quarantine cannot replay RUN. */
+    for (unsigned cause=0;cause<3;++cause)
+    {
+        boot(); r=request(true,50);assert(V20Modbus_Arm());
+        while (!(status().transaction.pending && status().transaction.type==V20_OP_READ_STATUS))
+            step(&r,true,true);
+        fake.rx_size=fake.rx_offset=0;
+        pump(&r,8);unsigned runs=fake.run_commands;
+        if (cause==0) {r.run=false;V20Modbus_Disarm();}
+        for (unsigned i=0;i<60;i++) step(&r,cause!=2,cause!=1);
+        assert(fake.run_commands==runs && !status().run_authorized);
+    }
+#endif
+    puts("PASS single read timeout/CRC recovery counters, bounded outage, STOP/E-stop/stale-request cancellation, no retry START");
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Test entry point
 
 int main(void)
 {
+    test_bounded_read_retries();
     assert(V20Modbus_Crc16((const uint8_t *)"123456789", 9) == 0x4b37);
     assert(V20Modbus_Crc16(NULL, 0) == 0);
     V20Modbus_GetStatus(NULL);
@@ -585,6 +825,10 @@ int main(void)
     test_initial_status_exception_stays_read_only();
     test_initial_status_timeout_retries_read_only();
     test_nonrunning_wait_heartbeat();
+    test_eb31_start_handshake();
+    test_cyclic_controlled_stop();
+    test_transaction_timing_and_uart_errors();
+    test_constant_process_data();
     test_run_stop();
     test_errors();
     test_interlocks();

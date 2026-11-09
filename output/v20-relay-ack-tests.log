@@ -1,0 +1,22 @@
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_recovery
+test_v20_recovery.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model
+PASS executable v20_fault_ack
+test_v20_simulation.c
+V20Modbus.c
+V20Simulation.c
+StateMachine.c
+Generating Code...
+PASS real driver + state machine + relay-dependent simulated V20: boot/reset/prepare/start/enabled/stop, independent OFF1/OFF3, drive fault ACK and reboot
+PASS executable v20_simulation
+3/3 host executables passed.

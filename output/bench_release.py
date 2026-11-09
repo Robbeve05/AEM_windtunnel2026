@@ -1,0 +1,4 @@
+from pathlib import Path
+p=Path('ESP32/include/AppConfig.h');s=p.read_text().replace('#define SAFETY_IO_COMMISSIONED 0','#define SAFETY_IO_COMMISSIONED 1').replace('#define V20_RUN_COMMISSIONED 0','#define V20_RUN_COMMISSIONED 1').replace('#define MOTOR_MODEL_TORQUE_TO_V20_ENABLED (0)','#define MOTOR_MODEL_TORQUE_TO_V20_ENABLED (1)');s=s.replace('// [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1','// Bench release requested by operator, motor disconnected (2026-11-08).\n// Physical installation validation remains outstanding.\n// [Safety-critical flag] 0 inhibits uncommissioned I/O and blocks READY; 1');p.write_text(s)
+p=Path('ESP32/tests/run_host_tests.ps1');s=p.read_text().replace("Flags = '/DHOST_OUTPUT_LOCKS'", "Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=0'",1);p.write_text(s)
+p=Path('ESP32/tests/test_v20.c');s=p.read_text().replace('fake.status &= (uint16_t)~8u;','fake.status &= 0xfff7u;');p.write_text(s)

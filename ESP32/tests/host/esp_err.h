@@ -7,3 +7,5 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_STATE -2
 #define ESP_ERROR_CHECK(x) assert((x)==ESP_OK)
 #define ESP_ERR_NO_MEM -3
+
+#define ESP_ERR_TIMEOUT -4

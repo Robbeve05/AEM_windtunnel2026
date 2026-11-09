@@ -1,0 +1,4 @@
+from pathlib import Path
+p=Path('ESP32/tests/test_control.c');s=p.read_text().replace('    .reference_value = 5000','    .stopped_command_acknowledged = true, .reference_value = 5000');s=s.replace('    c->motor = drive;', '    c->motor = drive;\n    c->motor.operation_enabled = false;');p.write_text(s)
+p=Path('ESP32/tests/test_v20_recovery.c');s=p.read_text().replace('.v20_diagnostics_complete=true,.v20_configuration_valid=true,.v20_run_commissioned=true};','.v20_diagnostics_complete=true,.v20_configuration_valid=true,.v20_run_commissioned=true,\n        .stop_command_acknowledged=true};');p.write_text(s)
+p=Path('ESP32/tests/test_v20_simulation.c');s=p.read_text().replace('.drive_operation_enabled=s.operation_enabled,','.drive_operation_enabled=s.operation_enabled,.stop_command_acknowledged=s.stopped_command_acknowledged,');p.write_text(s)
