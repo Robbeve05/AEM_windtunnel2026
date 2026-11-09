@@ -36,7 +36,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 // File-local variables
 
-QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry, safety_status,
+QueueHandle_t commands, pitot_samples, pressure_taps, motor_requests, motor_status, telemetry, safety_status,
     pi_heartbeat;
 /* Retained separately for existing STOP_REQUEST producers. */
 EventGroupHandle_t events;
@@ -102,11 +102,12 @@ static void CreateQueues(void)
     safety_status = xQueueCreate(1, sizeof(SafetySnapshot));
     pi_heartbeat = xQueueCreate(1, sizeof(PiHeartbeat));
     commands = xQueueCreate(16, sizeof(PiCommand));
-    sensors = xQueueCreate(1, sizeof(Sample));
+    pitot_samples = xQueueCreate(1, sizeof(PitotSample));
+    pressure_taps = xQueueCreate(1, sizeof(PressureTapSample));
     motor_requests = xQueueCreate(1, sizeof(MotorRequest));
     motor_status = xQueueCreate(1, sizeof(MotorStatus));
     telemetry = xQueueCreate(1, sizeof(Telemetry));
-    ESP_ERROR_CHECK(commands && sensors && motor_requests && motor_status && telemetry &&
+    ESP_ERROR_CHECK(commands && pitot_samples && pressure_taps && motor_requests && motor_status && telemetry &&
                             safety_status && pi_heartbeat
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);

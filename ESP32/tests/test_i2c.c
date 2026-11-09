@@ -69,6 +69,8 @@ int main(void) {
     assert(I2CBus_GetDiagnostics(0x20,&d) && d.last_wait_us==350 && d.last_us==100);
     inject(ESP_FAIL,ESP_OK,100);
     assert(!I2CBus_ReadRegister(0x20,1,data,1) && calls==1); /* no readback retry */
+    inject(ESP_FAIL,ESP_OK,100);
+    assert(!I2CBus_TryReadOnce(0x28,data,4) && calls==1);
     char wire[2048];assert(I2CBus_FormatDiagnostics(wire,sizeof(wire))>0);
     assert(I2CBus_FormatDiagnostics(wire,8)==-1);
     wire_model=true;int64_t begin=now;

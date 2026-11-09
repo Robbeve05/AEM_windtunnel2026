@@ -46,7 +46,7 @@ static int eTaskGetState(TaskHandle_t task) { (void)task; return eBlocked; }
 
 static Queue state_queue;
 static TickType_t now;
-QueueHandle_t telemetry = &state_queue, sensors, motor_requests, motor_status, safety_status, pi_heartbeat, commands;
+QueueHandle_t telemetry = &state_queue, pitot_samples, pressure_taps, motor_requests, motor_status, safety_status, pi_heartbeat, commands;
 EventGroupHandle_t handle_ThreadEventGroup;
 TaskHandle_t control_task_handle, sensor_task_handle, input_task_handle, pi_task_handle, heartbeat_task_handle;
 volatile bool ota_task_alive, ota_valid_task_alive;

@@ -4,8 +4,8 @@
 /*
  * PressureSensors.c
  *
- * Pitot ASPD-4525 and taps are owned only by SensorTask (Core 0).
- * One bounded I2C transaction every 10 ms, 5-point batch average.
+ * Pitot is owned by ControlTask (Core 1); taps by SensorTask (Core 0).
+ * One bounded Pitot transaction every 10 ms, 5-point rolling average.
  * Pressure tap acquisition is separately owned by SensorTask (Core 0).
  * Hardware I2C latency is NOT hard real-time: verify overruns on target.
  *
@@ -44,6 +44,8 @@ static float zero_pressure, filtered_pressure, pressure_pa, temperature_c;
 static double zero_sum;
 static uint32_t zero_samples, samples_in_window;
 static float window_pressure, window_temperature;
+static float pressure_window[PITOT_AVERAGE_SAMPLES], temperature_window[PITOT_AVERAGE_SAMPLES];
+static unsigned window_index;
 static int64_t previous_us;
 static bool sample_valid;
 #if SIMULATION_MODE
@@ -61,14 +63,17 @@ bool SensorLib_Init(void)
     portENTER_CRITICAL(&config_lock);
     memset(&diagnostics, 0, sizeof(diagnostics));
     diagnostics.pitot_status_bits = 255;
+    pitot_communication_ok = false;
     portEXIT_CRITICAL(&config_lock);
     error_count = sequence_count = zero_samples = samples_in_window = 0;
     window_pressure = window_temperature = 0.0f;
+    memset(pressure_window, 0, sizeof(pressure_window));
+    memset(temperature_window, 0, sizeof(temperature_window));
+    window_index = 0;
     zero_sum = 0;
     zero_pressure = filtered_pressure = pressure_pa = temperature_c = 0.0f;
     previous_us = 0;
     sample_valid = false;
-    pitot_communication_ok = false;
 #if SIMULATION_MODE
     sim_velocity = 0.0f;
 #endif
@@ -115,18 +120,21 @@ void Simulation_SetOutput(float value)
 #endif
 }
 
-/* SensorTask only. Return true whenever a new valid five-sample average exists.
- * Even during calibration, publish a fresh invalid sample to the queue. */
+/* ControlTask only: every attempt publishes a distinct sample, including invalid
+ * attempts. No queue is read here; filter/calibration state has one owner. */
 
 ///////////////////////////////////////////////////////////////////////////////
 // SensorLib_PitotStep()
 
-bool SensorLib_PitotStep(Sample *out)
+bool SensorLib_PitotStep(PitotSample *out)
 {
-    if (out == NULL)
-        return false;
+    if (!out) return false;
+    *out = (PitotSample){.sequence = ++sequence_count};
     float p = 0.0f, temp = 0.0f;
     bool valid_read = false;
+    uint16_t count = 0;
+    uint8_t status = 255;
+    uint32_t acquisition_us = 0;
 #if SIMULATION_MODE
     portENTER_CRITICAL(&config_lock);
     const float drive = sim_drive;
@@ -137,78 +145,57 @@ bool SensorLib_PitotStep(Sample *out)
     valid_read = true;
 #else
     uint8_t raw[4];
-    const bool received = I2CBus_TryRead(PITOT_ADDRESS, raw, sizeof(raw));
-    portENTER_CRITICAL(&config_lock);
-    diagnostics.pitot_status_bits = received ? raw[0] >> 6 : 255;
+    const int64_t started = esp_timer_get_time();
+    const bool received = I2CBus_TryReadOnce(PITOT_ADDRESS, raw, sizeof(raw));
+    acquisition_us = (uint32_t)(esp_timer_get_time() - started);
     if (received)
-        diagnostics.pitot_raw_count = (uint16_t)(((raw[0] & 0x3fu) << 8) | raw[1]);
-    portEXIT_CRITICAL(&config_lock);
-    if (received && !(raw[0] >> 6))
     {
-        const uint32_t count = (((uint32_t)raw[0] & 0x3fu) << 8) | raw[1];
-        if (count >= 1638u && count <= 14746u)
+        status = raw[0] >> 6;
+        count = (uint16_t)(((raw[0] & 0x3fu) << 8) | raw[1]);
+        if (status == 0 && count >= 1638u && count <= 14746u)
         {
             p = ((float)count - 0.1f * 16383.0f) * (PITOT_MAX_PA - PITOT_MIN_PA) /
-                    (0.8f * 16383.0f) +
-                PITOT_MIN_PA;
+                (0.8f * 16383.0f) + PITOT_MIN_PA;
             temp = 200.0f * ((raw[2] << 3) | (raw[3] >> 5)) / 2047.0f - 50.0f;
             valid_read = isfinite(p) && isfinite(temp);
         }
     }
 #endif
-    /* A single missed I2C slot must not restart the averaging window
-     * average. A prolonged absence makes the last queued sample stale and
-     * ControlTask faults through SENSOR_TIMEOUT_MS. */
-    if (!valid_read)
-    {
-        portENTER_CRITICAL(&config_lock);
-        pitot_communication_ok = false;
-        diagnostics.pitot_read_ok = diagnostics.pitot_valid = false;
-        portEXIT_CRITICAL(&config_lock);
-        error_count++;
-        return false;
-    }
-    portENTER_CRITICAL(&config_lock);
-    pitot_communication_ok = true;
-    diagnostics.pitot_read_ok = true;
-    portEXIT_CRITICAL(&config_lock);
-    window_pressure += p;
-    window_temperature += temp;
-    samples_in_window++;
-    if (samples_in_window < PITOT_AVERAGE_SAMPLES)
-        return false;
-
     float raw_average = 0.0f;
-    /* Five 100 Hz sensor slots per published 20 Hz average. */
+    sample_valid = false;
     if (valid_read)
     {
-        p = window_pressure / PITOT_AVERAGE_SAMPLES;
-        raw_average = p;
-        temperature_c = window_temperature / PITOT_AVERAGE_SAMPLES;
-        window_pressure = window_temperature = 0.0f;
-        samples_in_window = 0;
 #if !SIMULATION_MODE
-        if (zero_samples < PITOT_ZERO_SAMPLES)
+        /* Zero uses exactly 200 valid raw reads, independent of rolling averaging. */
+        const bool calibrating = zero_samples < PITOT_ZERO_SAMPLES;
+        if (calibrating)
         {
-            zero_sum += p * PITOT_AVERAGE_SAMPLES;
-            zero_samples += PITOT_AVERAGE_SAMPLES;
+            zero_sum += p;
+            zero_samples++;
             zero_pressure = (float)(zero_sum / zero_samples);
-            sample_valid = false;
         }
-        else
+#endif
+        window_pressure += p - pressure_window[window_index];
+        window_temperature += temp - temperature_window[window_index];
+        pressure_window[window_index] = p;
+        temperature_window[window_index] = temp;
+        window_index = (window_index + 1u) % PITOT_AVERAGE_SAMPLES;
+        if (samples_in_window < PITOT_AVERAGE_SAMPLES) samples_in_window++;
+        raw_average = window_pressure / samples_in_window;
+        temperature_c = window_temperature / samples_in_window;
+#if !SIMULATION_MODE
+        if (!calibrating)
         {
-            p -= zero_pressure;
-            int64_t now_us = esp_timer_get_time();
-            if (!previous_us)
-                filtered_pressure = p;
+            const float corrected = raw_average - zero_pressure;
+            const int64_t now = esp_timer_get_time();
+            if (!previous_us) filtered_pressure = corrected;
             else
             {
-                const float dt = (float)(now_us - previous_us) / 1000000.0f;
-                const float coefficient = 1.0f - expf(-6.283185307f * SensorLib_FilterHz() * dt);
-                filtered_pressure += coefficient * (p - filtered_pressure);
+                const float dt = (float)(now - previous_us) / 1000000.0f;
+                const float alpha = 1.0f - expf(-6.283185307f * SensorLib_FilterHz() * dt);
+                filtered_pressure += alpha * (corrected - filtered_pressure);
             }
-
-            previous_us = now_us;
+            previous_us = now;
             pressure_pa = fabsf(filtered_pressure) < PITOT_DEADBAND_PA ? 0.0f : filtered_pressure;
             sample_valid = true;
         }
@@ -217,7 +204,7 @@ bool SensorLib_PitotStep(Sample *out)
         sample_valid = true;
 #endif
     }
-    *out = (Sample){0};
+    else error_count++;
     out->pressure_pa = pressure_pa;
     out->temperature_c = temperature_c;
 #if SIMULATION_MODE
@@ -225,14 +212,21 @@ bool SensorLib_PitotStep(Sample *out)
 #else
     out->value = sqrtf(2.0f * fabsf(pressure_pa) / AIR_DENSITY);
 #endif
+    out->acquisition_us = acquisition_us;
     out->errors = error_count;
-    out->sequence = ++sequence_count;
     out->tick = xTaskGetTickCount();
-    out->valid = sample_valid && isfinite(out->value);
+    out->valid = valid_read && sample_valid && isfinite(out->value);
     portENTER_CRITICAL(&config_lock);
-    diagnostics.pitot_raw_pressure_pa = raw_average;
+    pitot_communication_ok = valid_read;
+    diagnostics.pitot_status_bits = status;
+    diagnostics.pitot_raw_count = count;
+    diagnostics.pitot_read_ok = valid_read;
+    if (valid_read)
+    {
+        diagnostics.pitot_raw_pressure_pa = raw_average;
+        diagnostics.pitot_corrected_pressure_pa = raw_average - zero_pressure;
+    }
     diagnostics.pitot_zero_offset_pa = zero_pressure;
-    diagnostics.pitot_corrected_pressure_pa = raw_average - zero_pressure;
     diagnostics.pitot_filtered_pressure_pa = filtered_pressure;
     diagnostics.pitot_pressure_pa = pressure_pa;
     diagnostics.pitot_airspeed_ms = out->value;
@@ -259,7 +253,8 @@ bool SensorLib_PitotCommunicationOk(void)
 /* Author: R.E. van Eekelen.
  * Incremental pressure-tap scan on Core 0, one I2C transaction per 10 ms
  * phase. A conversion is triggered and read in later phases; the entire
- * sixteen-channel sweep never blocks the Core 1 control task.
+ * sixteen-channel sweep has no conversion waits; shared-bus contention is
+ * reported to the independent Core 1 Pitot acquisition.
  *
  * The two TCA9548A multiplexers are selected in distinct transactions.
  * The 16 tap pressures are separate from the pitot/speed sensor.
@@ -268,12 +263,12 @@ bool SensorLib_PitotCommunicationOk(void)
 ///////////////////////////////////////////////////////////////////////////////
 // SensorLib_TapsStep()
 
-bool SensorLib_TapsStep(Sample *out)
+bool SensorLib_TapsStep(PressureTapSample *out)
 {
     if (out == NULL)
         return false;
 #if PRESSURE_TAPS_ENABLED && !SIMULATION_MODE
-    static Sample aggregate;
+    PressureTapSample *const aggregate = out; /* SensorTask owns the sole working image. */
     static unsigned channel;
     static uint8_t stage;
     static int64_t conversion_started_us;
@@ -281,7 +276,7 @@ bool SensorLib_TapsStep(Sample *out)
     if (!initialized)
     {
         for (unsigned i = 0; i < 16; ++i)
-            aggregate.taps[i] = NAN;
+            aggregate->taps[i] = NAN;
         initialized = true;
     }
     const uint8_t off = 0;
@@ -304,9 +299,9 @@ bool SensorLib_TapsStep(Sample *out)
     case 2: /* Select exactly one channel. */
         if (!I2CBus_TryWrite(channel < 8 ? MUX_0_ADDRESS : MUX_1_ADDRESS, &mask, 1))
         {
-            aggregate.errors++;
-            aggregate.taps[channel] = NAN;
-            aggregate.taps_valid &= (uint16_t)~(1u << channel);
+            aggregate->errors++;
+            aggregate->taps[channel] = NAN;
+            aggregate->taps_valid &= (uint16_t)~(1u << channel);
             stage = 5;
             return false;
         }
@@ -315,9 +310,9 @@ bool SensorLib_TapsStep(Sample *out)
     case 3: /* Start conversion. */
         if (!I2CBus_TryWrite(ABP2_ADDRESS, trigger, sizeof(trigger)))
         {
-            aggregate.errors++;
-            aggregate.taps[channel] = NAN;
-            aggregate.taps_valid &= (uint16_t)~(1u << channel);
+            aggregate->errors++;
+            aggregate->taps[channel] = NAN;
+            aggregate->taps_valid &= (uint16_t)~(1u << channel);
             stage = 5;
             return false;
         }
@@ -336,19 +331,19 @@ bool SensorLib_TapsStep(Sample *out)
             success = raw >= ABP2_OUTPUT_MIN && raw <= ABP2_OUTPUT_MAX;
             if (success)
             {
-                aggregate.taps[channel] = ((float)raw - ABP2_OUTPUT_MIN) *
+                aggregate->taps[channel] = ((float)raw - ABP2_OUTPUT_MIN) *
                                               (ABP2_MAX_PA - ABP2_MIN_PA) /
                                               (ABP2_OUTPUT_MAX - ABP2_OUTPUT_MIN) +
                                           ABP2_MIN_PA;
-                aggregate.tap_ticks[channel] = xTaskGetTickCount();
-                aggregate.taps_valid |= (uint16_t)(1u << channel);
+                aggregate->tap_ticks[channel] = xTaskGetTickCount();
+                aggregate->taps_valid |= (uint16_t)(1u << channel);
             }
         }
         if (!success)
         {
-            aggregate.errors++;
-            aggregate.taps[channel] = NAN;
-            aggregate.taps_valid &= (uint16_t)~(1u << channel);
+            aggregate->errors++;
+            aggregate->taps[channel] = NAN;
+            aggregate->taps_valid &= (uint16_t)~(1u << channel);
         }
         stage = 5;
         return false;
@@ -360,11 +355,11 @@ bool SensorLib_TapsStep(Sample *out)
     case 6: /* Reset second mux before advancing. */
         if (!I2CBus_TryWrite(MUX_1_ADDRESS, &off, 1))
             return false;
+        aggregate->updated_mask = (uint16_t)(1u << channel);
         channel = (channel + 1u) % 16u;
         stage = 0;
-        aggregate.tick = xTaskGetTickCount();
-        aggregate.sequence++;
-        *out = aggregate;
+        aggregate->tick = xTaskGetTickCount();
+        aggregate->sequence++;
         return true;
     default:
         stage = 0;
@@ -385,4 +380,17 @@ void SensorLib_GetPitotDiagnostics(PitotDiagnostics *out)
     portENTER_CRITICAL(&config_lock);
     *out = diagnostics;
     portEXIT_CRITICAL(&config_lock);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// SensorLib_TapsValidMask()
+
+uint16_t SensorLib_TapsValidMask(const PressureTapSample *sample, TickType_t now)
+{
+    if (!sample) return 0;
+    uint16_t mask = sample->taps_valid;
+    for (unsigned i = 0; i < 16; ++i)
+        if ((TickType_t)(now - sample->tap_ticks[i]) >= pdMS_TO_TICKS(TAP_TIMEOUT_MS))
+            mask &= (uint16_t)~(1u << i);
+    return mask;
 }

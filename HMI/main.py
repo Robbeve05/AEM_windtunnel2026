@@ -41,6 +41,7 @@ class Controller:
         self.calibration = FanCharacteristicCalibrator(self.esp32, self.base / "data/calibrations", self.config)
         self.esp32_frame = {}
         self._last_pitot_sequence = None
+        self._last_taps_sequence = None
         self.tunnel = Simulator(self.config) if self.simulation else None
         self.measurements = Measurements(base / self.config.data_directory, self.config)
         self.storage = Storage(base, self.config, self.measurements)
@@ -206,6 +207,16 @@ class Controller:
             pressure_filter=pressure_filter,
             pitot_diagnostics=({k: v for k, v in self.esp32_frame.items() if k.startswith('pitot_') or k == 'sample_seq'}
                                if self.esp32_mode and not self.simulation and self.esp32_frame.get("sim") == 0 else {}),
+            pressure_taps=({
+                'sequence': self.esp32_frame.get('taps_seq'),
+                'age_ms': self.esp32_frame.get('taps_age_ms'),
+                'valid_mask': self.esp32_frame.get('taps_valid', 0) if self.esp32.fresh else 0,
+                'updated_mask': self.esp32_frame.get('taps_updated', 0),
+                'errors': self.esp32_frame.get('taps_errors'),
+                'channel_age_ms': [self.esp32_frame.get(f'tap_age{i}_ms') for i in range(16)],
+                'values_pa': [self.esp32_frame.get(f'p{i}') if self.esp32.fresh and
+                              self.esp32_frame.get('taps_valid', 0) & (1 << i) else None for i in range(16)],
+            } if self.esp32_mode else {}),
             pitot_transport_fresh=bool(self.esp32_mode and self.esp32.fresh),
             sensor_fresh=self.sensor_fresh() if not self.simulation else True,
             sample_age_s=age,
@@ -224,7 +235,7 @@ class Controller:
         self.calibration.publish(frame)
         if frame.get('sensor_ok') != 1:
             return
-        # The 50 Hz STATUS stream repeats the same 20 Hz pitot sample.
+        # STATUS may repeat or skip 100 Hz Pitot publications.
         # Only record/plot a new measurement when its sequence increments.
         sequence = frame.get('sample_seq')
         if sequence is not None and sequence == self._last_pitot_sequence:
@@ -242,9 +253,21 @@ class Controller:
                 self.reynolds_setpoint = None
             self.sample.update(annotate_sample(self.sample, self.reynolds_setpoint,
                                                self.reynolds_environment()))
+            self.sample['taps_seq'] = frame.get('taps_seq')
+            self.sample['taps_age_ms'] = frame.get('taps_age_ms')
+            self.sample['taps_valid'] = frame.get('taps_valid', 0)
+            tap_seq = frame.get('taps_seq')
+            new_taps = tap_seq is not None and tap_seq != self._last_taps_sequence
+            self.sample['taps_new'] = new_taps
+            self.sample['tap_channel_indices'] = []
+            if tap_seq is not None:
+                self.sample['pressure_pa'] = [None] * 16
             for index in range(16):
-                if frame.get('taps_valid', 0) & (1 << index):
-                    self.sample['pressure_pa'].append(frame.get(f'p{index}'))
+                if (new_taps and frame.get('taps_updated', 0) & (1 << index)
+                        and frame.get('taps_valid', 0) & (1 << index)):
+                    self.sample['tap_channel_indices'].append(index)
+                    self.sample['pressure_pa'][index] = frame.get(f'p{index}')
+            self._last_taps_sequence = tap_seq
             try:
                 await asyncio.to_thread(self.measurements.append, self.sample.copy(), now)
             except Exception as exc:

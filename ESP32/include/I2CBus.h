@@ -62,3 +62,5 @@ bool I2CBus_GetDiagnostics(uint8_t address, I2CBusDiagnostics *out);
 bool I2CBus_ReadRegister(uint8_t address, uint8_t reg, uint8_t *data, size_t size);
 /* Compact, versioned numeric STATUS tokens. No bus traffic. Returns -1 on overflow. */
 int I2CBus_FormatDiagnostics(char *buffer, size_t size);
+
+bool I2CBus_TryReadOnce(uint8_t address, uint8_t *data, size_t size);

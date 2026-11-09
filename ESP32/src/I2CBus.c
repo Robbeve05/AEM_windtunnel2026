@@ -4,7 +4,7 @@
 /*
  * I2CBus.c
  *
- * Core 0 only; never called by ControlTask.
+ * Shared bus: ControlTask Pitot (Core 1), outputs/taps (Core 0).
  *
  * Author: R.E. van Eekelen
  */
@@ -41,7 +41,7 @@ _Static_assert(pdMS_TO_TICKS(I2C_SENSOR_TIMEOUT_MS) > 0, "Sensor timeout require
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
 
-static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg);
+static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -81,28 +81,28 @@ bool I2CBus_Init(void)
 
 bool I2CBus_Write(uint8_t a, const uint8_t *p, size_t n)
 {
-    return transfer(a, p, NULL, n, true, NULL);
+    return transfer(a, p, NULL, n, true, NULL, false);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_Read()
 
 bool I2CBus_Read(uint8_t a, uint8_t *p, size_t n)
 {
-    return transfer(a, NULL, p, n, true, NULL);
+    return transfer(a, NULL, p, n, true, NULL, false);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_TryRead()
 
 bool I2CBus_TryRead(uint8_t a, uint8_t *p, size_t n)
 {
-    return transfer(a, NULL, p, n, false, NULL);
+    return transfer(a, NULL, p, n, false, NULL, true);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_TryWrite()
 
 bool I2CBus_TryWrite(uint8_t a, const uint8_t *p, size_t n)
 {
-    return transfer(a, p, NULL, n, false, NULL);
+    return transfer(a, p, NULL, n, false, NULL, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -120,7 +120,7 @@ bool I2CBus_GetDiagnostics(uint8_t address, I2CBusDiagnostics *out)
 ///////////////////////////////////////////////////////////////////////////////
 // transfer()
 
-static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg)
+static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry)
 {
     if (address >= 128 || !size || (!tx && !rx)) return false;
     const int64_t called = esp_timer_get_time();
@@ -134,7 +134,7 @@ static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t siz
     if (!budget) budget = 1;
     if (ready && mutex)
     {
-        /* Output writer has bounded priority-inheriting acquisition; sensors
+        /* Output writer has bounded priority-inheriting acquisition; pitot_samples
          * never wait. No retries on writes, timeouts, driver faults or busy. */
         if (xSemaphoreTake(mutex, wait ? pdMS_TO_TICKS(I2C_TIMEOUT_MS) : 0) != pdTRUE)
         {
@@ -151,7 +151,7 @@ static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t siz
                 i2c_master_write_to_device(0, address, tx, size, budget);
             /* Only a quick NACK on a sensor read is retryable. One additional
              * attempt, within the original sensor budget. Never retry a DO register read. */
-            if (rx && !wait && !reg && error == ESP_FAIL &&
+            if (retry && rx && !wait && !reg && error == ESP_FAIL &&
                 esp_timer_get_time() - started < 1000 &&
                 budget_ms * 1000u - (uint32_t)(esp_timer_get_time() - started) >= portTICK_PERIOD_MS * 1000u)
             {
@@ -207,7 +207,7 @@ static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t siz
 
 bool I2CBus_ReadRegister(uint8_t address, uint8_t reg, uint8_t *data, size_t size)
 {
-    return transfer(address, NULL, data, size, true, &reg);
+    return transfer(address, NULL, data, size, true, &reg, false);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -243,4 +243,12 @@ int I2CBus_FormatDiagnostics(char *buffer, size_t size)
         used += n;
     }
     return used;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// I2CBus_TryReadOnce()
+
+bool I2CBus_TryReadOnce(uint8_t address, uint8_t *data, size_t size)
+{
+    return transfer(address, NULL, data, size, false, NULL, false);
 }

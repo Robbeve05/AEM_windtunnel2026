@@ -38,6 +38,7 @@ $cases = @(
     @{ Name = 'v20_fault_ack'; Sources = @('tests\test_v20_recovery.c', 'src\V20Modbus.c', 'src\V20Simulation.c', 'src\StateMachine.c'); Flags = '/DV20_RUN_COMMISSIONED=1 /DV20_FAULT_ACK_VERIFIED=1' },
     @{ Name = 'v20_simulation'; Sources = @('tests\test_v20_simulation.c', 'src\V20Modbus.c', 'src\V20Simulation.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1 /DV20_FAULT_ACK_VERIFIED=1' },
     @{ Name = 'startup'; Sources = @('tests\test_startup.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1' },
+    @{ Name = 'control_pitot'; Sources = @('tests\test_control_pitot.c', 'src\PressureSensors.c', 'src\StateMachine.c', 'tests\host\safety_sim.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DHOST_PITOT_INTEGRATION /DMOTOR_MODEL_TORQUE_TO_V20_ENABLED=1 /DCONTROL_TYPE=0' },
     @{ Name = 'control'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=0' },
     @{ Name = 'control_frequency'; Sources = @('tests\test_control.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\FrequencyModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=1' }
 )

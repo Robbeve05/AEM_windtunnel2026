@@ -23,9 +23,10 @@
 // Function declarations
 
 bool SensorLib_Init(void);
-bool SensorLib_PitotStep(Sample *sample);
+/* ControlTask only: one bounded read, including invalid attempt publications. */
+bool SensorLib_PitotStep(PitotSample *sample);
 bool SensorLib_PitotCommunicationOk(void);
-bool SensorLib_TapsStep(Sample *sample);
+bool SensorLib_TapsStep(PressureTapSample *sample);
 void SensorLib_SetFilter(float hz);
 float SensorLib_FilterHz(void);
 void Simulation_SetOutput(float value);
@@ -42,3 +43,6 @@ typedef struct {
 } PitotDiagnostics;
 /* Atomic snapshot: count/status are latest attempt, pressures last average. */
 void SensorLib_GetPitotDiagnostics(PitotDiagnostics *out);
+
+
+uint16_t SensorLib_TapsValidMask(const PressureTapSample *sample, TickType_t now);

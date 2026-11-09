@@ -115,6 +115,8 @@ class DiagnosticsPanel(QWidget):
                            ('output_read_errors', 'Latch read errors'),
                            ('output_latch_mismatches', 'Latch mismatches')):
             self._row('Outputs', key, label)
+        for key in ('pitot_acquisition_us', 'pitot_acquisition_max_us', 'taps_seq', 'taps_age_ms', 'taps_available', 'taps_errors', 'taps_valid'):
+            self._row('Sensors', key, key.replace('_', ' '))
         self.update_status({}, stale=True)
 
     def _i2c_device(self, key, name):

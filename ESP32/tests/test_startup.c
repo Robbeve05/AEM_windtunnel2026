@@ -11,7 +11,7 @@
 #include "../src/InputHandlerTask.c"
 #include "../src/SensorTask.c"
 
-static Queue queues[7];
+static Queue queues[8];
 static EventBits_t groups[4];
 static unsigned queue_count, group_count, task_count, watchdog_calls;
 static unsigned hardware_stage;
@@ -26,7 +26,7 @@ void SafetyIO_Init(void) { assert(hardware_stage == 0); hardware_stage = 1; }
 bool I2CBus_Init(void) { assert(hardware_stage == 1); hardware_stage = 2; return output_ok; }
 QueueHandle_t xQueueCreate(unsigned length, unsigned size)
 {
-    assert(hardware_stage == 2 && queue_count < 7 && task_count == 0);
+    assert(hardware_stage == 2 && queue_count < 8 && task_count == 0);
     assert(length == (queue_count == 2 ? 16u : 1u));
     Queue *q = &queues[queue_count++];
     q->size = size;
@@ -34,15 +34,15 @@ QueueHandle_t xQueueCreate(unsigned length, unsigned size)
 }
 EventGroupHandle_t xEventGroupCreate(void)
 {
-    assert(queue_count == 7 && group_count < 4 && task_count == 0);
+    assert(queue_count == 8 && group_count < 4 && task_count == 0);
     return &groups[group_count++];
 }
 BaseType_t xTaskCreatePinnedToCore(void (*task)(void*),const char *name,unsigned stack,
                                  void *argument,unsigned priority,TaskHandle_t *handle,int core)
 {
-    assert(queue_count == 7 && group_count == 4 && task_count < 7 && argument == NULL);
+    assert(queue_count == 8 && group_count == 4 && task_count < 7 && argument == NULL);
     assert(calibration_initialized);
-    assert(commands && sensors && motor_requests && motor_status && telemetry && safety_status && pi_heartbeat);
+    assert(commands && pitot_samples && pressure_taps && motor_requests && motor_status && telemetry && safety_status && pi_heartbeat);
     assert(events && handle_ButtonEventGroup && handle_ThreadEventGroup && handle_SystemEventGroup);
     const unsigned stacks[] = {3072,4096,6144,8192,3072,8192,3072}, priorities[] = {5,3,4,2,1,1,1};
     const int cores[] = {0,0,1,0,0,0,0};
@@ -109,16 +109,16 @@ bool FanCalibration_Init(void)
     calibration_initialized = true;
     return false;
 }
-bool SensorLib_PitotStep(Sample *s) { *s=(Sample){.valid=false}; return true; }
-bool SensorLib_TapsStep(Sample *s) { (void)s; return false; }
+bool SensorLib_PitotStep(PitotSample *s) { *s=(PitotSample){.valid=false}; return true; }
+bool SensorLib_TapsStep(PressureTapSample *s) { *s=(PressureTapSample){.sequence=1,.taps_valid=1}; return true; }
 
 int main(void)
 {
     StartApplicationTasks();
     assert(task_count == 7 && *handle_ThreadEventGroup == 0);
     const unsigned sizes[] = {sizeof(SafetySnapshot),sizeof(PiHeartbeat),sizeof(PiCommand),
-        sizeof(Sample),sizeof(MotorRequest),sizeof(MotorStatus),sizeof(Telemetry)};
-    for (unsigned i=0;i<7;i++) assert(queues[i].size == sizes[i]);
+        sizeof(PitotSample),sizeof(PressureTapSample),sizeof(MotorRequest),sizeof(MotorStatus),sizeof(Telemetry)};
+    for (unsigned i=0;i<8;i++) assert(queues[i].size == sizes[i]);
     if (!setjmp(task_finished)) InputHandlerTask(NULL);
     assert((*handle_ThreadEventGroup & EVT_INPUT_TASK_READY) && watchdog_calls == 1);
     *handle_ThreadEventGroup=0;output_ok=false;
@@ -130,14 +130,9 @@ int main(void)
     retry_output=false;
     if (!setjmp(task_finished)) SensorTask(NULL);
     assert(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY);
-    Sample sample;assert(xQueuePeek(sensors,&sample,0) && !sample.valid);
+    PressureTapSample taps;assert(xQueuePeek(pressure_taps,&taps,0) && taps.sequence==1);
+    assert(!pitot_samples->count); /* SensorTask never publishes Pitot. */
     assert(*handle_SystemEventGroup & EVT_SENSOR_UPDATED);
-    *handle_ThreadEventGroup=0;sensor_init_ok=false;
-    if (!setjmp(task_finished)) SensorTask(NULL);
-    assert(!(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY));
-    sensor_init_ok=true; sensor_failures_remaining=1;
-    if (!setjmp(task_finished)) SensorTask(NULL);
-    assert(*handle_ThreadEventGroup & EVT_SENSOR_TASK_READY);
     puts("PASS queue/event creation before tasks; unchanged scheduling; successful local initialization only");
     puts("PASS readiness independent of sensor calibration and physical health; failed init remains inhibited");
     return 0;

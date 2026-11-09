@@ -146,7 +146,7 @@ static void LogApplicationStatus(void)
     static uint32_t last_snapshot_sequence, last_do1_off, last_off2;
     const EventBits_t ready =
         handle_ThreadEventGroup ? xEventGroupGetBits(handle_ThreadEventGroup) : 0;
-    const bool queues_ready = commands && sensors && motor_requests && motor_status && telemetry &&
+    const bool queues_ready = commands && pitot_samples && pressure_taps && motor_requests && motor_status && telemetry &&
                               safety_status && pi_heartbeat;
     /* Private queue copies, used only by the main diagnostic task. */
     static Telemetry state;
@@ -168,8 +168,10 @@ static void LogApplicationStatus(void)
              task_state_name(heartbeat_task_handle), task_stack_free(heartbeat_task_handle),
              ota_task_alive, ota_valid_task_alive);
 
-    Sample sample = {0};
-    const bool sample_available = sensors && xQueuePeek(sensors, &sample, 0) == pdTRUE;
+    PitotSample sample = {0};
+    PressureTapSample taps = {0};
+    if (pressure_taps) (void)xQueuePeek(pressure_taps, &taps, 0);
+    const bool sample_available = pitot_samples && xQueuePeek(pitot_samples, &sample, 0) == pdTRUE;
     static MotorStatus motor;
     const bool motor_available = motor_status && xQueuePeek(motor_status, &motor, 0) == pdTRUE;
     if (!motor_available)
@@ -351,13 +353,13 @@ static void LogApplicationStatus(void)
                  : "not_fitted",
              CONTACTOR_FEEDBACK_FITTED, CONTACTOR_OK_ACTIVE_LEVEL);
     ESP_LOGI("Diag",
-             "sensors initialized=%d sample=%d valid=%d fresh=%d age_ms=%lu "
+             "tap_task_ready=%d pitot_sample=%d valid=%d fresh=%d age_ms=%lu "
              "airspeed=%.3f pressure_pa=%.2f temp_c=%.2f taps_valid=0x%04x errors=%lu",
              !!(ready & EVT_SENSOR_TASK_READY), sample_available, sample_available && sample.valid,
              sample_available && sample.valid && ticks_age_ms(sample.tick) < SENSOR_TIMEOUT_MS,
              (unsigned long)(sample_available ? ticks_age_ms(sample.tick) : UINT32_MAX),
              (double)sample.value, (double)sample.pressure_pa, (double)sample.temperature_c,
-             sample.taps_valid, (unsigned long)sample.errors);
+             taps.taps_valid, (unsigned long)sample.errors);
     ESP_LOGI("Diag",
              "V20 modbus_initialized=%d status_available=%d drive_ready=%d "
              "ready_to_switch_on=%d ready_to_operate=%d operation_enabled=%d "

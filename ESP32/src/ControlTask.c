@@ -84,7 +84,7 @@ typedef struct
     StateMachine machine;
     Telemetry status;
     ControlTiming timing_stats;
-    Sample sample;
+    PitotSample sample;
     SafetySnapshot safety;
     PiHeartbeat heartbeat;
     MotorStatus motor;
@@ -131,6 +131,7 @@ static void Control_WaitForTasks(ControlContext *ctx);
 static void Control_HoldInitializationFault(ControlContext *ctx);
 static EventBits_t Control_ReadButtonEvents(void);
 static void Control_ReadInputs(ControlContext *ctx);
+static void Control_AcquirePitot(ControlContext *ctx);
 static void Control_ProcessCommands(ControlContext *ctx, EventBits_t buttonBits);
 static void Control_CheckSafety(ControlContext *ctx);
 static void Control_UpdateConfiguration(ControlContext *ctx);
@@ -179,6 +180,7 @@ static void StartControlClock(void)
 static void Control_Init(ControlContext *ctx)
 {
     *ctx = (ControlContext){0};
+    (void)SensorLib_Init(); /* Pitot state has one owner, initialized before the timer. */
     control_task_handle = xTaskGetCurrentTaskHandle();
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     RegelaarParameters parameters = {0};
@@ -364,17 +366,15 @@ static void Control_ReadInputs(ControlContext *ctx)
 {
     (void)xEventGroupWaitBits(handle_SystemEventGroup, EVT_NEW_COMMAND | EVT_SENSOR_UPDATED, pdTRUE,
                               pdFALSE, 0);
-    ctx->sample = (Sample){0};
     ctx->safety = (SafetySnapshot){0};
     ctx->heartbeat = (PiHeartbeat){0};
     ctx->motor = (MotorStatus){0};
-    (void)xQueuePeek(sensors, &ctx->sample, 0);
     (void)xQueuePeek(safety_status, &ctx->safety, 0);
     (void)xQueuePeek(pi_heartbeat, &ctx->heartbeat, 0);
     V20Modbus_GetStatus(&ctx->motor);
 
     ctx->status.measurement = ctx->sample.value;
-    /* Producers on core 0 can publish AFTER BeginCycle. Sample the clock only
+    /* Producers on core 0 can publish AFTER BeginCycle. Read the clock only
      * after the queue reads, or a new timestamp underflows unsigned age. */
     const TickType_t observed_tick = xTaskGetTickCount();
     ctx->now_tick = observed_tick;
@@ -392,6 +392,36 @@ static void Control_ReadInputs(ControlContext *ctx)
          ctx->heartbeat.tcp_connected && ctx->heartbeat.connected &&
          (TickType_t)(observed_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
     ctx->status.safety = ctx->safety;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Control_AcquirePitot()
+
+static void Control_AcquirePitot(ControlContext *ctx)
+{
+    /* STOP/emergency never wait for I2C. The old timestamp is retained on this
+     * skipped cycle, never republished as a new measurement or used for ISA. */
+    if (ctx->stop || ctx->safety.estop_pressed || ctx->clock_fault != FAULT_NONE || SafetyIO_Fault() != FAULT_NONE)
+        return;
+    ctx->sample = (PitotSample){0};
+    (void)SensorLib_PitotStep(&ctx->sample);
+    ctx->now_tick = xTaskGetTickCount();
+    ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    ctx->status.measurement = ctx->sample.value;
+    ctx->status.sensor_ok = ctx->sample.valid &&
+        (TickType_t)(ctx->now_tick - ctx->sample.tick) < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS);
+    ctx->status.pitot_acquisition_us = ctx->sample.acquisition_us;
+    if (ctx->sample.acquisition_us > ctx->status.pitot_acquisition_max_us)
+        ctx->status.pitot_acquisition_max_us = ctx->sample.acquisition_us;
+    xQueueOverwrite(pitot_samples, &ctx->sample);
+    /* Account for safety/heartbeat changes during the bounded I2C call. Do not
+     * extend a heartbeat that expired while this core waited for the driver. */
+    ctx->status.pi_ok = ctx->status.pi_ok && (!PI_HEARTBEAT_REQUIRED ||
+        (Ethernet_LinkUp() && (TickType_t)(ctx->now_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS)));
+    (void)xQueuePeek(safety_status, &ctx->safety, 0);
+    ctx->status.safety = ctx->safety;
+    ctx->stop = ctx->stop || SafetyIO_Stop() ||
+        (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) & STOP_REQUEST) != 0;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -660,7 +690,12 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 static void Control_UpdateController(ControlContext *ctx)
 {
     ctx->status.output = 0.0f;
-    if (ctx->machine.state == STATE_RUNNING && ctx->clock_fault == FAULT_NONE)
+    if (ctx->machine.state == STATE_RUNNING && !ctx->stop && !ctx->status.sensor_ok)
+    {
+        Control_Fault(ctx, FAULT_SENSOR, "pitot_feedback");
+        V20Modbus_Disarm();
+    }
+    if (ctx->machine.state == STATE_RUNNING && !ctx->stop && ctx->status.sensor_ok && ctx->clock_fault == FAULT_NONE)
     {
         if (ctx->status.mode == MODE_MANUAL)
         {
@@ -1174,6 +1209,7 @@ void ControlTask(void *argument)
         Control_ReadInputs(ctx);
         Control_RecordEvent(ctx);
         Control_ProcessCommands(ctx, buttonBits);
+        Control_AcquirePitot(ctx);
         Control_CheckSafety(ctx);
         Control_UpdateStateMachine(ctx);
         Control_UpdateController(ctx);

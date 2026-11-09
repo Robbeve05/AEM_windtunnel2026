@@ -371,9 +371,13 @@ void PiCommunicationTask(void *argument)
                     (TickType_t)(xTaskGetTickCount() - heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS);
                 const bool ethernet_link = Ethernet_LinkUp();
                 const bool ipv4_configured = Ethernet_HasIp();
-                Sample sample = {0};
+                PitotSample sample = {0};
+                PressureTapSample taps = {0};
                 MotorStatus motor = {0};
-                xQueuePeek(sensors, &sample, 0);
+                const bool pitot_available = xQueuePeek(pitot_samples, &sample, 0) == pdTRUE;
+                const bool taps_available = xQueuePeek(pressure_taps, &taps, 0) == pdTRUE;
+                const TickType_t sensor_now = xTaskGetTickCount();
+                taps.taps_valid = taps_available ? SensorLib_TapsValidMask(&taps, sensor_now) : 0;
                 xQueuePeek(motor_status, &motor, 0);
                 /* Single task owns this buffer. Keep full diagnostics off the
                  * task stack; the old 1024-byte buffer could never append them. */
@@ -412,7 +416,7 @@ void PiCommunicationTask(void *argument)
                     "remote_start=%d crc_errors=%lu exceptions=%lu exception_code=%lu "
                     "late_replies=%lu",
                     t.running,
-                    (sample.valid &&
+                    (pitot_available && sample.valid &&
                      xTaskGetTickCount() - sample.tick < pdMS_TO_TICKS(SENSOR_TIMEOUT_MS)),
                     t.motor_ok, t.setpoint, sample.value, t.output, t.reason, SIMULATION_MODE,
                     t.control_setpoint, t.mode == MODE_MANUAL ? "MANUAL" : "AUTO", t.manual_hz,
@@ -423,7 +427,7 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)sample.errors, (unsigned long)motor.errors,
                     (unsigned long)motor.timeouts, ethernet_link, ethernet_link, ipv4_configured,
                     heartbeat_received, heartbeat_fresh, (unsigned long)t.stack_free,
-                    (unsigned)uxTaskGetStackHighWaterMark(NULL), sample.taps_valid,
+                    (unsigned)uxTaskGetStackHighWaterMark(NULL), taps.taps_valid,
                     SensorLib_FilterHz(), (unsigned long)sample.sequence,
                     StateMachine_Name(t.state), FaultReason_Name(t.fault),
                     FaultReason_Name(t.last_fault), t.safety.estop_pressed, t.safety.relay_ok,
@@ -440,6 +444,14 @@ void PiCommunicationTask(void *argument)
                     (unsigned long)t.transitions, ALLOW_REMOTE_START, (unsigned long)t.crc_errors,
                     (unsigned long)t.exceptions, (unsigned long)t.exception_code,
                     (unsigned long)t.late_replies);
+                if (length > 0 && length < (int)sizeof(buffer) - 256)
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " taps_seq=%lu taps_age_ms=%lu taps_available=%d taps_errors=%lu taps_updated=%u"
+                        " pitot_acquisition_us=%lu pitot_acquisition_max_us=%lu",
+                        (unsigned long)taps.sequence,
+                        taps_available ? (unsigned long)((sensor_now - taps.tick) * portTICK_PERIOD_MS) : (unsigned long)UINT32_MAX,
+                        taps_available, (unsigned long)taps.errors, (unsigned)taps.updated_mask,
+                        (unsigned long)sample.acquisition_us, (unsigned long)t.pitot_acquisition_max_us);
                 PitotDiagnostics pitot;
                 SensorLib_GetPitotDiagnostics(&pitot);
                 if (length > 0 && length < (int)sizeof(buffer) - 768)
@@ -641,10 +653,14 @@ void PiCommunicationTask(void *argument)
                         " diag_v20_stop_attempts=%lu",
                         motor.run_locked, motor.warning_active, motor.fault_ack_pending,
                         (unsigned long)motor.stop_attempts);
-                for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 32;
+                for (int tap = 0; tap < 16 && length > 0 && length < (int)sizeof(buffer) - 80;
                      tap++)
-                    length += snprintf(buffer + length, sizeof(buffer) - length, " p%d=%.3f", tap,
-                                       (sample.taps_valid & (1u << tap)) ? sample.taps[tap] : 0.0f);
+                    length += snprintf(buffer + length, sizeof(buffer) - length,
+                        " p%d=%.3f tap_age%d_ms=%lu", tap,
+                        (taps.taps_valid & (1u << tap)) ? taps.taps[tap] : 0.0f, tap,
+                        taps_available && (taps.taps_valid & (1u << tap)) ?
+                            (unsigned long)((sensor_now - taps.tap_ticks[tap]) * portTICK_PERIOD_MS) :
+                            (unsigned long)UINT32_MAX);
                 if (length <= 0 || length >= (int)sizeof(buffer) - 2)
                 {
                     ESP_LOGE("PiCommunication", "STATUS frame exceeded buffer; frame discarded");

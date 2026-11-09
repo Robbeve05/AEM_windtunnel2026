@@ -44,13 +44,22 @@
 
 typedef struct
 {
-    float value, pressure_pa, temperature_c, taps[16];
-    uint16_t taps_valid;
-    TickType_t tap_ticks[16];
+    float value, pressure_pa, temperature_c;
+    uint32_t acquisition_us;
     uint32_t errors, sequence;
     TickType_t tick;
     bool valid;
-} Sample;
+} PitotSample;
+
+/* Independent producer: SensorTask; each channel has its own acquisition age. */
+typedef struct
+{
+    float taps[16];
+    uint16_t taps_valid, updated_mask;
+    TickType_t tap_ticks[16];
+    uint32_t errors, sequence;
+    TickType_t tick;
+} PressureTapSample;
 typedef struct
 {
     float output;
@@ -189,6 +198,7 @@ typedef struct
     SafetySnapshot safety;
     const char *reason;
     float control_hz, modbus_hz;
+    uint32_t pitot_acquisition_us, pitot_acquisition_max_us;
     uint32_t execution_us, max_jitter_us, missed_deadlines, overruns, stack_free;
     uint32_t timing_fault_execution_us, timing_fault_service_us, timing_fault_missed_ticks;
     FaultReason_t timing_fault_reason;
@@ -207,7 +217,7 @@ typedef struct
 ///////////////////////////////////////////////////////////////////////////////
 // Public declarations
 
-extern QueueHandle_t commands, sensors, motor_requests, motor_status, telemetry, safety_status,
+extern QueueHandle_t commands, pitot_samples, pressure_taps, motor_requests, motor_status, telemetry, safety_status,
     pi_heartbeat;
 extern EventGroupHandle_t events;
 extern TaskHandle_t control_task_handle;

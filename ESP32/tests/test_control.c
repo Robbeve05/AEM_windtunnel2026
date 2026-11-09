@@ -28,8 +28,11 @@ static bool calibration_enabled;
 bool FanCalibration_IsValid(void) { return calibration_enabled; }
 bool FanCalibration_ControlGate(bool safe) { (void)safe;return false; }
 float FanCalibration_GetBaseFrequency(float v,float f) { (void)v;return calibration_enabled?20.0f:f; }
-static Queue q[7];
-QueueHandle_t commands = &q[0], sensors = &q[1], motor_requests = &q[2], motor_status = &q[3],
+static Queue q[8];
+static PitotSample next_pitot;
+static unsigned pitot_reads;
+QueueHandle_t pressure_taps = &q[7];
+QueueHandle_t commands = &q[0], pitot_samples = &q[1], motor_requests = &q[2], motor_status = &q[3],
               telemetry = &q[4], safety_status = &q[5], pi_heartbeat = &q[6];
 static EventBits_t button_bits, thread_bits, system_bits, stop_bits;
 EventGroupHandle_t handle_ButtonEventGroup = &button_bits, handle_ThreadEventGroup = &thread_bits,
@@ -37,6 +40,7 @@ EventGroupHandle_t handle_ButtonEventGroup = &button_bits, handle_ThreadEventGro
 TaskHandle_t control_task_handle, sensor_task_handle;
 static int64_t fake_us;
 static unsigned watchdog_resets, arms, disarms, timer_starts;
+static uint32_t fake_modbus_service_us;
 static bool publish_heartbeat_during_read;
 static bool stop_confirmed;
 static TaskHandle_t notified[4];
@@ -119,6 +123,7 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t g, EventBits_t bits, int clea
 int xQueuePeek(QueueHandle_t p, void *dst, TickType_t wait)
 {
     assert(wait == 0);
+    assert(p != pitot_samples); /* Control must never consume its own publication. */
     if (!p->count)
         return 0;
     if (p == pi_heartbeat && publish_heartbeat_during_read)
@@ -132,6 +137,7 @@ int xQueuePeek(QueueHandle_t p, void *dst, TickType_t wait)
 }
 int xQueueOverwrite(QueueHandle_t p, const void *src)
 {
+    if (p == pitot_samples) next_pitot = *(const PitotSample *)src;
     memcpy(p->data, src, p->size);
     p->count = 1;
     return 1;
@@ -206,12 +212,21 @@ void V20Modbus_GetStatus(MotorStatus *m)
 {
     *m = drive;
 }
+#ifndef HOST_PITOT_INTEGRATION
+bool SensorLib_Init(void) { return true; }
+bool SensorLib_PitotStep(PitotSample *out) { pitot_reads++; *out=next_pitot; return true; }
+#endif
+/* Model the production snapshot/command/acquisition stages in these unit tests. */
+static void read_cycle_inputs(ControlContext *ctx) { Control_ReadInputs(ctx); Control_AcquirePitot(ctx); }
+#ifndef HOST_PITOT_INTEGRATION
 bool SensorLib_PitotCommunicationOk(void)
 {
     return true;
 }
+#endif
 void V20Modbus_Service(const MotorRequest *r, bool ok)
 {
+    fake_us += fake_modbus_service_us;
     (void)r;
     (void)ok;
 }
@@ -336,7 +351,7 @@ static void test_connection_and_first_fault(void)
     drive.status = 0x0237;
     c.motor = drive;
     PiHeartbeat hb = {.connected = true, .tcp_connected = true};
-    Sample sample = {.valid = true};
+    PitotSample sample = {.valid = true};
     fake_us = 1000000;
     /* Ten simulated minutes at 100 Hz, heartbeat every 500 ms, no HMI command. */
     for (unsigned cycle = 0; cycle < 60000; ++cycle)
@@ -346,10 +361,10 @@ static void test_connection_and_first_fault(void)
         sample.tick = xTaskGetTickCount();
         c.safety.tick_ms = (uint32_t)(fake_us / 1000);
         if (cycle % 50 == 0) hb.tick = xTaskGetTickCount();
-        xQueueOverwrite(sensors, &sample);
+        xQueueOverwrite(pitot_samples, &sample);
         xQueueOverwrite(safety_status, &c.safety);
         xQueueOverwrite(pi_heartbeat, &hb);
-        Control_ReadInputs(&c);
+        read_cycle_inputs(&c);
         Control_CheckSafety(&c);
         Control_UpdateStateMachine(&c);
         Control_PublishStatus(&c);
@@ -359,14 +374,14 @@ static void test_connection_and_first_fault(void)
     Control_BeginCycle(&c, 1);
     const TickType_t old_tick = c.now_tick;
     publish_heartbeat_during_read = true;
-    Control_ReadInputs(&c);
+    read_cycle_inputs(&c);
     assert((TickType_t)(old_tick - c.heartbeat.tick) >= pdMS_TO_TICKS(COMMAND_TIMEOUT_MS));
     assert(c.status.pi_ok);
     /* Deadline is unchanged: 1999 ms accepted, exactly 2000 ms rejected. */
     hb.tick = xTaskGetTickCount() - 1999u;
-    xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    xQueueOverwrite(pi_heartbeat, &hb); read_cycle_inputs(&c);
     assert(c.status.pi_ok);
-    hb.tick--; xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    hb.tick--; xQueueOverwrite(pi_heartbeat, &hb); read_cycle_inputs(&c);
     assert(!c.status.pi_ok);
     c.safety.tick_ms = c.now_ms;
     c.status.sensor_ok = true;
@@ -417,14 +432,14 @@ static void test_connection_and_first_fault(void)
     xQueueOverwrite(pi_heartbeat, &hb);
     c.machine.fault = FAULT_PI_CONNECTION;
     c.safety.tick_ms = c.now_ms;
-    Control_ReadInputs(&c); c.status.sensor_ok = true;
+    read_cycle_inputs(&c); c.status.sensor_ok = true;
     Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
     assert(c.machine.state == STATE_FAULT && !c.machine.permissive);
     /* A complete disconnect/reconnect between two control reads is still latched. */
     healthy_context(&c); c.machine.state=STATE_RUNNING; c.motor=drive;
     c.previous_disconnect_sequence = hb.disconnect_sequence;
     hb.disconnect_sequence++; hb.tick=xTaskGetTickCount();
-    xQueueOverwrite(pi_heartbeat, &hb); Control_ReadInputs(&c);
+    xQueueOverwrite(pi_heartbeat, &hb); read_cycle_inputs(&c);
     c.status.sensor_ok=true; c.safety.tick_ms=c.now_ms;
     Control_CheckSafety(&c); Control_UpdateStateMachine(&c);
     assert(c.machine.fault==FAULT_PI_CONNECTION);
@@ -438,17 +453,17 @@ static void test_connection_and_first_fault(void)
     /* A real disconnect and physical Ethernet loss also fail closed. */
     healthy_context(&c); c.machine.state=STATE_RUNNING; c.motor=drive;
     hb.connected=false; hb.tcp_connected=false; hb.disconnect_sequence=0;
-    xQueueOverwrite(pi_heartbeat,&hb); Control_ReadInputs(&c);
+    xQueueOverwrite(pi_heartbeat,&hb); read_cycle_inputs(&c);
     assert(!c.status.pi_ok);
     hb.connected=hb.tcp_connected=true; hb.tick=xTaskGetTickCount();
-    xQueueOverwrite(pi_heartbeat,&hb); ethernet_up=false; Control_ReadInputs(&c);
+    xQueueOverwrite(pi_heartbeat,&hb); ethernet_up=false; read_cycle_inputs(&c);
     assert(!c.status.pi_ok); ethernet_up=true;
     /* Unsigned age remains correct across RTOS tick wrap. */
     fake_us = ((int64_t)UINT32_MAX + 50LL) * 1000;
     hb.tick=UINT32_MAX-100u; xQueueOverwrite(pi_heartbeat,&hb);
-    Control_ReadInputs(&c); assert(c.status.pi_ok);
+    read_cycle_inputs(&c); assert(c.status.pi_ok);
     hb.tick=xTaskGetTickCount()-2000u; xQueueOverwrite(pi_heartbeat,&hb);
-    Control_ReadInputs(&c); assert(!c.status.pi_ok);
+    read_cycle_inputs(&c); assert(!c.status.pi_ok);
     drive.operation_enabled=false; drive.status=0x0231;
     output_status=(DigitalOutputStatus){0}; fake_us=0;
     puts("PASS 10min RUN, heartbeat race/deadline/wrap, disconnect/reconnect, first-fault before DO1, no restart");
@@ -456,10 +471,10 @@ static void test_connection_and_first_fault(void)
 
 int main(void)
 {
-    const unsigned sizes[] = {sizeof(PiCommand),   sizeof(Sample),    sizeof(MotorRequest),
+    const unsigned sizes[] = {sizeof(PiCommand),   sizeof(PitotSample),    sizeof(MotorRequest),
                               sizeof(MotorStatus), sizeof(Telemetry), sizeof(SafetySnapshot),
-                              sizeof(PiHeartbeat)};
-    for (unsigned i = 0; i < 7; i++)
+                              sizeof(PiHeartbeat), sizeof(PressureTapSample)};
+    for (unsigned i = 0; i < 8; i++)
         q[i].size = sizes[i];
     test_start_configuration();
     test_connection_and_first_fault();
@@ -571,17 +586,17 @@ int main(void)
 
     healthy_context(&c);
     fake_us = 1000000;
-    Sample sample = {.value = 12, .valid = true, .tick = 1000};
+    PitotSample sample = {.value = 12, .valid = true, .tick = 1000};
     PiHeartbeat hb = {.connected = true, .tick = 1000, .tcp_connected = true};
-    xQueueOverwrite(sensors, &sample);
+    xQueueOverwrite(pitot_samples, &sample);
     xQueueOverwrite(safety_status, &c.safety);
     xQueueOverwrite(pi_heartbeat, &hb);
     system_bits = 0;
-    Control_ReadInputs(&c);
+    read_cycle_inputs(&c);
     assert(c.status.sensor_ok && c.status.pi_ok && c.sample.value == 12);
     c.now_tick = 3000;
     fake_us = 3000000;
-    Control_ReadInputs(&c);
+    read_cycle_inputs(&c);
     assert(!c.status.sensor_ok && !c.status.pi_ok);
     healthy_context(&c);
     c.machine.state = STATE_RUNNING;

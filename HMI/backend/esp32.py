@@ -80,6 +80,8 @@ I2C_FIELDS = ('ok', 'busy', 'nack', 'timeout', 'driver', 'retries', 'recovered',
 INTS.update({'i2c_hz', 'i2c_diag_v', 'output_write_ack_valid', 'output_latch_valid',
              'output_latch_image', 'output_latch_match', 'output_read_errors', 'output_latch_mismatches'})
 
+INTS.update({'taps_seq', 'taps_age_ms', 'taps_available', 'taps_errors', 'taps_updated', 'pitot_acquisition_us', 'pitot_acquisition_max_us'})
+
 WAIT_BLOCKERS = (
     (1 << 0, "E-stop pressed"),
     (1 << 1, "Stop input unhealthy"),
@@ -241,7 +243,7 @@ def parse_status(line):
                 val = float(val)
                 if not math.isfinite(val):
                     return None
-            elif key in INTS:
+            elif key in INTS or re.fullmatch(r"tap_age(?:[0-9]|1[0-5])_ms", key):
                 val = int(val)
         except ValueError:
             return None

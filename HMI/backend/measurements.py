@@ -99,7 +99,7 @@ class Measurements:
             raw = self._writer('raw_data.csv', ['host_timestamp', 'timestamp_ms', 'state', 'airspeed_ms', 'airspeed_kmh',
                                'differential_pressure_pa', 'dynamic_pressure_pa', 'temperature_c',
                                'flow_stability_pct', 'flow_mean_ms', 'flow_std_ms', 'flow_min_ms', 'flow_max_ms',
-                               'static_pressure_pa', 'fan_output_pct', 'angle_of_attack_deg', 'pressure_pa', 'errors', *REYNOLDS_FIELDS])
+                               'static_pressure_pa', 'fan_output_pct', 'angle_of_attack_deg', 'pressure_pa', 'taps_seq', 'taps_age_ms', 'taps_valid', 'taps_new', 'errors', *REYNOLDS_FIELDS])
             processed = self._writer('processed_data.csv', ['host_timestamp', 'timestamp_ms', 'airspeed_ms', 'airspeed_kmh',
                                      'dynamic_pressure_pa', 'temperature_c', 'flow_stability_pct', 'flow_mean_ms',
                                      'flow_std_ms', 'flow_min_ms', 'flow_max_ms', *REYNOLDS_FIELDS])
