@@ -6,3 +6,8 @@ output/pdf/
 tmp/pdfs/
 __pycache__/
 *.pyc
+
+# Local verification logs and temporary diagnostic artifacts.
+/output/*.log
+/output/interlock-only.patch
+/output/V20Modbus_baseline.c
