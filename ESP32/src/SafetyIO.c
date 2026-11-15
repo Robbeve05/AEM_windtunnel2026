@@ -34,6 +34,9 @@
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool emergency_latch, relay_latch, stop_latch;
 static volatile uint32_t unsafe_generation;
+static SafetyGPIOEvent gpio_events[SAFETY_GPIO_EVENT_CAPACITY], last_gpio_event;
+static unsigned event_head, event_count;
+static uint32_t event_generation, event_overwritten;
 #if SIMULATION_MODE
 static SafetySnapshot simulated = {
     .valid = true, .commissioned = true, .relay_ok = true, .stop_ok = true, .outputs_ok = true};
@@ -69,7 +72,7 @@ void SafetyIO_Init(void)
     for (unsigned i = 0; i < 3; i++)
     {
         ESP_ERROR_CHECK(gpio_set_intr_type(pins[i], GPIO_INTR_ANYEDGE));
-        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[i], input_isr, NULL));
+        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[i], input_isr, (void *)(intptr_t)pins[i]));
     }
     (void)SafetyIO_Read();
 #endif
@@ -115,7 +118,6 @@ bool SafetyIO_InterpretLevel(int raw_level, int active_level, bool *active)
 
 static void IRAM_ATTR input_isr(void *arg)
 {
-    (void)arg;
     portENTER_CRITICAL_ISR(&lock);
     if (valid_active_level(ESTOP_PRESSED_ACTIVE_LEVEL) &&
         gpio_get_level(ESTOP_PRESSED_GPIO) == ESTOP_PRESSED_ACTIVE_LEVEL)
@@ -132,6 +134,23 @@ static void IRAM_ATTR input_isr(void *arg)
     if (valid_active_level(STOP_BUTTON_OK_ACTIVE_LEVEL) &&
         gpio_get_level(STOP_BUTTON_OK_GPIO) != STOP_BUTTON_OK_ACTIVE_LEVEL)
         stop_latch = true;
+    /* Existing latches run first. Bounded storage; consumers never block ISR. */
+    const int gpio = (int)(intptr_t)arg;
+    SafetyGPIOEvent event = {.valid = true, .timestamp_us = (uint64_t)esp_timer_get_time(),
+        .generation = ++event_generation, .unsafe_generation = unsafe_generation,
+        .gpio = gpio, .raw_level = gpio_get_level(gpio),
+        .active_level = gpio == ESTOP_PRESSED_GPIO ? ESTOP_PRESSED_ACTIVE_LEVEL :
+                        gpio == SAFETY_RELAY_OK_GPIO ? SAFETY_RELAY_OK_ACTIVE_LEVEL : STOP_BUTTON_OK_ACTIVE_LEVEL,
+        .estop_raw = gpio_get_level(ESTOP_PRESSED_GPIO),
+        .relay_raw = gpio_get_level(SAFETY_RELAY_OK_GPIO),
+        .stop_raw = gpio_get_level(STOP_BUTTON_OK_GPIO),
+        .estop_polarity = ESTOP_PRESSED_ACTIVE_LEVEL, .relay_polarity = SAFETY_RELAY_OK_ACTIVE_LEVEL,
+        .stop_polarity = STOP_BUTTON_OK_ACTIVE_LEVEL,
+        .emergency_latch = emergency_latch, .relay_latch = relay_latch, .stop_latch = stop_latch};
+    gpio_events[event_head] = last_gpio_event = event;
+    event_head = (event_head + 1u) % SAFETY_GPIO_EVENT_CAPACITY;
+    if (event_count < SAFETY_GPIO_EVENT_CAPACITY) event_count++;
+    else event_overwritten++;
     portEXIT_CRITICAL_ISR(&lock);
 }
 #endif
@@ -181,7 +200,8 @@ SafetySnapshot SafetyIO_Read(void)
                                              CONTACTOR_OK_ACTIVE_LEVEL, &interpreted) &&
                      interpreted;
 #endif
-    s.tick_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    s.timestamp_us = (uint64_t)esp_timer_get_time();
+    s.tick_ms = (uint32_t)(s.timestamp_us / 1000);
     portENTER_CRITICAL(&lock);
     if (s.valid && s.estop_pressed)
     {
@@ -328,4 +348,25 @@ void SafetyIO_PublishButtonEvents(const SafetySnapshot *current, const SafetySna
     }
     if (bits != 0)
         xEventGroupSetBits(handle_ButtonEventGroup, bits);
+}
+
+void SafetyIO_GetLastEvent(SafetyGPIOEvent *event)
+{
+    if (!event) return;
+    portENTER_CRITICAL(&lock);
+    *event = last_gpio_event;
+    portEXIT_CRITICAL(&lock);
+}
+unsigned SafetyIO_ReadEvents(SafetyGPIOEvent *events, unsigned capacity, uint32_t *overwritten)
+{
+    if (!events) return 0;
+    portENTER_CRITICAL(&lock);
+    unsigned count = event_count < capacity ? event_count : capacity;
+    for (unsigned i = 0; i < count; ++i) {
+        events[i] = gpio_events[(event_head + SAFETY_GPIO_EVENT_CAPACITY - event_count) % SAFETY_GPIO_EVENT_CAPACITY];
+        event_count--;
+    }
+    if (overwritten) *overwritten = event_overwritten;
+    portEXIT_CRITICAL(&lock);
+    return count;
 }

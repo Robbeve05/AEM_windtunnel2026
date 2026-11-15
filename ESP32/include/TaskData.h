@@ -33,6 +33,8 @@
 
 #include "PiProtocol.h"
 #include "StateMachine.h"
+#include "DigitalOutputs.h"
+#include "SafetyIO.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Public definitions
@@ -159,6 +161,11 @@ typedef struct
     MotorStatus motor;
     SafetySnapshot safety;
     bool do1_requested, do1_acknowledged, do1_valid;
+    uint64_t timestamp_us, interlock_decision_us, do1_shutdown_requested_us;
+    uint32_t interlock_reason, safety_age_ms;
+    MachineInputs triggering_inputs;
+    OutputDiagnosticEvent output_event, output_unhealthy_event;
+    SafetyGPIOEvent safety_gpio_event;
     FaultEvent history[FAULT_HISTORY_SIZE];
     unsigned history_count;
 } FirstFaultSnapshot;
@@ -212,6 +219,7 @@ typedef struct
     ConfigurationDiagnostics configuration;
     /* First observed post-fault samples; not physical relay edge timestamps. */
     uint32_t fault_do1_off_observed_ms, fault_off2_observed_ms;
+    uint64_t fault_do1_shutdown_requested_us;
 } Telemetry;
 
 ///////////////////////////////////////////////////////////////////////////////

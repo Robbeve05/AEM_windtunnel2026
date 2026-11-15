@@ -65,6 +65,9 @@ bool I2CBus_GetDiagnostics(uint8_t address, I2CBusDiagnostics *out) {
     return true;
 }
 void DigitalOutputs_GetStatus(DigitalOutputStatus *outputs) { memset(outputs, 0, sizeof(*outputs)); }
+unsigned SafetyIO_ReadEvents(SafetyGPIOEvent *gpio_records, unsigned capacity, uint32_t *overwritten) {
+    (void)gpio_records; (void)capacity; *overwritten=0; return 0;
+}
 bool SafetyIO_InterpretLevel(int raw, int active, bool *result) { *result = raw == active; return true; }
 const char *V20Modbus_ErrorName(V20CommError error) { (void)error; return "TIMEOUT"; }
 const char *V20Modbus_OperationName(V20Operation op) { return op == V20_OP_WRITE_CONTROL ? "WRITE_CONTROL" : "NONE"; }

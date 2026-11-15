@@ -53,6 +53,19 @@ typedef enum
     FAULT_START_TIMEOUT,
     FAULT_INITIALIZATION
 } FaultReason_t;
+/* Bits describe only predicates reached at an INTERLOCK decision. Dedicated
+ * E-stop/relay/VFD/contactor faults retain their existing priority. */
+typedef enum {
+    INTERLOCK_NONE = 0,
+    SAFETY_SNAPSHOT_INVALID = 1u << 0,
+    SAFETY_SNAPSHOT_STALE = 1u << 1,
+    DIGITAL_OUTPUT_UNHEALTHY = 1u << 2,
+    SAFETY_NOT_COMMISSIONED = 1u << 3,
+    SAFETY_RELAY_UNHEALTHY = 1u << 4,
+    VFD_FEEDBACK_UNHEALTHY = 1u << 5,
+    CONTACTOR_FEEDBACK_UNHEALTHY = 1u << 6
+} InterlockReason;
+
 typedef enum
 {
     WAIT_BLOCK_ESTOP_PRESSED = 1u << 0,
@@ -87,11 +100,18 @@ typedef struct
     bool valid, commissioned, estop_pressed, relay_ok, stop_ok, outputs_ok;
     bool vfd_fault_available, vfd_fault, contactor_available, contactor_ok;
     bool start_pressed, reset_pressed;
+    uint64_t timestamp_us;
     uint32_t tick_ms, raw_levels, start_sequence, reset_sequence, start_ms, reset_ms;
 } SafetySnapshot;
 typedef struct
 {
     uint32_t now_ms;
+    /* Diagnostic copies only; never used as new safety predicates. */
+    uint64_t timestamp_us, do1_shutdown_requested_us, do_last_ack_us;
+    bool do1_requested, do1_acknowledged, do_ack_valid;
+    float motor_hz;
+    uint16_t v20_status;
+    bool v20_status_valid;
     SafetySnapshot safety;
     bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
     bool drive_communication_ok, v20_response_received, v20_status_healthy;
@@ -107,6 +127,11 @@ typedef struct
 {
     SystemState_t state;
     SystemState_t fault_from;
+    bool interlock_decision_valid;
+    uint32_t interlock_reason;
+    uint64_t interlock_decision_us;
+    SystemState_t interlock_previous_state;
+    MachineInputs interlock_inputs;
     FaultReason_t fault, last_fault;
     uint32_t entered_ms, boot_ms, reset_until_ms, epoch, transition_count;
     bool reset_pending, reset_accepted, recovery_requested, permissive;

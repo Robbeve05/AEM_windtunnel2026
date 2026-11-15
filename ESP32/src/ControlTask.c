@@ -106,6 +106,8 @@ typedef struct
     TickType_t now_tick;
     FaultReason_t clock_fault;
     MachineInputs inputs;
+    DigitalOutputStatus decision_outputs;
+    SafetyGPIOEvent decision_gpio_event;
     bool start, stop, reset;
     bool tasks_ready;
     FaultEvent history[FAULT_HISTORY_SIZE];
@@ -590,8 +592,18 @@ static void Control_CheckSafety(ControlContext *ctx)
         ctx->machine.state == STATE_STOP &&
         V20Modbus_StopConfirmed((int64_t)ctx->machine.entered_ms * 1000LL, STOP_CONFIRM_HZ);
 
+    DigitalOutputs_GetStatus(&ctx->decision_outputs);
+    SafetyIO_GetLastEvent(&ctx->decision_gpio_event);
     ctx->inputs =
         (MachineInputs){.now_ms = ctx->now_ms,
+                        .timestamp_us = (uint64_t)esp_timer_get_time(),
+                        .do1_shutdown_requested_us = ctx->decision_outputs.shutdown_requested_us,
+                        .do_last_ack_us = ctx->decision_outputs.last_ack_us,
+                        .do1_requested = ctx->decision_outputs.vfd_requested,
+                        .do1_acknowledged = ctx->decision_outputs.vfd_acknowledged,
+                        .do_ack_valid = ctx->decision_outputs.confirmed_valid,
+                        .motor_hz = ctx->motor.actual_hz, .v20_status = ctx->motor.status,
+                        .v20_status_valid = ctx->motor.status_valid,
                         .safety = ctx->safety,
                         .sensor_ok = ctx->status.sensor_ok,
                         .drive_ready = ctx->motor.operational_ready,
@@ -634,6 +646,7 @@ static void Control_CheckSafety(ControlContext *ctx)
 static void Control_UpdateStateMachine(ControlContext *ctx)
 {
     const SystemState_t previous_state = ctx->machine.state;
+    ctx->inputs.timestamp_us = (uint64_t)esp_timer_get_time();
     StateMachine_Step(&ctx->machine, &ctx->inputs);
     if (ctx->machine.state == STATE_FAULT)
         Control_CaptureFault(ctx, previous_state,
@@ -957,6 +970,9 @@ static void Control_RecordEvent(ControlContext *ctx)
     }
     if (ctx->status.first_fault.valid && ctx->fault_episode_active)
     {
+        if (!ctx->status.fault_do1_shutdown_requested_us &&
+            outputs.shutdown_requested_us >= ctx->status.first_fault.timestamp_us)
+            ctx->status.fault_do1_shutdown_requested_us = outputs.shutdown_requested_us;
         if (!ctx->status.fault_do1_off_observed_ms && outputs.confirmed_valid &&
             !outputs.vfd_acknowledged)
             ctx->status.fault_do1_off_observed_ms = now;
@@ -975,6 +991,7 @@ static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, co
         return;
     ctx->fault_episode_active = true;
     ctx->status.fault_do1_off_observed_ms = 0;
+    ctx->status.fault_do1_shutdown_requested_us = 0;
     ctx->status.fault_off2_observed_ms = 0;
     DigitalOutputStatus outputs = {0};
     DigitalOutputs_GetStatus(&outputs);
@@ -990,6 +1007,24 @@ static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, co
         .motor = ctx->motor, .safety = ctx->safety,
         .do1_requested = outputs.vfd_requested, .do1_acknowledged = outputs.vfd_acknowledged,
         .do1_valid = outputs.confirmed_valid, .history_count = ctx->history_count};
+    /* These are the already assembled decision inputs, never refreshed GPIO/DO. */
+    f->timestamp_us = ctx->inputs.timestamp_us;
+    f->triggering_inputs = ctx->machine.interlock_decision_valid ?
+        ctx->machine.interlock_inputs : ctx->inputs;
+    f->interlock_reason = ctx->machine.interlock_decision_valid ? ctx->machine.interlock_reason : 0;
+    f->interlock_decision_us = ctx->machine.interlock_decision_valid ? ctx->machine.interlock_decision_us : 0;
+    f->safety_age_ms = f->triggering_inputs.now_ms - f->triggering_inputs.safety.tick_ms;
+    f->do1_shutdown_requested_us = f->triggering_inputs.do1_shutdown_requested_us;
+    f->output_event = ctx->decision_outputs.last_event;
+    f->output_unhealthy_event = ctx->decision_outputs.last_unhealthy_event;
+    f->safety_gpio_event = ctx->decision_gpio_event;
+    if (ctx->machine.interlock_decision_valid) {
+        f->previous_state = ctx->machine.interlock_previous_state;
+        f->safety = f->triggering_inputs.safety;
+        f->do1_requested = f->triggering_inputs.do1_requested;
+        f->do1_acknowledged = f->triggering_inputs.do1_acknowledged;
+        f->do1_valid = f->triggering_inputs.do_ack_valid;
+    }
     const unsigned first = (ctx->history_next + FAULT_HISTORY_SIZE - ctx->history_count) % FAULT_HISTORY_SIZE;
     for (unsigned i = 0; i < ctx->history_count; ++i)
         f->history[i] = ctx->history[(first + i) % FAULT_HISTORY_SIZE];

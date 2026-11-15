@@ -144,6 +144,7 @@ static void LogApplicationStatus(void)
     static uint32_t last_fault_transition;
     static FaultReason_t last_logged_fault;
     static uint32_t last_snapshot_sequence, last_do1_off, last_off2;
+    static uint64_t last_shutdown_us;
     const EventBits_t ready =
         handle_ThreadEventGroup ? xEventGroupGetBits(handle_ThreadEventGroup) : 0;
     const bool queues_ready = commands && pitot_samples && pressure_taps && motor_requests && motor_status && telemetry &&
@@ -184,11 +185,41 @@ static void LogApplicationStatus(void)
     const uint32_t safety_age_ms =
         safety_available ? (uint32_t)(esp_timer_get_time() / 1000) - safety.tick_ms : UINT32_MAX;
 
+    /* Publish bounded event evidence outside ISR/control/output critical paths. */
+    static SafetyGPIOEvent gpio_events[SAFETY_GPIO_EVENT_CAPACITY];
+    uint32_t overwritten = 0;
+    unsigned gpio_count = SafetyIO_ReadEvents(gpio_events, SAFETY_GPIO_EVENT_CAPACITY, &overwritten);
+    for (unsigned i = 0; i < gpio_count; ++i) {
+        const SafetyGPIOEvent *g = &gpio_events[i];
+        ESP_LOGI("SafetyGPIO", "us=%llu generation=%lu unsafe_generation=%lu gpio=%d raw=%d polarity=%d "
+                 "estop=%d/%d relay=%d/%d stop=%d/%d latches=%d,%d,%d overwritten=%lu",
+                 (unsigned long long)g->timestamp_us, (unsigned long)g->generation,
+                 (unsigned long)g->unsafe_generation, g->gpio, g->raw_level, g->active_level,
+                 g->estop_raw, g->estop_polarity, g->relay_raw, g->relay_polarity,
+                 g->stop_raw, g->stop_polarity, g->emergency_latch, g->relay_latch, g->stop_latch,
+                 (unsigned long)overwritten);
+    }
+    static uint32_t output_event_sequence;
+    DigitalOutputStatus output_events = {0};
+    DigitalOutputs_GetStatus(&output_events);
+    const OutputDiagnosticEvent *o = &output_events.last_event;
+    if (o->valid && o->sequence != output_event_sequence) {
+        ESP_LOGI("OutputEvent", "us=%llu seq=%lu reason=%u address=0x%02x op=%u driver_error=%d "
+                 "bus_result=%u requested=%u written=%u written_valid=%d readback=%u readback_valid=%d "
+                 "duration_us=%lu do1_requested=%d do1_acknowledged=%d shutdown_requested_us=%llu",
+                 (unsigned long long)o->timestamp_us, (unsigned long)o->sequence, o->reason,
+                 o->address, o->operation, o->driver_error, o->bus_result, o->requested_image,
+                 o->last_written_image, o->last_written_valid, o->readback_image, o->readback_valid,
+                 (unsigned long)o->duration_us, o->do1_requested, o->do1_acknowledged,
+                 (unsigned long long)output_events.shutdown_requested_us);
+        output_event_sequence = o->sequence;
+    }
+
     if (state_available)
     {
         if (state.first_fault.valid && state.first_fault.sequence != last_snapshot_sequence)
         {
-            static char fault_buffer[4096];
+            static char fault_buffer[6144];
             const FirstFaultSnapshot *f = &state.first_fault;
             const ModbusTransactionDiagnostics *t = &f->motor.transaction;
             ESP_LOGE("FirstFault", "sequence=%lu timestamp_ms=%lu fault=%s operation=%s "
@@ -223,14 +254,16 @@ static void LogApplicationStatus(void)
             last_logged_fault = state.fault;
         }
         if (state.first_fault.valid &&
-            (state.fault_do1_off_observed_ms != last_do1_off || state.fault_off2_observed_ms != last_off2))
+            (state.fault_do1_off_observed_ms != last_do1_off || state.fault_off2_observed_ms != last_off2 ||
+             state.fault_do1_shutdown_requested_us != last_shutdown_us))
         {
+            last_shutdown_us = state.fault_do1_shutdown_requested_us;
             last_do1_off = state.fault_do1_off_observed_ms;
             last_off2 = state.fault_off2_observed_ms;
             ESP_LOGI("FirstFaultPost", "sequence=%lu do1_off_observed_ms=%lu off2_observed_ms=%lu "
-                     "(sample observations, not physical edge order)",
+                     "shutdown_requested_us=%llu (sample observations, not physical edge order)",
                      (unsigned long)state.first_fault.sequence, (unsigned long)last_do1_off,
-                     (unsigned long)last_off2);
+                     (unsigned long)last_off2, (unsigned long long)state.fault_do1_shutdown_requested_us);
         }
         ESP_LOGI("Diag",
                  "machine state=%s fault=%s last_fault=%s running=%d transitions=%lu "

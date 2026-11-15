@@ -12,6 +12,7 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'safety_events'; Sources = @('tests\test_safety_events.c', 'src\SafetyIO.c'); Flags = '/DHOST_GPIO_EVENTS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=0 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1' },
     @{ Name = 'i2c_concurrency'; Sources = @('tests\test_i2c_concurrency.c', 'src\I2CBus.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1' },
     @{ Name = 'i2c100'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '/DSENSOR_I2C_HZ=100000' },
     @{ Name = 'i2c'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '' },

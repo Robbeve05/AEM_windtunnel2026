@@ -147,6 +147,42 @@ size_t FaultSnapshot_Format(const FirstFaultSnapshot *f, char *buffer, size_t si
     if (n < 0 || (size_t)n >= size - used)
         return 0;
     used += (size_t)n;
+    const OutputDiagnosticEvent *o = &f->output_event;
+    const SafetyGPIOEvent *g = &f->safety_gpio_event;
+    n = snprintf(buffer + used, size - used,
+        " trigger_us=%llu interlock_reason_mask=%lu interlock_decision_us=%llu"
+        " trigger_safety_us=%llu trigger_safety_age_ms=%lu do1_shutdown_requested_us=%llu"
+        " output_event=%d,%llu,%lu,%u,%u,%u,%d,%u,%u,%d,%u,%d,%lu,%d,%d"
+        " do_last_ack_us=%llu output_readback_image=%u trigger_motor_hz=%.3f trigger_v20_status=%u trigger_v20_valid=%d"
+        " output_unhealthy_event=%d,%llu,%u"
+        " safety_gpio_event=%d,%llu,%lu,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+        (unsigned long long)f->timestamp_us, (unsigned long)f->interlock_reason,
+        (unsigned long long)f->interlock_decision_us,
+        (unsigned long long)f->triggering_inputs.safety.timestamp_us, (unsigned long)f->safety_age_ms,
+        (unsigned long long)f->do1_shutdown_requested_us,
+        o->valid, (unsigned long long)o->timestamp_us, (unsigned long)o->sequence,
+        o->reason, o->address, o->operation, o->driver_error, o->bus_result,
+        o->requested_image, o->last_written_valid, o->last_written_image,
+        o->readback_valid, (unsigned long)o->duration_us, o->do1_requested, o->do1_acknowledged,
+        (unsigned long long)f->triggering_inputs.do_last_ack_us, o->readback_image, (double)f->triggering_inputs.motor_hz, f->triggering_inputs.v20_status,
+        f->triggering_inputs.v20_status_valid,
+        f->output_unhealthy_event.valid, (unsigned long long)f->output_unhealthy_event.timestamp_us,
+        f->output_unhealthy_event.reason,
+        g->valid, (unsigned long long)g->timestamp_us, (unsigned long)g->generation,
+        (unsigned long)g->unsafe_generation, g->gpio, g->raw_level, g->active_level,
+        g->estop_raw, g->relay_raw, g->stop_raw, g->estop_polarity, g->relay_polarity, g->stop_polarity,
+        g->emergency_latch, g->relay_latch, g->stop_latch);
+    if (n < 0 || (size_t)n >= size - used) return 0;
+    used += (size_t)n;
+    o = &f->output_unhealthy_event;
+    n = snprintf(buffer + used, size - used,
+        " unhealthy_output_detail=%lu,%u,%u,%d,%u,%u,%u,%d,%u,%d,%lu,%d,%d",
+        (unsigned long)o->sequence, o->address, o->operation, o->driver_error, o->bus_result,
+        o->requested_image, o->last_written_image, o->last_written_valid,
+        o->readback_image, o->readback_valid, (unsigned long)o->duration_us,
+        o->do1_requested, o->do1_acknowledged);
+    if (n < 0 || (size_t)n >= size - used) return 0;
+    used += (size_t)n;
     for (unsigned i = 0; i < f->history_count && i < FAULT_HISTORY_SIZE; ++i)
     {
         const FaultEvent *e = &f->history[i];

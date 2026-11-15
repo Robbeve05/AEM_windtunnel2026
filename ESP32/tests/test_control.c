@@ -922,6 +922,28 @@ int main(void)
     assert(c.tasks_ready && c.machine.state==STATE_INIT && !c.machine.reset_accepted);
     Control_PublishStatus(&c); assert(!((MotorRequest*)q[2].data)->run);
     puts("PASS recovered task barrier resumes INIT without reset acceptance or RUN");
+    healthy_context(&c);
+    c.machine.state=STATE_RUNNING;
+    c.inputs=(MachineInputs){.now_ms=c.now_ms,.safety={.valid=false,.raw_levels=0x35},
+        .do1_requested=true,.do1_acknowledged=true,.do_ack_valid=true,.motor_hz=31.5f,
+        .v20_status=0x1234,.v20_status_valid=true};
+    MachineInputs triggering=c.inputs;
+    /* Refreshed producers look healthy by the time the fault is published. */
+    c.safety.valid=true; c.safety.outputs_ok=true;
+    output_status=(DigitalOutputStatus){.initialized=true,.confirmed_valid=true};
+    Control_UpdateStateMachine(&c);
+    triggering.timestamp_us=c.inputs.timestamp_us;
+    assert(c.status.first_fault.code==FAULT_INTERLOCK);
+    assert(c.status.first_fault.interlock_reason==(SAFETY_SNAPSHOT_INVALID|DIGITAL_OUTPUT_UNHEALTHY));
+    assert(!memcmp(&c.status.first_fault.triggering_inputs,&triggering,sizeof(triggering)));
+    assert(!c.status.first_fault.safety.valid && c.status.first_fault.do1_requested);
+    FirstFaultSnapshot immutable=c.status.first_fault;
+    c.inputs.safety=(SafetySnapshot){.valid=true,.commissioned=true,.outputs_ok=true,
+        .relay_ok=true,.stop_ok=true,.tick_ms=c.now_ms};
+    Control_UpdateStateMachine(&c);
+    Control_Fault(&c,FAULT_EMERGENCY_STOP,"later_estop");
+    assert(!memcmp(&immutable,&c.status.first_fault,sizeof(immutable)));
+    puts("PASS exact interlock decision survives healthy producer refresh and later emergency priority");
     test_manual_five_seconds();
     return 0;
 }

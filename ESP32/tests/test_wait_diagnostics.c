@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 static MachineInputs ready_inputs(void)
 {
@@ -248,6 +249,33 @@ int main(void)
     }
     assert(machine.state == STATE_READY && machine.fault == FAULT_NONE &&
            machine.reset_accepted);
+
+    const uint32_t reason_bits[] = {SAFETY_SNAPSHOT_INVALID, SAFETY_SNAPSHOT_STALE,
+        DIGITAL_OUTPUT_UNHEALTHY, SAFETY_NOT_COMMISSIONED};
+    for (unsigned k=0; k<4; ++k) {
+        MachineInputs trigger=ready_inputs();
+        trigger.timestamp_us=1234567; trigger.safety.raw_levels=0xa5;
+        trigger.do1_requested=true; trigger.do1_acknowledged=true; trigger.do_ack_valid=true;
+        if(k==0) trigger.safety.valid=false;
+        if(k==1) trigger.safety.tick_ms=trigger.now_ms-INPUT_TIMEOUT_MS;
+        if(k==2) trigger.safety.outputs_ok=false;
+        if(k==3) trigger.safety.commissioned=false;
+        StateMachine_Init(&machine,0); machine.state=STATE_READY;
+        StateMachine_Step(&machine,&trigger);
+        assert(machine.fault==FAULT_INTERLOCK && machine.interlock_decision_valid);
+        assert(machine.interlock_reason==reason_bits[k]);
+        assert(machine.interlock_previous_state==STATE_READY && machine.interlock_decision_us==1234567);
+        assert(!memcmp(&machine.interlock_inputs,&trigger,sizeof(trigger)));
+        MachineInputs saved=machine.interlock_inputs;
+        trigger.safety=ready_inputs().safety; trigger.timestamp_us++;
+        StateMachine_Step(&machine,&trigger);
+        assert(!memcmp(&machine.interlock_inputs,&saved,sizeof(saved)));
+    }
+    MachineInputs dedicated=ready_inputs();
+    StateMachine_Init(&machine,0); machine.state=STATE_READY;
+    dedicated.safety.relay_ok=false;
+    StateMachine_Step(&machine,&dedicated);
+    assert(machine.fault==FAULT_SAFETY_FEEDBACK && !machine.interlock_decision_valid);
 
     puts("PASS WAIT readiness blocker diagnostics and unchanged READY transition");
     return 0;

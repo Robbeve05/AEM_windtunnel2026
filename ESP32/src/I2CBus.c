@@ -41,7 +41,7 @@ _Static_assert(pdMS_TO_TICKS(I2C_SENSOR_TIMEOUT_MS) > 0, "Sensor timeout require
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
 
-static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry);
+static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry, I2CTransactionEvent *event);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -81,28 +81,28 @@ bool I2CBus_Init(void)
 
 bool I2CBus_Write(uint8_t a, const uint8_t *p, size_t n)
 {
-    return transfer(a, p, NULL, n, true, NULL, false);
+    return transfer(a, p, NULL, n, true, NULL, false, NULL);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_Read()
 
 bool I2CBus_Read(uint8_t a, uint8_t *p, size_t n)
 {
-    return transfer(a, NULL, p, n, true, NULL, false);
+    return transfer(a, NULL, p, n, true, NULL, false, NULL);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_TryRead()
 
 bool I2CBus_TryRead(uint8_t a, uint8_t *p, size_t n)
 {
-    return transfer(a, NULL, p, n, false, NULL, true);
+    return transfer(a, NULL, p, n, false, NULL, true, NULL);
 }
 ///////////////////////////////////////////////////////////////////////////////
 // I2CBus_TryWrite()
 
 bool I2CBus_TryWrite(uint8_t a, const uint8_t *p, size_t n)
 {
-    return transfer(a, p, NULL, n, false, NULL, true);
+    return transfer(a, p, NULL, n, false, NULL, true, NULL);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -120,7 +120,7 @@ bool I2CBus_GetDiagnostics(uint8_t address, I2CBusDiagnostics *out)
 ///////////////////////////////////////////////////////////////////////////////
 // transfer()
 
-static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry)
+static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t size, bool wait, const uint8_t *reg, bool retry, I2CTransactionEvent *event)
 {
     if (address >= 128 || !size || (!tx && !rx)) return false;
     const int64_t called = esp_timer_get_time();
@@ -177,6 +177,10 @@ static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t siz
     }
     const int64_t completed = esp_timer_get_time();
     const uint32_t duration = wire_calls ? (uint32_t)(wire_finished - started) : 0;
+    if (event)
+        *event = (I2CTransactionEvent){.timestamp_us = (uint64_t)completed,
+            .duration_us = duration, .driver_error = result == I2C_RESULT_BUSY ? 0 : error,
+            .result = result};
     portENTER_CRITICAL(&diagnostics_lock);
     I2CBusDiagnostics *d = &diagnostics[address];
     d->results[result]++;
@@ -207,7 +211,7 @@ static bool transfer(uint8_t address, const uint8_t *tx, uint8_t *rx, size_t siz
 
 bool I2CBus_ReadRegister(uint8_t address, uint8_t reg, uint8_t *data, size_t size)
 {
-    return transfer(address, NULL, data, size, true, &reg, false);
+    return transfer(address, NULL, data, size, true, &reg, false, NULL);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -250,5 +254,14 @@ int I2CBus_FormatDiagnostics(char *buffer, size_t size)
 
 bool I2CBus_TryReadOnce(uint8_t address, uint8_t *data, size_t size)
 {
-    return transfer(address, NULL, data, size, false, NULL, false);
+    return transfer(address, NULL, data, size, false, NULL, false, NULL);
+}
+
+bool I2CBus_WriteObserved(uint8_t address, const uint8_t *data, size_t size, I2CTransactionEvent *event)
+{
+    return transfer(address, data, NULL, size, true, NULL, false, event);
+}
+bool I2CBus_ReadRegisterObserved(uint8_t address, uint8_t reg, uint8_t *data, size_t size, I2CTransactionEvent *event)
+{
+    return transfer(address, NULL, data, size, true, &reg, false, event);
 }

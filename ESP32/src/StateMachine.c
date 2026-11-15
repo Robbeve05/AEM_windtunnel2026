@@ -84,6 +84,8 @@ static void transition(StateMachine *m, SystemState_t s, uint32_t now)
 {
     if (m->state != s)
     {
+        if (m->state == STATE_FAULT && s != STATE_FAULT)
+            m->interlock_decision_valid = false;
         m->state = s;
         m->entered_ms = now;
         m->transition_count++;
@@ -206,8 +208,24 @@ static bool safety_healthy(const MachineInputs *i)
 ///////////////////////////////////////////////////////////////////////////////
 // StateMachine_Step()
 
+/* Capture before Fault changes state; never overwrite within an episode. */
+static void interlock_fault(StateMachine *m, const MachineInputs *i, uint32_t reasons)
+{
+    if (!m->interlock_decision_valid && m->state != STATE_FAULT)
+    {
+        m->interlock_decision_valid = true;
+        m->interlock_reason = reasons;
+        m->interlock_decision_us = i->timestamp_us;
+        m->interlock_previous_state = m->state;
+        m->interlock_inputs = *i;
+    }
+    StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
+}
+
 void StateMachine_Step(StateMachine *m, const MachineInputs *i)
 {
+    if (m->state != STATE_FAULT)
+        m->interlock_decision_valid = false;
     m->recovery_requested = false;
     m->permissive = false;
     bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
@@ -229,7 +247,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     if (fresh && !i->safety.relay_ok)
         StateMachine_Fault(m, FAULT_SAFETY_FEEDBACK, i->now_ms);
     if (m->state != STATE_INIT && (!fresh || !i->safety.outputs_ok))
-        StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
+        interlock_fault(m, i,
+            (!i->safety.valid ? SAFETY_SNAPSHOT_INVALID :
+             !fresh ? SAFETY_SNAPSHOT_STALE : 0u) |
+            (!i->safety.outputs_ok ? DIGITAL_OUTPUT_UNHEALTHY : 0u));
     if (i->safety.vfd_fault_available && i->safety.vfd_fault)
         StateMachine_Fault(m, FAULT_VFD, i->now_ms);
     if (i->safety.contactor_available && !i->safety.contactor_ok)
@@ -258,7 +279,11 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
         else if (!i->pi_ok)
             StateMachine_Fault(m, FAULT_PI_CONNECTION, i->now_ms);
         else if (!healthy)
-            StateMachine_Fault(m, FAULT_INTERLOCK, i->now_ms);
+            interlock_fault(m, i,
+                (!i->safety.valid ? SAFETY_SNAPSHOT_INVALID :
+                 !fresh ? SAFETY_SNAPSHOT_STALE : 0u) |
+                (!i->safety.outputs_ok ? DIGITAL_OUTPUT_UNHEALTHY : 0u) |
+                (!i->safety.commissioned ? SAFETY_NOT_COMMISSIONED : 0u));
     }
     if (i->reset && (m->state == STATE_WAIT || m->state == STATE_FAULT) && fresh &&
         !i->safety.estop_pressed && !i->safety.reset_pressed && i->safety.stop_ok &&

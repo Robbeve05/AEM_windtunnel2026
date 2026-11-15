@@ -46,6 +46,17 @@ bool I2CBus_ReadRegister(uint8_t address,uint8_t reg,uint8_t *data,size_t size) 
     *data=output_latch ^ (mismatch ? (1u<<VFD_ENABLE_DO_BIT) : 0);
     return !fail_read;
 }
+int64_t esp_timer_get_time(void) { return (int64_t)GetTickCount64()*1000; }
+bool I2CBus_WriteObserved(uint8_t a, const uint8_t *d, size_t n, I2CTransactionEvent *e) {
+    bool ok=I2CBus_Write(a,d,n);
+    *e=(I2CTransactionEvent){.timestamp_us=(uint64_t)esp_timer_get_time(), .duration_us=123,
+        .driver_error=ok?0:77,.result=ok?I2C_RESULT_OK:I2C_RESULT_DRIVER}; return ok;
+}
+bool I2CBus_ReadRegisterObserved(uint8_t a, uint8_t r, uint8_t *d, size_t n, I2CTransactionEvent *e) {
+    bool ok=I2CBus_ReadRegister(a,r,d,n);
+    *e=(I2CTransactionEvent){.timestamp_us=(uint64_t)esp_timer_get_time(), .duration_us=456,
+        .driver_error=ok?0:88,.result=ok?I2C_RESULT_OK:I2C_RESULT_TIMEOUT}; return ok;
+}
 static bool vfd_on(uint8_t image) {return !!(image&(1u<<VFD_ENABLE_DO_BIT))==(VFD_ENABLE_ACTIVE_LEVEL!=0);}
 static DWORD WINAPI enable_thread(LPVOID unused) {(void)unused;assert(DigitalOutputs_Set(true,(StatusIndicator){0}));return 0;}
 static DWORD WINAPI disable_thread(LPVOID unused) {(void)unused;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));return 0;}
@@ -91,16 +102,30 @@ int main(void) {
     assert(s.confirmed_image==0xffu);
     inhibited=false;fail_write=writes+1;assert(!DigitalOutputs_Set(true,(StatusIndicator){.red=true}));
     DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && !s.vfd_acknowledged && s.write_errors==1);
+    assert(s.last_event.reason==OUTPUT_I2C_FAILURE && s.last_event.driver_error==77);
+    assert(s.last_event.operation==OUTPUT_OP_WRITE && s.last_event.duration_us==123);
+    assert(s.last_event.last_written_valid && !s.last_event.readback_valid);
+    const OutputDiagnosticEvent original_failure=s.last_unhealthy_event;
     fail_write=0;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));DigitalOutputs_GetStatus(&s);assert(s.confirmed_valid && !vfd_on(s.confirmed_image));
+    assert(s.last_unhealthy_event.sequence==original_failure.sequence);
     LONG before=writes, before_reads=reads;
     for(int i=0;i<100;i++) assert(DigitalOutputs_Set(false,(StatusIndicator){0}));
     assert(writes==before && reads-before_reads==100); /* 10 ms probes, zero duplicate writes */
     mismatch=true;assert(!DigitalOutputs_Set(false,(StatusIndicator){0}));
     DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && s.latch_valid && s.latch_mismatches==1 && !s.vfd_acknowledged);
+    assert(s.last_event.reason==OUTPUT_READBACK_MISMATCH && s.last_event.driver_error==0);
+    assert(s.last_event.readback_valid && s.last_event.readback_image!=s.requested_image);
+    const uint32_t mismatch_sequence=s.last_event.sequence;
     mismatch=false;fail_read=true;assert(!DigitalOutputs_Set(false,(StatusIndicator){0}));
     DigitalOutputs_GetStatus(&s);assert(!s.confirmed_valid && !s.latch_valid && s.read_errors==1);
+    assert(s.last_event.sequence==mismatch_sequence); /* unhealthy episode does not overwrite first edge */
     fail_read=false;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));
     DigitalOutputs_GetStatus(&s);assert(s.confirmed_valid && !s.vfd_requested && !s.vfd_acknowledged);
+    fail_read=true;assert(!DigitalOutputs_Set(false,(StatusIndicator){0}));
+    DigitalOutputs_GetStatus(&s);
+    assert(s.last_event.reason==OUTPUT_I2C_FAILURE && s.last_event.driver_error==88);
+    assert(!s.last_event.readback_valid && s.last_event.operation==OUTPUT_OP_READ_LATCH);
+    fail_read=false;assert(DigitalOutputs_Set(false,(StatusIndicator){0}));
     assert(writes==before); /* recovery never writes RUN/DO1 back on */
     // Failing direction setup never publishes initialized/confirmed outputs.
     fail_write=writes+2;assert(!DigitalOutputs_Init());DigitalOutputs_GetStatus(&s);

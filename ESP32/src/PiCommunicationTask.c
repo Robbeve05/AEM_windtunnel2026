@@ -526,13 +526,14 @@ void PiCommunicationTask(void *argument)
                                        (unsigned long)outputs.write_errors, outputs.requested_image,
                                        outputs.confirmed_image, outputs.confirmed_valid,
                                        EXTERNAL_STATUS_LEDS_ENABLED);
-                if (length > 0 && length < (int)sizeof(buffer) - 160)
+                if (length > 0 && length < (int)sizeof(buffer) - 224)
                     length += snprintf(buffer + length, sizeof(buffer) - length,
                         " first_fault_valid=%d first_fault_sequence=%lu"
-                        " fault_do1_off_observed_ms=%lu fault_off2_observed_ms=%lu",
+                        " fault_do1_off_observed_ms=%lu fault_off2_observed_ms=%lu fault_do1_shutdown_requested_us=%llu",
                         t.first_fault.valid, (unsigned long)t.first_fault.sequence,
                         (unsigned long)t.fault_do1_off_observed_ms,
-                        (unsigned long)t.fault_off2_observed_ms);
+                        (unsigned long)t.fault_off2_observed_ms,
+                        (unsigned long long)t.fault_do1_shutdown_requested_us);
                 if (length > 0 && length < (int)sizeof(buffer) - 448)
                     length += snprintf(buffer + length, sizeof(buffer) - length,
                         " modbus_last_valid_response_ms=%lu modbus_last_valid_process_data_ms=%lu"

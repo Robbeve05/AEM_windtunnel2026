@@ -64,3 +64,12 @@ bool I2CBus_ReadRegister(uint8_t address, uint8_t reg, uint8_t *data, size_t siz
 int I2CBus_FormatDiagnostics(char *buffer, size_t size);
 
 bool I2CBus_TryReadOnce(uint8_t address, uint8_t *data, size_t size);
+
+typedef struct {
+    uint64_t timestamp_us;
+    uint32_t duration_us;
+    int driver_error;
+    I2CBusResult result;
+} I2CTransactionEvent;
+bool I2CBus_WriteObserved(uint8_t address, const uint8_t *data, size_t size, I2CTransactionEvent *event);
+bool I2CBus_ReadRegisterObserved(uint8_t address, uint8_t reg, uint8_t *data, size_t size, I2CTransactionEvent *event);
