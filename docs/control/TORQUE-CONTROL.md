@@ -91,7 +91,7 @@ Build (no upload):
 
 ```powershell
 cd ESP32
-pio run -e waveshare_s3 -e waveshare_s3_frequency
+pio run
 ./tests/run_host_tests.ps1
 python -m unittest discover -s tests -p test_source_layout.py -v
 ```

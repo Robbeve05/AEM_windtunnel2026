@@ -37,6 +37,19 @@ int main(void) {
         Control_UpdateController(&c);assert(c.machine.state==STATE_FAULT && c.machine.fault==FAULT_SENSOR);
         assert(!c.controller.previous_valid && c.controller.integral==0);
     }
+    /* Real failed I2C acquisition remains invalid and published in MANUAL. */
+    healthy_context(&c);c.machine.state=STATE_RUNNING;c.status.mode=MODE_MANUAL;
+    c.motor.tick=c.now_tick;c.status.manual_hz=20;read_failure=true;
+    c.heartbeat.tick=xTaskGetTickCount();
+    Control_AcquirePitot(&c);c.safety.tick_ms=c.now_ms;c.motor.tick=c.now_tick;
+    c.motor.operation_enabled=true;Control_CheckSafety(&c);Control_UpdateStateMachine(&c);
+    Control_UpdateController(&c);
+    assert(!c.status.sensor_ok && !c.sample.valid && !((PitotSample*)q[1].data)->valid);
+    assert(!c.controller.previous_valid);
+    assert(c.machine.fault==FAULT_NONE);
+    assert(c.machine.state==STATE_RUNNING && c.frequency_running);
+    /* Restore a latched fault for the no-restart regression below. */
+    StateMachine_Fault(&c.machine,FAULT_SENSOR,c.now_ms);
     read_failure=false;status_bits=0;unsigned previous_arms=arms;
     Control_AcquirePitot(&c);Control_UpdateController(&c);
     assert(c.sample.valid && c.machine.state==STATE_FAULT && arms==previous_arms);

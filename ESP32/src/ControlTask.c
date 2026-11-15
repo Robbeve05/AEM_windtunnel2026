@@ -606,6 +606,7 @@ static void Control_CheckSafety(ControlContext *ctx)
                         .v20_status_valid = ctx->motor.status_valid,
                         .safety = ctx->safety,
                         .sensor_ok = ctx->status.sensor_ok,
+                        .manual_mode = ctx->status.mode == MODE_MANUAL,
                         .drive_ready = ctx->motor.operational_ready,
                         .drive_ok = ctx->motor.ok,
                         .drive_fault_free = ctx->motor.drive_fault_free,
@@ -703,12 +704,14 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 static void Control_UpdateController(ControlContext *ctx)
 {
     ctx->status.output = 0.0f;
-    if (ctx->machine.state == STATE_RUNNING && !ctx->stop && !ctx->status.sensor_ok)
+    if (ctx->machine.state == STATE_RUNNING && !ctx->stop && !ctx->status.sensor_ok &&
+        StateMachine_PitotRequired(ctx->status.mode == MODE_MANUAL))
     {
         Control_Fault(ctx, FAULT_SENSOR, "pitot_feedback");
         V20Modbus_Disarm();
     }
-    if (ctx->machine.state == STATE_RUNNING && !ctx->stop && ctx->status.sensor_ok && ctx->clock_fault == FAULT_NONE)
+    if (ctx->machine.state == STATE_RUNNING && !ctx->stop &&
+        (ctx->status.sensor_ok || !StateMachine_PitotRequired(ctx->status.mode == MODE_MANUAL)) && ctx->clock_fault == FAULT_NONE)
     {
         if (ctx->status.mode == MODE_MANUAL)
         {
@@ -734,7 +737,7 @@ static void Control_UpdateController(ControlContext *ctx)
             else
                 ctx->status.output = 100.0f * ctx->status.applied_hz / V20_REFERENCE_HZ;
         }
-        else
+        else if (ctx->status.mode == MODE_AUTO && ctx->status.sensor_ok)
         {
             if (!ctx->curve_running)
                 ctx->curve_running =

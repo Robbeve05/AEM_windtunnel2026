@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.fan_calibration import FanCharacteristicCalibrator, CalibrationConfig
-from backend.esp32 import ESP32Client
+from backend.esp32 import ESP32Client, can_select_mode
 from backend.measurements import Measurements
 from backend.models import Config, FlowMetricsSetting, GraphAirspeedSetting, MeasurementRequest, Recalculate, Setpoint, PressureFilterSetting, ControlMode, ManualFrequency
 from backend.simulator import Simulator
@@ -434,7 +434,9 @@ async def select_mode(body: ControlMode):
     c=control()
     c.calibration.require_idle()
     async with c.calibration.lock:
-        require_ready_esp32(c)
+        if (not c.esp32_mode or c.esp32 is None or not c.esp32.fresh
+                or not can_select_mode(c.esp32.snapshot(), body.mode)):
+            raise ValueError('Mode selection requires fresh telemetry and an eligible stopped state')
         await c.esp32.command('MODE '+body.mode)
         if body.mode == 'MANUAL':
             c.reynolds_setpoint = None

@@ -63,7 +63,6 @@ The launcher starts the local API backend when needed. See [HMI/README.md](HMI/R
 
 ```bash
 pio run -e waveshare_s3
-pio run -e waveshare_s3_sim
 ```
 
 Host regression tests on Windows: `./tests/run_host_tests.ps1`. Hardware commissioning is **not** implied by compiling or passing tests.

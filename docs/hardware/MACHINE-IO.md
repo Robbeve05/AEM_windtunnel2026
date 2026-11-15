@@ -108,7 +108,6 @@ From a short local checkout without spaces (ESP-IDF restriction):
 ```text
 cd ESP32
 pio run -e waveshare_s3
-pio run -e waveshare_s3_sim
 python tests/test_io_configuration.py --database .pio/build/waveshare_s3/compile_commands.json --output .pio/io-config-tests
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_host_tests.ps1
 ```

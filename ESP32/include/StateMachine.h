@@ -113,6 +113,7 @@ typedef struct
     uint16_t v20_status;
     bool v20_status_valid;
     SafetySnapshot safety;
+    bool manual_mode; /* Explicit current command mode; zero defaults to AUTO policy. */
     bool sensor_ok, drive_ready, drive_ok, drive_fault_free, drive_fault, pi_ok, stop, start, reset;
     bool drive_communication_ok, v20_response_received, v20_status_healthy;
     bool v20_modbus_initialized, v20_run_commissioned;
@@ -146,3 +147,6 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *in);
 uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInputs *in);
 const char *StateMachine_Name(SystemState_t state);
 const char *FaultReason_Name(FaultReason_t fault);
+
+/* Shared policy; never changes the reported sensor health or suppresses explicit faults. */
+bool StateMachine_PitotRequired(bool manual_mode);

@@ -51,7 +51,6 @@ python3 -m unittest discover -s tests -p 'test_esp32_ethernet.py'
 From ESP32 project:
 ```sh
 pio run -e waveshare_s3
-pio run -e waveshare_s3_sim
 ```
 
 Neither physical operation nor timing guarantees are established by source inspection alone.

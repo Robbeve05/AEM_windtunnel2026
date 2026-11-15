@@ -25,6 +25,23 @@
 
 static void transition(StateMachine *m, SystemState_t s, uint32_t now);
 static bool safety_healthy(const MachineInputs *i);
+static bool pitot_permits(const MachineInputs *i);
+
+///////////////////////////////////////////////////////////////////////////////
+// StateMachine_PitotRequired()
+
+bool StateMachine_PitotRequired(bool manual_mode)
+{
+    return !manual_mode;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// pitot_permits()
+
+static bool pitot_permits(const MachineInputs *i)
+{
+    return i->sensor_ok || !StateMachine_PitotRequired(i->manual_mode);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -121,7 +138,7 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
         reasons |= WAIT_BLOCK_VFD_FAULT;
     if (i->safety.contactor_available && !i->safety.contactor_ok)
         reasons |= WAIT_BLOCK_CONTACTOR;
-    if (!i->sensor_ok)
+    if (!pitot_permits(i))
         reasons |= WAIT_BLOCK_SENSOR;
     if (!i->v20_modbus_initialized)
         reasons |= WAIT_BLOCK_MODBUS_NOT_INITIALIZED;
@@ -230,7 +247,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     m->permissive = false;
     bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
     bool healthy = safety_healthy(i);
-    bool stopped_process = i->sensor_ok && i->v20_diagnostics_complete &&
+    bool stopped_process = pitot_permits(i) && i->v20_diagnostics_complete &&
                    i->drive_communication_ok && !i->drive_run_locked &&
                    i->drive_fault_free && i->pi_ok &&
                    i->v20_configuration_valid && (SIMULATION_MODE || i->v20_run_commissioned);
@@ -260,7 +277,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     if (m->state == STATE_READY || m->state == STATE_STARTING ||
         m->state == STATE_RUNNING || m->state == STATE_STOP || m->state == STATE_STOPPED_PREPARE)
     {
-        if (!i->sensor_ok)
+        if (!pitot_permits(i))
             StateMachine_Fault(m, FAULT_SENSOR, i->now_ms);
 
         else if (i->drive_fault)
@@ -310,7 +327,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        if (fresh && i->sensor_ok && i->v20_diagnostics_complete && i->v20_response_received &&
+        if (fresh && pitot_permits(i) && i->v20_diagnostics_complete && i->v20_response_received &&
             i->drive_communication_ok && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
         break;

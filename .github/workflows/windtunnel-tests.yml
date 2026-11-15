@@ -60,5 +60,3 @@ jobs:
         run: python -m pip install platformio
       - name: Build production firmware
         run: python -m platformio run -e waveshare_s3
-      - name: Build simulation firmware
-        run: python -m platformio run -e waveshare_s3_sim

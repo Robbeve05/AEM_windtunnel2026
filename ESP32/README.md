@@ -110,8 +110,7 @@ The dedicated Pi link uses static IPv4: ESP32 `192.168.50.2/24`, Raspberry Pi `1
 From `ESP32/`, in a local directory without spaces:
 
 ```bash
-pio run -e waveshare_s3 -e waveshare_s3_frequency
-pio run -e waveshare_s3_sim
+pio run
 ```
 
 Windows host regression tests:
@@ -134,3 +133,5 @@ These tests use mocked hardware; they include V20 asynchronous responses, OFF1/s
 7. Commission the ABP2 pressure-tap channels and Cp measurement plumbing only after their hardware and calibration are verified.
 
 **Do not treat this README as electrical approval or a safety assessment.** Physical commissioning requires qualified personnel and documented verification of the installed hardware.
+
+See [Pitot feedback in MANUAL and AUTO](../docs/MANUAL-PITOT.md) for the operating policy and limitations.

@@ -529,3 +529,13 @@ class ESP32Client:
         self._stopped = True
         if self._writer is not None:
             self._writer.close()
+
+
+def can_select_mode(snapshot, mode):
+    """Allow a stopped machine waiting on Pitot to select MANUAL before READY."""
+    if snapshot.get('stale', True):
+        return False
+    return snapshot.get('state') == 'READY' or (
+        mode == 'MANUAL' and snapshot.get('sensor_ok') == 0
+        and snapshot.get('state') in ('INIT', 'WAIT', 'FAULT')
+    )

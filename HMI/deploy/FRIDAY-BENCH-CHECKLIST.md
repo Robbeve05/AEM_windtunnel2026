@@ -11,10 +11,9 @@ Use GitHub branch `main` for **both** ESP32 and Pi.
 On the development PC (PlatformIO):
 ```sh
 cd ESP32
-pio run -e waveshare_s3_sim
 pio run -e waveshare_s3
 ```
-Do not assume an executable exists or is valid until the builds pass. The real firmware is intentionally set to `SAFETY_IO_COMMISSIONED=0`, `V20_RUN_COMMISSIONED=0`, and remote start disabled. These protections must not be bypassed to make a demonstration run.
+Do not assume an executable exists or is valid until the build passes. The real firmware is intentionally set to `SAFETY_IO_COMMISSIONED=0`, `V20_RUN_COMMISSIONED=0`, and remote start disabled. These protections must not be bypassed to make a demonstration run.
 
 On the Pi (for an existing checkout at ~/AEM_windtunnel2026):
 ```sh

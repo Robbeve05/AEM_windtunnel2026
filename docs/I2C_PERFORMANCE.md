@@ -4,8 +4,7 @@ Datum: 9 november 2026. Branch: main. De wijzigingen zijn niet geflasht.
 
 ## Resultaat en beperkingen
 
-- Standaardklok 400 kHz, configureerbaar met SENSOR_I2C_HZ. De aparte
-  PlatformIO-omgeving waveshare_s3_i2c100 bouwt dezelfde firmware op 100 kHz.
+- Standaardklok 400 kHz, configureerbaar met SENSOR_I2C_HZ.
 - DO-wijzigingen schrijven direct binnen de bestaande InputHandler-cyclus.
   Een ongewijzigd beeld krijgt iedere 10 ms een register-1-readback in plaats
   van een herhaalde write. De controlefrequentie is dus niet verlaagd.
@@ -161,7 +160,7 @@ $env:PYTHONPATH='HMI'
 $env:QT_QPA_PLATFORM='offscreen'
 & .\.venv-hmi\Scripts\python.exe -m unittest discover -s HMI/tests -q
 & .\.venv-hmi\Scripts\python.exe -m unittest discover -s ESP32/tests -q
-& C:\Users\robbe\.platformio\penv\Scripts\platformio.exe run -d ESP32 -e waveshare_s3 -e waveshare_s3_i2c100
+& C:\Users\robbe\.platformio\penv\Scripts\platformio.exe run -d ESP32 -e waveshare_s3
 ```
 
 De gerichte C-tests dekken beide klokken, begrensde retries, timeouts, ruwe codes,
@@ -229,6 +228,6 @@ V20-schedulertest. De veiligheidslogica is voor deze opdracht niet gewijzigd.
 5. Herstel de verbinding. Controleer dat een gelatchte fout niet vanzelf RUN wordt
    en dat bestaande fysieke reset/startautorisatie vereist blijft. Test motor/EMC
    alleen volgens de bestaande commissioningprocedure.
-6. Bij verslechterde NACKs, timeouts of deadlines: gebruik waveshare_s3_i2c100.
+6. Bij verslechterde NACKs, timeouts of deadlines: onderzoek de busbekabeling en voeding.
    Er is bewust geen runtime snelheidswisseling. Vergelijk eerst de oorzaak
    (kabelcapaciteit, voeding, pull-ups, EMC) voordat 400 kHz wordt vrijgegeven.

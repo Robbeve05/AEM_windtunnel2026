@@ -402,6 +402,13 @@ class NativeHMITests(unittest.TestCase):
             window.mode_select.setCurrentText("AUTO")
             self.assertEqual(window.mode_value_stack.currentIndex(), 0)
             self.assertFalse(window.mode_apply.isEnabled())
+            window.mode_select.setCurrentText("MANUAL")
+            window._on_status({"simulation": False, "esp32": dict(
+                connected=True, stale=False, state="INIT", mode="AUTO", sensor_ok=0)}, None)
+            self.assertTrue(window.mode_apply.isEnabled())
+            self.assertFalse(window.manual_apply.isEnabled())
+            window.mode_select.setCurrentText("AUTO")
+            self.assertFalse(window.mode_apply.isEnabled())
             # Fresh RUNNING cannot apply a new operating point.
             window._on_status({"simulation": False, "esp32": dict(
                 connected=True, stale=False, state="RUNNING", mode="AUTO",

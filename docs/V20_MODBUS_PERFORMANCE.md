@@ -70,7 +70,7 @@ Voor fysieke RTT, DE-turnaround en exacte inter-framepauzes is een RS-485-analys
 - De nieuwe `test_v20_scheduler.c` gebruikt de bestaande UART-fake en compileert tegen de echte driver. Met `/DBASELINE` kan dezelfde test tegen de bewaarde oorspronkelijke driver worden gelinkt; alleen de nieuwe prestatie- en deadlineasserties worden dan uitgeschakeld.
 - Vergelijkingslogs: `output/v20-scheduler-baseline.log` en `output/v20-scheduler-optimized.log`.
 - Volledige host- en firmwarelogs: `output/v20-optimization-host-tests-final.log` en `output/v20-optimization-builds-final.log`.
-- Firmwarebuilds: `pio run -d ESP32 -e waveshare_s3 -e waveshare_s3_sim -e waveshare_s3_frequency -e waveshare_s3_i2c100`.
+- Firmwarebuilds: `pio run -d ESP32 -e waveshare_s3`.
 - HMI: unittest `test_esp32_ethernet.py` (16 tests) en `test_native_hmi.py` (20 tests); daarnaast de ESP32 source-layouttest. Alle uitgevoerd en geslaagd.
 
 Resultaat: volledige host-suite 28/28 geslaagd; definitieve V20-hercontrole 6/6 geslaagd; alle vier PlatformIO-omgevingen SUCCESS. De aanvullende definitieve V20-log staat in output/v20-optimization-v20-final.log. git diff --check geeft geen fouten. Bestaande lokale wijzigingen buiten deze Modbus-optimalisatie zijn behouden.

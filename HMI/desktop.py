@@ -3,7 +3,7 @@ import math
 import re
 import sys
 import time
-from backend.esp32 import status_indication, wait_diagnostics
+from backend.esp32 import can_select_mode, status_indication, wait_diagnostics
 from backend.models import Config
 from datetime import datetime
 from pathlib import Path
@@ -1688,8 +1688,8 @@ class HMIWindow(QMainWindow):
         self.setpoint_spin.setEnabled(True)
         self.manual_hz.setEnabled(True)
         self.mode_select.setEnabled(True)
-        self.mode_apply.setEnabled(ready)
-        # All three Apply buttons require physical READY.
+        self.mode_apply.setEnabled(online and can_select_mode(drive, selected))
+        # Applying an operating point requires physical READY.
         self.setpoint_apply.setEnabled(
             ready and selected == active_mode == "AUTO" and self.mode_select.currentIndex() != 2
             and self.setpoint_spin.has_valid_value()
@@ -1718,6 +1718,8 @@ class HMIWindow(QMainWindow):
             self.input_validation.setText("")
         if not online:
             reason = "OFFLINE · Values can be entered, but applying requires a connected ESP32 in READY."
+        elif not ready and can_select_mode(drive, selected):
+            reason = "Pitot unavailable. Apply MANUAL mode to continue the physical start procedure."
         elif not ready:
             reason = "LOCKED · Apply is only permitted when the physical machine is in READY."
         elif selected != active_mode:
@@ -1765,8 +1767,8 @@ class HMIWindow(QMainWindow):
                    lambda data, error: self._show_error(str(error)) if error else self._on_status(data, None))
 
     def _apply_mode(self):
-        if (self.state.get('esp32') or {}).get('state')!='READY':
-            self._show_error('Mode changes require READY')
+        if not self.mode_apply.isEnabled():
+            self._show_error('Mode selection unavailable in the current state')
             return
         self._post('tunnel/mode',{'mode':self._selected_mode()},
                    lambda data,error: self._show_error(str(error)) if error else self._on_status(data,None))

@@ -131,7 +131,7 @@ vergrendeling en niet de START-autorisatie. De bus wordt niet automatisch gerese
   gelijktijdige writers en mislukte initialisatie. Bestaande controltests toetsen
   veiligheidsfeedback, noodstop, eerste fout en geen automatische herstart.
 - Alle 25 hostexecutables slagen. Python-bronlayouttest slaagt.
-- PlatformIO: waveshare_s3, waveshare_s3_sim en extra waveshare_s3_frequency bouwen.
+- PlatformIO: waveshare_s3 bouwen.
 
 Logs: output/communication-host-tests.log, output/communication-python-tests.log,
 output/communication-build.log. Geen firmware geflasht of motor aangestuurd.

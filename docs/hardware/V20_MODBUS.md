@@ -56,7 +56,6 @@ From `ESP32/`:
 
 ```bash
 pio run -e waveshare_s3
-pio run -e waveshare_s3_sim
 ```
 
 Windows host regression tests: `./tests/run_host_tests.ps1`.
