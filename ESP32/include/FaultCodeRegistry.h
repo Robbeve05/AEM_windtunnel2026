@@ -33,6 +33,7 @@
     FAULT(FAULT_CONFIGURATION, 0x0702, "Required configuration invalid") \
     FAULT(FAULT_START_TIMEOUT, 0x0204, "Drive start confirmation timeout") \
     FAULT(FAULT_INITIALIZATION, 0x0703, "Required task initialization incomplete") \
+    FAULT(FAULT_STARTUP_RESET_REQUIRED, 0x0704, "Startup complete - physical reset required") \
     INTERLOCK(SAFETY_SNAPSHOT_INVALID, 0x0301, "Safety snapshot invalid") \
     INTERLOCK(SAFETY_SNAPSHOT_STALE, 0x0302, "Safety snapshot stale or timestamp ordering invalid") \
     INTERLOCK(DIGITAL_OUTPUT_UNHEALTHY, 0x0303, "Digital output acknowledgement unhealthy") \
