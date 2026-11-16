@@ -674,8 +674,11 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
 
     if (ctx->machine.recovery_requested)
     {
-        V20Modbus_RequestRecheck();
+        /* Acknowledge a verified, fresh V20 fault before reinitialising
+         * the Modbus status. The driver defers recheck until the ON=0
+         * STW7 high/low pulse is acknowledged. Never issue RUN here. */
         (void)V20Modbus_RequestFaultAck();
+        V20Modbus_RequestRecheck();
     }
     if (previous_state != STATE_STOPPED_PREPARE && ctx->machine.state == STATE_STOPPED_PREPARE)
         V20Modbus_Disarm();

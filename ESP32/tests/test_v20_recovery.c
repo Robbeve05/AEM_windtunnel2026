@@ -106,9 +106,11 @@ static void test_fault_ack_gate(void)
     fake.status = 0x0239;
     MotorRequest r = request(false, 0);
     pump(&r, 30);
-    V20Modbus_RequestRecheck();
+    /* The physical RESET path must request the ACK while the V20 status
+     * remains valid, THEN defer the recheck until the STW7 low edge. */
     bool accepted = V20Modbus_RequestFaultAck();
     assert(accepted == (V20_FAULT_ACK_VERIFIED != 0));
+    V20Modbus_RequestRecheck();
     unsigned runs = fake.run_commands;
     pump(&r, 80);
     assert(fake.run_commands == runs && (fake.stw & 1u) == 0);
@@ -118,6 +120,7 @@ static void test_fault_ack_gate(void)
     {
         fake.status = 0x0239; pump(&r, 30);
         assert(V20Modbus_RequestFaultAck());
+        V20Modbus_RequestRecheck();
         step(&r, true, false); /* Safety loss cancels queued acknowledgment. */
         pump(&r, 50);
         assert(!status().drive_fault_free && !status().fault_ack_pending);
@@ -133,6 +136,39 @@ static MachineInputs inputs(void)
         .drive_communication_ok=true,.v20_response_received=true,.v20_modbus_initialized=true,
         .v20_diagnostics_complete=true,.v20_configuration_valid=true,.v20_run_commissioned=true,
         .stop_command_acknowledged=true};
+}
+
+static void test_startup_requires_physical_reset(void)
+{
+    StateMachine m;
+    MachineInputs i = inputs();
+    StateMachine_Init(&m, i.now_ms);
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT && m.fault == FAULT_STARTUP_RESET_REQUIRED);
+    /* Healthy feedback cannot automatically clear the startup reset latch. */
+    for (unsigned j=0; j<10; ++j) {
+        i.now_ms += 10;
+        i.safety.tick_ms = i.now_ms;
+        StateMachine_Step(&m, &i);
+        assert(m.state == STATE_FAULT);
+    }
+    i.reset = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_WAIT && m.reset_accepted && m.fault == FAULT_NONE);
+    /* No automatic motor START after the physical reset. */
+    assert(m.state != STATE_STARTING && m.state != STATE_RUNNING);
+
+    StateMachine_Init(&m, i.now_ms);
+    i.reset = false;
+    i.safety.estop_pressed = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT && m.fault == FAULT_EMERGENCY_STOP);
+    i.safety.estop_pressed = false;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT);
+    i.reset = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_WAIT && m.reset_accepted);
 }
 
 static void test_state_phases(void)
@@ -203,6 +239,7 @@ int main(void)
     test_safe_stop_after_fault();
     test_enabled_feedback_and_delayed_reply();
     test_fault_ack_gate();
+    test_startup_requires_physical_reset();
     test_state_phases();
     test_model();
     puts("PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model");
