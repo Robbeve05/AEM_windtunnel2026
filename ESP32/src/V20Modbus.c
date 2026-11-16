@@ -92,6 +92,8 @@ typedef struct
     unsigned stop_attempts;
     unsigned fault_ack_phase; /* 0 idle, 1 pulse high requested, 2 low required */
     bool recheck_after_fault_ack; /* Physical RESET: preserve complete ACK pulse before recheck. */
+    bool fault_ack_on_fresh_status; /* One physical RESET may await restored Modbus feedback. */
+    int64_t fault_ack_request_deadline_us;
     int64_t last_stop_ack_us, last_run_ack_us, status_request_us;
     bool configured;
     bool armed;
@@ -500,6 +502,7 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
     d.transport_error = true;
     d.fault_ack_phase = 0;
     d.recheck_after_fault_ack = false;
+    d.fault_ack_on_fresh_status = false;
     d.phase = PH_RECOVERY;
     d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
     d.rx_used = 0;
@@ -1024,12 +1027,22 @@ bool V20Modbus_RequestFaultAck(void)
     /* This API is called only from the accepted physical RESET path. No
      * parameter write is performed. Configuration permission defaults OFF. */
     if (!(SIMULATION_MODE || V20_RUN_COMMISSIONED) || !V20_FAULT_ACK_VERIFIED ||
-        !d.uart_ok || !d.diagnostics_complete || !d.reference_config_valid ||
-        !d.status_valid || d.recheck_pending || d.armed || d.demand_run ||
-        (d.status_word & V20_STATUS_FAULT_BIT) == 0 || d.fault_ack_phase != 0)
+        !d.uart_ok || d.armed || d.demand_run || d.fault_ack_phase != 0 ||
+        d.recheck_pending)
         return false;
-    d.stop_attempts = 0;
-    d.fault_ack_phase = 1;
+    /* Physical RESET can precede restored Modbus feedback after F72.
+     * One bounded request is retained through the driver's recheck; it
+     * cannot arm the motor or emit a RUN word. */
+    d.fault_ack_on_fresh_status = true;
+    d.fault_ack_request_deadline_us = esp_timer_get_time() + 5000000LL;
+    if (d.diagnostics_complete && d.reference_config_valid && d.status_valid &&
+        (d.status_word & V20_STATUS_FAULT_BIT) != 0 &&
+        esp_timer_get_time() - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS)
+    {
+        d.stop_attempts = 0;
+        d.fault_ack_phase = 1;
+        d.fault_ack_on_fresh_status = false;
+    }
     return true;
 }
 
@@ -1098,10 +1111,11 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         d.armed = false;
     d.demand_run = d.armed && requested_run && safety_ok && d.configured && !d.latched_fault && !d.operation_lost;
 
-    if (!safety_ok && d.fault_ack_phase != 0)
+    if (!safety_ok && (d.fault_ack_phase != 0 || d.fault_ack_on_fresh_status))
     {
         d.fault_ack_phase = 0;
         d.recheck_after_fault_ack = false;
+        d.fault_ack_on_fresh_status = false;
         d.pending_stop = true;
     }
     if (d.phase == PH_RECOVERY)
@@ -1200,6 +1214,24 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     }
     if (!d.diagnostics_complete)
         return;
+    /* Only fresh, revalidated V20 status may consume a physical RESET's
+     * one-shot request; an old F72 bit is never enough. */
+    if (d.fault_ack_on_fresh_status)
+    {
+        if (!safety_ok || d.armed || d.demand_run ||
+            now_us >= d.fault_ack_request_deadline_us)
+            d.fault_ack_on_fresh_status = false;
+        else if (d.status_valid && d.last_status_us > 0 &&
+                 now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS)
+        {
+            if (d.reference_config_valid && (d.status_word & V20_STATUS_FAULT_BIT) != 0)
+            {
+                d.stop_attempts = 0;
+                d.fault_ack_phase = 1;
+            }
+            d.fault_ack_on_fresh_status = false;
+        }
+    }
     /* OFF1 does not depend on setpoint scaling. Configuration mismatch must
      * inhibit RUN, not prevent a bounded stopped command to a responding V20. */
     const bool operation_commissioned = SIMULATION_MODE || V20_RUN_COMMISSIONED;
