@@ -22,17 +22,144 @@
 
 #include "AppConfig.h"
 #include "FaultRecorder.h"
+#include "FaultCodeRegistry.h"
 #include "FaultSnapshot.h"
+#include "V20Modbus.h"
 #include "TaskData.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Function prototypes
 
 static void PrintRecord(const FaultRecord *record);
+static void PrintFaultEvidence(const FaultRecord *record);
+static void PrintLiveStatus(bool *initialized, SystemState_t *last_state,
+                            OperatingMode *last_mode, FaultReason_t *last_fault,
+                            TickType_t *last_periodic_tick);
+static const char *CodeDescription(uint16_t code);
 static void Command(const char *command);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Module-specific functionality
+
+///////////////////////////////////////////////////////////////////////////////
+// CodeDescription()
+
+static const char *CodeDescription(uint16_t code)
+{
+    switch (code) {
+#define FAULT(reason, number, description) case number: return description;
+#define INTERLOCK(bit, number, description) case number: return description;
+        FAULT_CODE_REGISTRY(FAULT, INTERLOCK)
+#undef FAULT
+#undef INTERLOCK
+    default: return "Unknown fault code";
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PrintFaultEvidence()
+
+static void PrintFaultEvidence(const FaultRecord *record)
+{
+    /* Telemetry is a large structure: keep the copy off the task stack. */
+    static Telemetry snapshot;
+    if (xQueuePeek(telemetry, &snapshot, 0) != pdTRUE)
+        return;
+
+    const FirstFaultSnapshot *f = &snapshot.first_fault;
+    if (!f->valid || f->triggering_inputs.now_ms != record->now_ms ||
+        f->code != (FaultReason_t)record->reason) {
+        puts("FAULT_DETAIL automatic_full_snapshot_unavailable (use FAULT DETAIL)");
+        return;
+    }
+    printf("FAULT_DETAIL reason=%s source=%s interlock_mask=0x%08lx"
+           " safety_age_ms=%lu safety_valid=%u relay=%u stop_ok=%u outputs_ok=%u"
+           " do1_req=%u do1_ack=%u do1_ack_valid=%u\n",
+           FaultReason_Name(f->code), f->source ? f->source : "unknown",
+           (unsigned long)f->interlock_reason, (unsigned long)f->safety_age_ms,
+           (unsigned)f->safety.valid, (unsigned)f->safety.relay_ok,
+           (unsigned)f->safety.stop_ok, (unsigned)f->safety.outputs_ok,
+           (unsigned)f->do1_requested, (unsigned)f->do1_acknowledged,
+           (unsigned)f->do1_valid);
+    printf("FAULT_DRIVE v20_status=0x%04x actual_hz=%.2f"
+           " modbus_errors=%lu timeouts=%lu last_operation=%u last_result=%u\n",
+           (unsigned)f->motor.status, (double)f->motor.actual_hz,
+           (unsigned long)f->motor.errors, (unsigned long)f->motor.timeouts,
+           (unsigned)f->motor.transaction.type, (unsigned)f->motor.transaction.result);
+    if (f->code == FAULT_MODBUS) {
+        const ModbusTransactionDiagnostics *t = &f->motor.transaction;
+        printf("FAULT_MODBUS operation=%s result=%s register=%u"
+               " tx_bytes=%u rx_bytes=%u expected_rx=%u pending=%u unconfirmed_write=%u"
+               " request_ms=%lu deadline_ms=%lu completed_ms=%lu first_rx_ms=%lu last_rx_ms=%lu\n",
+               V20Modbus_OperationName((V20Operation)t->type),
+               V20Modbus_ErrorName((V20CommError)t->result),
+               (unsigned)t->pdu_address, (unsigned)t->tx_bytes,
+               (unsigned)t->rx_bytes, (unsigned)t->expected_rx_bytes,
+               (unsigned)t->pending, (unsigned)t->write_unconfirmed,
+               (unsigned long)t->start_ms, (unsigned long)t->deadline_ms,
+               (unsigned long)t->completed_ms, (unsigned long)t->first_rx_ms,
+               (unsigned long)t->last_rx_ms);
+        printf("FAULT_MODBUS_TIMING enqueue_us=%lu max_service_gap_us=%lu"
+               " deadline_late_us=%lu uart_flags=0x%lx discarded_before_tx=%lu"
+               " retries=%lu recovered=%lu final_errors=%lu"
+               " last_success_age_ms=%lu write_deadline_misses=%lu\n",
+               (unsigned long)t->enqueue_us,
+               (unsigned long)t->max_service_gap_us,
+               (unsigned long)t->deadline_lateness_us,
+               (unsigned long)t->uart_error_flags,
+               (unsigned long)t->discarded_before_tx,
+               (unsigned long)f->motor.retries,
+               (unsigned long)f->motor.recovered_transactions,
+               (unsigned long)f->motor.final_comm_errors,
+               (unsigned long)f->motor.last_success_age_ms,
+               (unsigned long)f->motor.bus.write_deadline_misses);
+        /* A response timeout on a write cannot establish whether the drive
+         * accepted the command. Preserve the run lock and OFF2 response. */
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PrintLiveStatus()
+
+static void PrintLiveStatus(bool *initialized, SystemState_t *last_state,
+                            OperatingMode *last_mode, FaultReason_t *last_fault,
+                            TickType_t *last_periodic_tick)
+{
+    static Telemetry state;
+    static MotorStatus motor;
+    if (xQueuePeek(telemetry, &state, 0) != pdTRUE)
+        return;
+    const TickType_t now = xTaskGetTickCount();
+    const bool changed = !*initialized || state.state != *last_state ||
+                         state.mode != *last_mode || state.fault != *last_fault;
+    if (changed) {
+        printf("STATE state=%s mode=%s fault=%s last_fault=%s\n",
+               StateMachine_Name(state.state), state.mode == MODE_MANUAL ? "MANUAL" : "AUTO",
+               FaultReason_Name(state.fault), FaultReason_Name(state.last_fault));
+        *initialized = true;
+        *last_state = state.state;
+        *last_mode = state.mode;
+        *last_fault = state.fault;
+    }
+    if (!changed && (TickType_t)(now - *last_periodic_tick) < pdMS_TO_TICKS(5000))
+        return;
+    *last_periodic_tick = now;
+    memset(&motor, 0, sizeof(motor));
+    (void)xQueuePeek(motor_status, &motor, 0);
+    printf("LIVE state=%s mode=%s pi=%u sensor=%u safety=%u relay=%u outputs=%u"
+           " v20_status=0x%04x v20_comm=%u hz_cmd=%.2f hz_actual=%.2f"
+           " mb_errors=%lu mb_timeouts=%lu mb_retries=%lu mb_final=%lu"
+           " ctrl_us=%lu jitter_us=%lu missed=%lu\n",
+           StateMachine_Name(state.state), state.mode == MODE_MANUAL ? "MANUAL" : "AUTO",
+           (unsigned)state.pi_ok, (unsigned)state.sensor_ok,
+           (unsigned)state.safety.valid, (unsigned)state.safety.relay_ok,
+           (unsigned)state.safety.outputs_ok, (unsigned)motor.status,
+           (unsigned)motor.communication_ok, (double)state.applied_hz,
+           (double)motor.actual_hz, (unsigned long)motor.errors,
+           (unsigned long)motor.timeouts, (unsigned long)motor.retries,
+           (unsigned long)motor.final_comm_errors, (unsigned long)state.execution_us,
+           (unsigned long)state.max_jitter_us, (unsigned long)state.missed_deadlines);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // PrintRecord()
@@ -44,9 +171,9 @@ static void PrintRecord(const FaultRecord *r)
         (void)snprintf(age, sizeof(age), "%lu", (unsigned long)r->age_ms);
     else
         (void)snprintf(age, sizeof(age), "INVALID(raw=%lu)", (unsigned long)r->age_ms);
-    printf("F#%lu t=%lu code=%04x state=%s mode=%s detail=%04lx now=%lu tick=%lu age=%s timeout=%u safety_seq=%lu valid=%u\n",
+    printf("F#%lu t=%lu code=%04x name=\"%s\" state=%s mode=%s detail=%04lx now=%lu tick=%lu age=%s timeout=%u safety_seq=%lu valid=%u\n",
            (unsigned long)r->sequence, (unsigned long)r->now_ms, r->code,
-           StateMachine_Name((SystemState_t)r->previous_state), r->manual_mode ? "MANUAL" : "AUTO",
+           CodeDescription(r->code), StateMachine_Name((SystemState_t)r->previous_state), r->manual_mode ? "MANUAL" : "AUTO",
            (unsigned long)r->detail, (unsigned long)r->now_ms, (unsigned long)r->safety_tick_ms, age, r->timeout_ms,
            (unsigned long)r->safety_sequence, !!(r->flags & FAULT_RECORD_SAFETY_VALID));
 }
@@ -90,6 +217,11 @@ void FaultDiagnosticsTask(void *argument)
 {
     (void)argument;
     uint32_t cursor = 0;
+    bool state_initialized = false;
+    SystemState_t last_state = STATE_INIT;
+    OperatingMode last_mode = MODE_MANUAL;
+    FaultReason_t last_fault = FAULT_NONE;
+    TickType_t last_periodic_tick = 0;
     static char line[32];
     unsigned used = 0;
     bool overflow = false;
@@ -102,8 +234,10 @@ void FaultDiagnosticsTask(void *argument)
         for (unsigned i = 0; i < FAULT_RECORD_CAPACITY && FaultRecorder_ReadAfter(cursor, &record, &lost); ++i) {
             if (lost) printf("FAULT output_lost=%lu\n", (unsigned long)lost);
             PrintRecord(&record);
+            PrintFaultEvidence(&record);
             cursor = record.sequence;
         }
+        PrintLiveStatus(&state_initialized, &last_state, &last_mode, &last_fault, &last_periodic_tick);
         for (unsigned i = 0; serial_available && i < 64; ++i) {
             char c;
             if (read(STDIN_FILENO, &c, 1) != 1) break;
