@@ -84,6 +84,11 @@
     "name": "FAULT_INITIALIZATION",
     "description": "Required task initialization incomplete"
   },
+  "0704": {
+    "kind": "FAULT",
+    "name": "FAULT_STARTUP_RESET_REQUIRED",
+    "description": "Startup complete - physical reset required"
+  },
   "0301": {
     "kind": "INTERLOCK",
     "name": "SAFETY_SNAPSHOT_INVALID",
