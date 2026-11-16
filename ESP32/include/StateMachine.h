@@ -101,6 +101,7 @@ typedef struct
     bool vfd_fault_available, vfd_fault, contactor_available, contactor_ok;
     bool start_pressed, reset_pressed;
     uint64_t timestamp_us;
+    uint32_t snapshot_sequence; /* InputHandler publication sequence, independent of button events. */
     uint32_t tick_ms, raw_levels, start_sequence, reset_sequence, start_ms, reset_ms;
 } SafetySnapshot;
 typedef struct

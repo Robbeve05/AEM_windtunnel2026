@@ -60,6 +60,15 @@ int main(void) {
     c.safety.estop_pressed=false;c.started_us=fake_us;bus_us=6000;
     Control_AcquirePitot(&c);Control_UpdateMotor(&c);Control_UpdateDiagnostics(&c);
     assert(c.status.execution_us>=10000 && c.status.overruns);
+    /* Reproduce the second-peek race: baseline produced UINT32_MAX. */
+    healthy_context(&c); c.status.mode=MODE_MANUAL; fake_us=7000000; bus_us=0;
+    SafetySnapshot fresh=healthy(); fresh.tick_ms=7000; fresh.snapshot_sequence=42;
+    xQueueOverwrite(safety_status,&fresh); publish_safety_during_read=true;
+    Control_AcquirePitot(&c);
+    assert(c.now_ms==7001 && c.safety.tick_ms==7001 && c.safety.snapshot_sequence==43);
+    assert(SafetyTime_Fresh(&c.safety,c.now_ms));
+    assert(c.now_ms-c.safety.tick_ms==0);
+    puts("PASS concurrent final safety publication cannot underflow control age");
     puts("PASS same-cycle real Pitot -> ISA, no queue feedback, one read, invalid/stale faults, no restart, STOP bypass, modeled 6999us incl Modbus, overrun latch");
     return 0;
 }

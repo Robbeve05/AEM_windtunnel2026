@@ -35,7 +35,7 @@ void SensorTask(void *argument)
     PressureTapSample taps = {0};
     /* No Pitot initialization/state is touched on this core. */
     xEventGroupSetBits(handle_ThreadEventGroup, EVT_SENSOR_TASK_READY);
-    ESP_LOGI("SensorTask", "Pressure tap acquisition initialized");
+    ESP_LOGD("SensorTask", "Pressure tap acquisition initialized");
     for (;;)
     {
         if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS))) continue;

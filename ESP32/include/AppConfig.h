@@ -712,6 +712,21 @@
 // blocking on transmission.
 #define STATUS_RGB_TX_TIMEOUT_MS 25u
 
+/* Bench diagnostics only: 0 normal, 1 task delay only, 2 telemetry without RMT.
+ * These switches never grant output or motor permissions. */
+#ifndef HEARTBEAT_DIAGNOSTIC_MODE
+#define HEARTBEAT_DIAGNOSTIC_MODE 0
+#endif
+#if HEARTBEAT_DIAGNOSTIC_MODE < 0 || HEARTBEAT_DIAGNOSTIC_MODE > 2
+#error "Invalid Heartbeat diagnostic mode"
+#endif
+#ifndef HEARTBEAT_DIAGNOSTICS
+#define HEARTBEAT_DIAGNOSTICS 0
+#endif
+#ifndef HEARTBEAT_STACK_BYTES
+#define HEARTBEAT_STACK_BYTES 3072u
+#endif
+
 // OtaLocalConfig.h is optionally included BEFORE all defaults to preserve
 // existing override ordering; keep secrets outside Git. OTA requires two
 // verified physical maintenance/isolation inputs plus independent commissioned
@@ -826,3 +841,4 @@ _Static_assert(sizeof(OTA_SHARED_SECRET) >= 33, "OTA secret must contain at leas
 #error OTA requires distinct physical inputs and binary polarities
 #endif
 #endif
+

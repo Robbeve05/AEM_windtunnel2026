@@ -1,0 +1,129 @@
+{
+  "_states": [
+    "INIT",
+    "WAIT",
+    "READY",
+    "RUNNING",
+    "STOP",
+    "FAULT",
+    "STOPPED_PREPARE",
+    "STARTING"
+  ],
+  "0000": {
+    "kind": "FAULT",
+    "name": "FAULT_NONE",
+    "description": "No fault"
+  },
+  "0101": {
+    "kind": "FAULT",
+    "name": "FAULT_EMERGENCY_STOP",
+    "description": "Emergency stop active"
+  },
+  "0102": {
+    "kind": "FAULT",
+    "name": "FAULT_SAFETY_FEEDBACK",
+    "description": "Safety feedback unhealthy"
+  },
+  "0201": {
+    "kind": "FAULT",
+    "name": "FAULT_VFD",
+    "description": "Drive feedback fault"
+  },
+  "0202": {
+    "kind": "FAULT",
+    "name": "FAULT_MODBUS",
+    "description": "Drive communication failure"
+  },
+  "0401": {
+    "kind": "FAULT",
+    "name": "FAULT_SENSOR",
+    "description": "Required sensor invalid or stale"
+  },
+  "0501": {
+    "kind": "FAULT",
+    "name": "FAULT_PI_CONNECTION",
+    "description": "HMI connection or heartbeat lost"
+  },
+  "0601": {
+    "kind": "FAULT",
+    "name": "FAULT_CONTROL_OVERRUN",
+    "description": "Control execution deadline exceeded"
+  },
+  "0602": {
+    "kind": "FAULT",
+    "name": "FAULT_CLOCK_TIMEOUT",
+    "description": "Control clock timeout"
+  },
+  "0300": {
+    "kind": "FAULT",
+    "name": "FAULT_INTERLOCK",
+    "description": "Safety interlock rejected"
+  },
+  "0701": {
+    "kind": "FAULT",
+    "name": "FAULT_INTERNAL",
+    "description": "Internal state invalid"
+  },
+  "0203": {
+    "kind": "FAULT",
+    "name": "FAULT_DRIVE_INHIBIT",
+    "description": "Drive preparation inhibited"
+  },
+  "0702": {
+    "kind": "FAULT",
+    "name": "FAULT_CONFIGURATION",
+    "description": "Required configuration invalid"
+  },
+  "0204": {
+    "kind": "FAULT",
+    "name": "FAULT_START_TIMEOUT",
+    "description": "Drive start confirmation timeout"
+  },
+  "0703": {
+    "kind": "FAULT",
+    "name": "FAULT_INITIALIZATION",
+    "description": "Required task initialization incomplete"
+  },
+  "0301": {
+    "kind": "INTERLOCK",
+    "name": "SAFETY_SNAPSHOT_INVALID",
+    "description": "Safety snapshot invalid",
+    "mask": 1
+  },
+  "0302": {
+    "kind": "INTERLOCK",
+    "name": "SAFETY_SNAPSHOT_STALE",
+    "description": "Safety snapshot stale or timestamp ordering invalid",
+    "mask": 2
+  },
+  "0303": {
+    "kind": "INTERLOCK",
+    "name": "DIGITAL_OUTPUT_UNHEALTHY",
+    "description": "Digital output acknowledgement unhealthy",
+    "mask": 4
+  },
+  "0304": {
+    "kind": "INTERLOCK",
+    "name": "SAFETY_NOT_COMMISSIONED",
+    "description": "Safety I/O not commissioned",
+    "mask": 8
+  },
+  "0305": {
+    "kind": "INTERLOCK",
+    "name": "SAFETY_RELAY_UNHEALTHY",
+    "description": "Safety relay feedback unhealthy",
+    "mask": 16
+  },
+  "0306": {
+    "kind": "INTERLOCK",
+    "name": "VFD_FEEDBACK_UNHEALTHY",
+    "description": "VFD feedback unhealthy",
+    "mask": 32
+  },
+  "0307": {
+    "kind": "INTERLOCK",
+    "name": "CONTACTOR_FEEDBACK_UNHEALTHY",
+    "description": "Contactor feedback unhealthy",
+    "mask": 64
+  }
+}

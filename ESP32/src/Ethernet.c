@@ -57,7 +57,7 @@ void Ethernet_Init(void)
     portENTER_CRITICAL(&ethernet_state_lock);
     link_up = false;
     portEXIT_CRITICAL(&ethernet_state_lock);
-    ESP_LOGI("Ethernet", "Initializing W5500 over SPI");
+    ESP_LOGD("Ethernet", "Initializing W5500 over SPI");
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_config_t netconfig = ESP_NETIF_DEFAULT_ETH();
@@ -100,15 +100,15 @@ void Ethernet_Init(void)
     ESP_ERROR_CHECK(esp_netif_str_to_ip4(ETH_STATIC_GATEWAY, &info.gw));
     ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif));
     ESP_ERROR_CHECK(esp_netif_set_ip_info(netif, &info));
-    ESP_LOGI("Ethernet",
+    ESP_LOGD("Ethernet",
              "Static IPv4 configured: address=" IPSTR " netmask=" IPSTR " gateway=" IPSTR
              " DHCP=disabled",
              IP2STR(&info.ip), IP2STR(&info.netmask), IP2STR(&info.gw));
 #else
-    ESP_LOGI("Ethernet", "Dynamic addressing enabled; waiting for DHCP lease");
+    ESP_LOGD("Ethernet", "Dynamic addressing enabled; waiting for DHCP lease");
 #endif
     ESP_ERROR_CHECK(esp_eth_start(handle));
-    ESP_LOGI("Ethernet", "W5500 driver started; waiting for physical link");
+    ESP_LOGD("Ethernet", "W5500 driver started; waiting for physical link");
 }
 
 ///////////////////////////////////////////////////////////////////////////////

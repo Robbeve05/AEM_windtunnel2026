@@ -37,7 +37,7 @@ class DiagnosticsPanel(QWidget):
         layout.addWidget(self.tree)
         self.groups = {}
         self.rows = {}
-        for title in ('Controller', 'Connection', 'Safety', 'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus'):
+        for title in ('Controller', 'Connection', 'Safety', 'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus', 'Fault history'):
             item = QTreeWidgetItem(self.tree, [title, ''])
             font = item.font(0)
             font.setBold(True)
@@ -51,6 +51,14 @@ class DiagnosticsPanel(QWidget):
             ('diag_run_authorized', 'RUN authorized'),
         ):
             self._row('Controller', key, label)
+        for key, label in (
+            ('fault_code_text', 'Latest recorded fault code'), ('fault_description', 'Fault description'),
+            ('fault_trigger', 'Exact triggering condition'), ('fault_previous', 'Previous machine state'),
+            ('fault_mode', 'Mode at fault decision'), ('fault_timestamp', 'Fault timestamp (boot ms)'),
+        ):
+            self._row('Controller', key, label)
+        for index in range(32):
+            self._row('Fault history', f'fault_history_{index}', f'Event {index + 1} (newest first)')
         for key, label in (
             ('connection', 'ESP32 connection'), ('ethernet_link', 'Ethernet link'),
             ('ipv4', 'IPv4 address'), ('tcp', 'TCP application'), ('heartbeat', 'Pi heartbeat'),
@@ -138,6 +146,14 @@ class DiagnosticsPanel(QWidget):
                              'ESP32 offline or telemetry stale · no current diagnostics' if stale else
                              'LIVE · read only · expand a group for details')
         drive = dict(drive)
+        record = drive.get('fault_record') or {}
+        drive.update(fault_code_text=record.get('code_text'), fault_description=record.get('description'),
+                     fault_trigger=record.get('triggering_condition'), fault_previous=record.get('previous_state'),
+                     fault_mode=record.get('operating_mode'), fault_timestamp=record.get('t'))
+        for index, event in enumerate(reversed(drive.get('fault_history', [])[-32:])):
+            drive[f'fault_history_{index}'] = (
+                f"F#{event['seq']} t={event['t']} {event['code_text']} {event['previous_state']} "
+                f"{event['operating_mode']}: {event['triggering_condition']}")
         for key, value in list(drive.items()):
             if key.startswith('i2c_') and isinstance(value, dict):
                 # Address inventory comes from firmware, including custom tap addresses.

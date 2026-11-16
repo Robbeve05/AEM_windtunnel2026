@@ -54,6 +54,7 @@ extern "C"
     extern TaskHandle_t input_task_handle;
     extern TaskHandle_t pi_task_handle;
     extern TaskHandle_t heartbeat_task_handle;
+    extern TaskHandle_t fault_diagnostics_task_handle;
     extern volatile bool ota_task_alive;
     extern volatile bool ota_valid_task_alive;
 #ifdef __cplusplus

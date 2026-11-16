@@ -36,7 +36,7 @@ Other drivers and public headers are organized under `src/` and `include/`; host
 
 ### FreeRTOS tasks
 
-| Task | Core | Priority | Stack (FreeRTOS units) |
+| Task | Core | Priority | Stack (bytes, ESP-IDF) |
 | --- | ---: | ---: | ---: |
 | InputHandlerTask | 0 | 5 | 3072 |
 | SensorTask | 0 | 3 | 4096 |
@@ -45,6 +45,16 @@ Other drivers and public headers are organized under `src/` and `include/`; host
 | HeartbeatTask | 0 | 1 | 3072 |
 | OtaUpdateTask | 0 | 1 | 8192 |
 | OtaMarkValidTask | 0 | 1 | 3072 |
+| FaultDiagnosticsTask | 0 | 1 | 4096 |
+
+Fault transitions default to one compact serial line. The read-only console
+commands `FAULT?`, `FAULT HISTORY`, and `FAULT DETAIL` retrieve the latched cause,
+32-event history, and captured full evidence. The old verbose status/WAIT dumps are removed. Stack and heap checks continue
+every five seconds; healthy operation is quiet after the initial stack report,
+with warnings for new or significantly worsening low stack space. Codes and the generated HMI dictionary are documented in
+[FAULT_CODES.md](../docs/FAULT_CODES.md). See the
+[interlock timestamp audit](../docs/INTERLOCK_TIMESTAMP_AUDIT.md) for the
+cross-core freshness correction and validation limits.
 
 ## Physical inputs and safety
 

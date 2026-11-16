@@ -277,7 +277,7 @@ class NativeHMITests(unittest.TestCase):
             window = HMIWindow()
             panel = window.diagnostics_text
             self.assertEqual(set(panel.groups), {'Controller', 'Connection', 'Safety',
-                'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus'})
+                'V20 drive', 'Outputs', 'Sensors', 'Registers', 'I2C bus', 'Fault history'})
             panel.groups['Safety'].setExpanded(True)
             row = panel.rows['diag_estop_released']
             panel.tree.setCurrentItem(row)
@@ -287,6 +287,15 @@ class NativeHMITests(unittest.TestCase):
             self.assertEqual(row.text(1), 'YES')
             self.assertEqual(panel.rows['diag_v20_off2_active'].text(1), 'NO')
             self.assertEqual(panel.rows['diag_v20_status_word'].text(1), '0x0201')
+            from backend.fault_codes import parse_fault_record
+            record = parse_fault_record('FAULT seq=42 t=100 code=0302 detail=0002 prev=2 mode=1 '
+                                        'tick=101 age=4294967295 timeout=100 safety_seq=17 flags=1 reason=9')
+            panel.update_status(dict(drive, fault_record=record, fault_history=[record]), stale=False)
+            self.assertEqual(panel.rows['fault_code_text'].text(1), '0302')
+            self.assertEqual(panel.rows['fault_previous'].text(1), 'READY')
+            self.assertEqual(panel.rows['fault_mode'].text(1), 'MANUAL')
+            self.assertIn('INVALID', panel.rows['fault_trigger'].text(1))
+            self.assertIn('F#42', panel.rows['fault_history_0'].text(1))
             self.assertTrue(panel.groups['Safety'].isExpanded())
             self.assertIs(panel.tree.currentItem(), row)
             panel.update_status(drive, stale=True)

@@ -18,6 +18,7 @@
 // Application includes
 
 #include "AppConfig.h"
+#include "SafetyTime.h"
 #include "StateMachine.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -119,7 +120,7 @@ uint32_t StateMachine_GetBlockingReasons(const StateMachine *m, const MachineInp
         return 0;
 
     uint32_t reasons = 0;
-    const bool safety_fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
+    const bool safety_fresh = SafetyTime_Fresh(&i->safety, i->now_ms);
     if (i->safety.estop_pressed)
         reasons |= WAIT_BLOCK_ESTOP_PRESSED;
     if (!i->safety.stop_ok)
@@ -211,7 +212,7 @@ static bool safety_healthy(const MachineInputs *i)
            !i->safety.estop_pressed && i->safety.relay_ok &&
            (!i->safety.vfd_fault_available || !i->safety.vfd_fault) &&
            (!i->safety.contactor_available || i->safety.contactor_ok) &&
-           i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
+           SafetyTime_Fresh(&i->safety, i->now_ms);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -245,7 +246,7 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
         m->interlock_decision_valid = false;
     m->recovery_requested = false;
     m->permissive = false;
-    bool fresh = i->safety.valid && i->now_ms - i->safety.tick_ms < INPUT_TIMEOUT_MS;
+    bool fresh = SafetyTime_Fresh(&i->safety, i->now_ms);
     bool healthy = safety_healthy(i);
     bool stopped_process = pitot_permits(i) && i->v20_diagnostics_complete &&
                    i->drive_communication_ok && !i->drive_run_locked &&

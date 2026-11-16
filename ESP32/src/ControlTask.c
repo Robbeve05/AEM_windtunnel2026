@@ -32,10 +32,12 @@
 // Application includes
 
 #include "AppConfig.h"
+#include "SafetyTime.h"
 #include "ApplicationTasks.h"
 #include "DigitalOutputs.h"
 #include "Ethernet.h"
 #include "FanCalibration.h"
+#include "FaultRecorder.h"
 #include "Regelaar.h"
 #include "TorqueModel.h"
 #include "FrequencyModel.h"
@@ -216,7 +218,7 @@ static void Control_Init(ControlContext *ctx)
         const TorqueModelRequest zero = {0};
         ctx->torque_model_ready = TorqueModel_Inverse(&ctx->torque_model, &zero, &check) &&
                                   Regelaar_Init(&ctx->controller, &parameters);
-        ESP_LOGI("TORQUE_PID", "J=%g Kp=%g Ti=%g Td=%g Tf=%g; inverse map unverified",
+        ESP_LOGD("TORQUE_PID", "J=%g Kp=%g Ti=%g Td=%g Tf=%g; inverse map unverified",
                  (double)design.j, (double)parameters.kp, (double)parameters.ti_s,
                  (double)parameters.td_s, (double)parameters.tf_s);
     }
@@ -237,7 +239,7 @@ static void Control_Init(ControlContext *ctx)
     StateMachine_Init(&ctx->machine, ctx->now_ms);
     ctx->v20_initialized = V20Modbus_Init();
     if (ctx->v20_initialized)
-        ESP_LOGI("Control", "V20 Modbus UART initialization successful; drive "
+        ESP_LOGD("Control", "V20 Modbus UART initialization successful; drive "
                             "communication pending");
     else
     {
@@ -336,6 +338,8 @@ static void Control_HoldInitializationFault(ControlContext *ctx)
             /* Restored initialization is not reset acceptance or run permission. */
             ctx->tasks_ready = true;
             StateMachine_Init(&ctx->machine, ctx->now_ms);
+            ctx->fault_episode_active = false;
+            FaultRecorder_EndEpisode();
             ctx->previous_start_sequence = ctx->safety.start_sequence;
             ctx->previous_reset_sequence = ctx->safety.reset_sequence;
             return;
@@ -407,6 +411,9 @@ static void Control_AcquirePitot(ControlContext *ctx)
         return;
     ctx->sample = (PitotSample){0};
     (void)SensorLib_PitotStep(&ctx->sample);
+    /* Pair the final coherent safety copy with a clock read AFTER that copy.
+     * InputHandler can publish on core 0 while Pitot acquisition runs here. */
+    (void)xQueuePeek(safety_status, &ctx->safety, 0);
     ctx->now_tick = xTaskGetTickCount();
     ctx->now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     ctx->status.measurement = ctx->sample.value;
@@ -420,7 +427,6 @@ static void Control_AcquirePitot(ControlContext *ctx)
      * extend a heartbeat that expired while this core waited for the driver. */
     ctx->status.pi_ok = ctx->status.pi_ok && (!PI_HEARTBEAT_REQUIRED ||
         (Ethernet_LinkUp() && (TickType_t)(ctx->now_tick - ctx->heartbeat.tick) < pdMS_TO_TICKS(COMMAND_TIMEOUT_MS)));
-    (void)xQueuePeek(safety_status, &ctx->safety, 0);
     ctx->status.safety = ctx->safety;
     ctx->stop = ctx->stop || SafetyIO_Stop() ||
         (xEventGroupWaitBits(events, STOP_REQUEST, pdTRUE, pdFALSE, 0) & STOP_REQUEST) != 0;
@@ -580,7 +586,7 @@ static void Control_CheckSafety(ControlContext *ctx)
 
     if (ctx->reset && (ctx->machine.state == STATE_WAIT || ctx->machine.state == STATE_FAULT) &&
         ctx->safety.valid && ctx->safety.commissioned && ctx->safety.outputs_ok &&
-        ctx->now_ms - ctx->safety.tick_ms < INPUT_TIMEOUT_MS &&
+        SafetyTime_Fresh(&ctx->safety, ctx->now_ms) &&
         !ctx->safety.estop_pressed && !ctx->safety.reset_pressed && ctx->safety.stop_ok &&
         ctx->safety.relay_ok &&
         (!ctx->safety.contactor_available || ctx->safety.contactor_ok))
@@ -661,6 +667,7 @@ static void Control_UpdateStateMachine(ControlContext *ctx)
     {
         /* Only the existing physical-reset state-machine path can leave FAULT. */
         ctx->fault_episode_active = false;
+        FaultRecorder_EndEpisode();
         /* Keep archived evidence available to slow log readers after RESET.
          * A later, distinct fault episode will replace it with a new sequence. */
     }
@@ -990,33 +997,50 @@ static void Control_RecordEvent(ControlContext *ctx)
 static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, const char *source)
 {
     FirstFaultSnapshot *f = &ctx->status.first_fault;
+    if (ctx->machine.state == STATE_FAULT)
+        FaultRecorder_Capture(ctx->machine.fault, previous,
+            ctx->machine.fault == FAULT_INTERLOCK && ctx->machine.interlock_decision_valid ?
+                &ctx->machine.interlock_inputs : &ctx->inputs,
+            ctx->machine.fault == FAULT_INTERLOCK && ctx->machine.interlock_decision_valid ?
+                ctx->machine.interlock_reason : 0);
     if (ctx->fault_episode_active || ctx->machine.state != STATE_FAULT)
         return;
     ctx->fault_episode_active = true;
     ctx->status.fault_do1_off_observed_ms = 0;
     ctx->status.fault_do1_shutdown_requested_us = 0;
     ctx->status.fault_off2_observed_ms = 0;
-    DigitalOutputStatus outputs = {0};
-    DigitalOutputs_GetStatus(&outputs);
-    *f = (FirstFaultSnapshot){.valid = true, .sequence = ++ctx->fault_sequence,
-        .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000),
-        .previous_state = previous, .new_state = STATE_FAULT, .code = ctx->machine.fault,
-        .source = source, .heartbeat_timeout_ms = COMMAND_TIMEOUT_MS,
-        .heartbeat_age_ms = ctx->heartbeat.connected ?
-            (uint32_t)(xTaskGetTickCount() - ctx->heartbeat.tick) * portTICK_PERIOD_MS : UINT32_MAX,
-        .heartbeat_valid = ctx->status.pi_ok, .ethernet_link = ctx->ethernet_link,
-        .heartbeat = ctx->heartbeat, .configuration = ctx->status.configuration,
-        .pi_last_message_ms = (uint32_t)ctx->heartbeat.last_message_tick * portTICK_PERIOD_MS,
-        .motor = ctx->motor, .safety = ctx->safety,
-        .do1_requested = outputs.vfd_requested, .do1_acknowledged = outputs.vfd_acknowledged,
-        .do1_valid = outputs.confirmed_valid, .history_count = ctx->history_count};
+    /* Keep existing full evidence for explicit DETAIL requests, in static
+     * telemetry storage; do not construct a full snapshot on this task stack. */
+    const DigitalOutputStatus *outputs = &ctx->decision_outputs;
+    memset(f, 0, sizeof(*f));
+    f->valid = true;
+    f->sequence = ++ctx->fault_sequence;
+    f->timestamp_ms = ctx->inputs.now_ms;
+    f->previous_state = previous;
+    f->new_state = STATE_FAULT;
+    f->code = ctx->machine.fault;
+    f->source = source;
+    f->heartbeat_timeout_ms = COMMAND_TIMEOUT_MS;
+    f->heartbeat_age_ms = ctx->heartbeat.connected ?
+        (uint32_t)(xTaskGetTickCount() - ctx->heartbeat.tick) * portTICK_PERIOD_MS : UINT32_MAX;
+    f->heartbeat_valid = ctx->status.pi_ok;
+    f->ethernet_link = ctx->ethernet_link;
+    f->heartbeat = ctx->heartbeat;
+    f->configuration = ctx->status.configuration;
+    f->pi_last_message_ms = (uint32_t)ctx->heartbeat.last_message_tick * portTICK_PERIOD_MS;
+    f->motor = ctx->motor;
+    f->safety = ctx->safety;
+    f->do1_requested = outputs->vfd_requested;
+    f->do1_acknowledged = outputs->vfd_acknowledged;
+    f->do1_valid = outputs->confirmed_valid;
+    f->history_count = ctx->history_count;
     /* These are the already assembled decision inputs, never refreshed GPIO/DO. */
     f->timestamp_us = ctx->inputs.timestamp_us;
     f->triggering_inputs = ctx->machine.interlock_decision_valid ?
         ctx->machine.interlock_inputs : ctx->inputs;
     f->interlock_reason = ctx->machine.interlock_decision_valid ? ctx->machine.interlock_reason : 0;
     f->interlock_decision_us = ctx->machine.interlock_decision_valid ? ctx->machine.interlock_decision_us : 0;
-    f->safety_age_ms = f->triggering_inputs.now_ms - f->triggering_inputs.safety.tick_ms;
+    f->safety_age_ms = SafetyTime_Age(f->triggering_inputs.now_ms, f->triggering_inputs.safety.tick_ms);
     f->do1_shutdown_requested_us = f->triggering_inputs.do1_shutdown_requested_us;
     f->output_event = ctx->decision_outputs.last_event;
     f->output_unhealthy_event = ctx->decision_outputs.last_unhealthy_event;
@@ -1039,6 +1063,13 @@ static void Control_CaptureFault(ControlContext *ctx, SystemState_t previous, co
 static void Control_Fault(ControlContext *ctx, FaultReason_t fault, const char *source)
 {
     const SystemState_t previous = ctx->machine.state;
+    /* Direct timing/configuration/startup faults can precede CheckSafety.
+     * Capture their actual selected clock, safety copy and mode, not inputs
+     * left over from a previous cycle. This does not evaluate new predicates. */
+    ctx->inputs.now_ms = ctx->now_ms;
+    ctx->inputs.safety = ctx->safety;
+    ctx->inputs.manual_mode = ctx->status.mode == MODE_MANUAL;
+    ctx->inputs.timestamp_us = (uint64_t)esp_timer_get_time();
     StateMachine_Fault(&ctx->machine, fault, ctx->now_ms);
     Control_CaptureFault(ctx, previous, source);
 }
@@ -1078,7 +1109,7 @@ static void Control_PublishStatus(ControlContext *ctx)
     diag->safety_inputs_valid = ctx->safety.valid;
     diag->safety_inputs_fresh =
         ctx->safety.valid &&
-        ctx->now_ms - ctx->safety.tick_ms < INPUT_TIMEOUT_MS;
+        SafetyTime_Fresh(&ctx->safety, ctx->now_ms);
     diag->estop_released = !ctx->safety.estop_pressed;
     diag->stop_ok = ctx->safety.stop_ok;
     diag->reset_detected = ctx->reset;

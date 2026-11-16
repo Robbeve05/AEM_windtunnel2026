@@ -42,6 +42,7 @@ static int64_t fake_us;
 static unsigned watchdog_resets, arms, disarms, timer_starts;
 static uint32_t fake_modbus_service_us;
 static bool publish_heartbeat_during_read;
+static bool publish_safety_during_read;
 static bool stop_confirmed;
 static TaskHandle_t notified[4];
 static unsigned notification_count;
@@ -120,12 +121,30 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t g, EventBits_t bits, int clea
         *g &= ~bits;
     return result;
 }
+#ifdef HOST_QUEUE_LOCKS
+void HostQueueLock(void);
+void HostQueueUnlock(void);
+#define TEST_QUEUE_LOCK() HostQueueLock()
+#define TEST_QUEUE_UNLOCK() HostQueueUnlock()
+#else
+#define TEST_QUEUE_LOCK() ((void)0)
+#define TEST_QUEUE_UNLOCK() ((void)0)
+#endif
 int xQueuePeek(QueueHandle_t p, void *dst, TickType_t wait)
 {
+    TEST_QUEUE_LOCK();
     assert(wait == 0);
     assert(p != pitot_samples); /* Control must never consume its own publication. */
-    if (!p->count)
-        return 0;
+    if (!p->count) { TEST_QUEUE_UNLOCK(); return 0; }
+    if (p == safety_status && publish_safety_during_read) {
+        publish_safety_during_read = false;
+        fake_us += 1000; /* InputHandler publishes after the old clock sample. */
+        SafetySnapshot coherent = *(SafetySnapshot *)p->data;
+        coherent.tick_ms = (uint32_t)(fake_us / 1000);
+        coherent.timestamp_us = (uint64_t)fake_us;
+        coherent.snapshot_sequence++;
+        memcpy(p->data, &coherent, sizeof(coherent));
+    }
     if (p == pi_heartbeat && publish_heartbeat_during_read)
     {
         publish_heartbeat_during_read = false;
@@ -133,13 +152,16 @@ int xQueuePeek(QueueHandle_t p, void *dst, TickType_t wait)
         ((PiHeartbeat *)p->data)->tick = xTaskGetTickCount();
     }
     memcpy(dst, p->data, p->size);
+    TEST_QUEUE_UNLOCK();
     return 1;
 }
 int xQueueOverwrite(QueueHandle_t p, const void *src)
 {
+    TEST_QUEUE_LOCK();
     if (p == pitot_samples) next_pitot = *(const PitotSample *)src;
     memcpy(p->data, src, p->size);
     p->count = 1;
+    TEST_QUEUE_UNLOCK();
     return 1;
 }
 int xQueueReceive(QueueHandle_t p, void *dst, TickType_t wait)
@@ -917,9 +939,14 @@ int main(void)
     assert(!c.status.ready_diag.safety_inputs_fresh);
     puts("PASS released safety latch RESET integration, active emergency rejection, no automatic START, millisecond freshness");
     healthy_context(&c); c.machine.state=STATE_FAULT; c.machine.fault=FAULT_INITIALIZATION;
+    FaultRecorder_Reset(); c.status.mode=MODE_MANUAL;
     c.tasks_ready=false; thread_bits=EVT_ALL_TASKS_READY;
     Control_HoldInitializationFault(&c);
     assert(c.tasks_ready && c.machine.state==STATE_INIT && !c.machine.reset_accepted);
+    FaultRecord archived; bool episode_active;
+    assert(FaultRecorder_First(&archived,&episode_active) && !episode_active);
+    assert(archived.now_ms==c.now_ms && archived.manual_mode);
+    assert(!c.fault_episode_active);
     Control_PublishStatus(&c); assert(!((MotorRequest*)q[2].data)->run);
     puts("PASS recovered task barrier resumes INIT without reset acceptance or RUN");
     healthy_context(&c);

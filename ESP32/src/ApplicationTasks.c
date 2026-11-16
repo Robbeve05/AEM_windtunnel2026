@@ -13,6 +13,7 @@
 // System includes
 
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -27,6 +28,7 @@
 #include "AppConfig.h"
 #include "ApplicationTasks.h"
 #include "FanCalibration.h"
+#include "FaultRecorder.h"
 #include "I2CBus.h"
 #include "OtaUpdate.h"
 #include "PiProtocol.h"
@@ -45,7 +47,7 @@ EventGroupHandle_t handle_ThreadEventGroup;
 EventGroupHandle_t handle_SystemEventGroup;
 TaskHandle_t control_task_handle;
 TaskHandle_t sensor_task_handle;
-TaskHandle_t input_task_handle, pi_task_handle, heartbeat_task_handle;
+TaskHandle_t input_task_handle, pi_task_handle, heartbeat_task_handle, fault_diagnostics_task_handle;
 volatile bool ota_task_alive, ota_valid_task_alive;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -56,6 +58,8 @@ static void InitHardware(void);
 static void CreateQueues(void);
 static void CreateEventGroups(void);
 static void CreateTasks(void);
+static void CreateTask(TaskFunction_t entry, const char *name, uint32_t stack_bytes,
+                       UBaseType_t priority, TaskHandle_t *handle, BaseType_t core);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialization
@@ -69,22 +73,15 @@ static void CreateTasks(void);
  */
 static void InitHardware(void)
 {
-    ESP_LOGI("Startup", "Safety input initialization begin");
     SafetyIO_Init();
-    ESP_LOGI("Startup", "Safety input initialization complete");
     ESP_LOGI("Startup",
              "Commissioning flags safety_io=%d v20_run=%d torque_to_v20=%d "
              "remote_start=%d",
              SAFETY_IO_COMMISSIONED, V20_RUN_COMMISSIONED, MOTOR_MODEL_TORQUE_TO_V20_ENABLED,
              ALLOW_REMOTE_START);
-    ESP_LOGI("Startup", "I2C and inactive output initialization begin");
     if (!I2CBus_Init())
     {
         ESP_LOGE("ApplicationTasks", "I2C/output initialization failed; outputs remain inhibited");
-    }
-    else
-    {
-        ESP_LOGI("Startup", "I2C and inactive output initialization successful");
     }
 }
 
@@ -132,49 +129,44 @@ static void CreateEventGroups(void)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// CreateTasks()
+// CreateTask()
 
 /*
- * Preserves task stacks, priorities, CPU assignments and the startup barrier.
+ * Checks allocation before proceeding and identifies the failing task.
  */
+static void CreateTask(TaskFunction_t entry, const char *name, uint32_t stack_bytes,
+                       UBaseType_t priority, TaskHandle_t *handle, BaseType_t core)
+{
+    BaseType_t result = xTaskCreatePinnedToCore(entry, name, stack_bytes, NULL, priority, handle, core);
+    if (result != pdPASS)
+        ESP_LOGE("Startup", "Task %s creation failed: result=%ld stack_bytes=%lu "
+                 "internal_free=%u internal_largest=%u", name, (long)result,
+                 (unsigned long)stack_bytes,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    ESP_ERROR_CHECK(result == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_LOGD("Startup", "Created %s stack_bytes=%lu internal_free=%u internal_largest=%u",
+             name, (unsigned long)stack_bytes,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// CreateTasks()
+
 static void CreateTasks(void)
 {
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(InputHandlerTask, "InputHandler", 3072, NULL, 5,
-                                            &input_task_handle, 0) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created InputHandler task");
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 3,
-                                            &sensor_task_handle, 0) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created SensorTask");
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(ControlTask, "ControlTask", 6144, NULL, 4,
-                                            &control_task_handle, 1) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created ControlTask");
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(PiCommunicationTask, "PiCommunication", 8192, NULL, 2,
-                                            &pi_task_handle, 0) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created PiCommunication task");
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(HeartbeatTask, "Heartbeat", 3072, NULL, 1,
-                                            &heartbeat_task_handle, 0) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created Heartbeat task");
+    FaultRecorder_Reset();
+    CreateTask(InputHandlerTask, "InputHandler", 3072, 5, &input_task_handle, 0);
+    CreateTask(SensorTask, "SensorTask", 4096, 3, &sensor_task_handle, 0);
+    CreateTask(ControlTask, "ControlTask", 6144, 4, &control_task_handle, 1);
+    CreateTask(PiCommunicationTask, "PiCommunication", 8192, 2, &pi_task_handle, 0);
+    CreateTask(HeartbeatTask, "Heartbeat", HEARTBEAT_STACK_BYTES, 1, &heartbeat_task_handle, 0);
     ota_task_alive = true;
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaUpdateTask, "OTA", 8192, NULL, 1, NULL, 0) == pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created OTA task");
+    CreateTask(OtaUpdateTask, "OTA", 8192, 1, NULL, 0);
     ota_valid_task_alive = true;
-    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(OtaMarkValidTask, "OTAValid", 3072, NULL, 1, NULL, 0) ==
-                            pdPASS
-                        ? ESP_OK
-                        : ESP_ERR_NO_MEM);
-    ESP_LOGI("Startup", "Created OTAValid task");
+    CreateTask(OtaMarkValidTask, "OTAValid", 3072, 1, NULL, 0);
+    CreateTask(FaultDiagnosticsTask, "FaultDiagnostics", 4096, 1, &fault_diagnostics_task_handle, 0);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -188,10 +180,7 @@ void StartApplicationTasks(void)
 {
     InitHardware();
     (void)FanCalibration_Init();
-    ESP_LOGI("Startup", "Hardware initialization returned; creating queues");
     CreateQueues();
-    ESP_LOGI("Startup", "Queues created; creating event groups");
     CreateEventGroups();
-    ESP_LOGI("Startup", "Event groups created; creating application tasks");
     CreateTasks();
 }

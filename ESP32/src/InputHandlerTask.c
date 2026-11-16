@@ -127,6 +127,7 @@ void InputHandlerTask(void *argument)
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     TickType_t wake = xTaskGetTickCount();
     bool initialized = false;
+    bool init_failure_reported = false;
     uint32_t last_init_retry_ms = 0;
     for (;;)
     {
@@ -140,7 +141,11 @@ void InputHandlerTask(void *argument)
         xQueuePeek(motor_requests, &request, 0);
         bool fresh = xTaskGetTickCount() - request.tick < pdMS_TO_TICKS(CONTROL_CLOCK_TIMEOUT_MS);
         bool enable = fresh && request.permissive && !SafetyIO_Inhibited();
-        Telemetry current = {0};
+        /* Private to this single task. Telemetry includes large fault snapshots;
+         * keep the full queue-sized destination in BSS, leaving stack for the
+         * I2C driver and startup/error logging call chains. A failed peek is
+         * ignored by StatusOutput_Get through telemetry_available. */
+        static Telemetry current;
         bool telemetry_available = xQueuePeek(telemetry, &current, 0) == pdTRUE;
         StatusIndicator indicators = StatusOutput_Get(&current, telemetry_available, s.tick_ms);
         /* Retry only the inactive initialization path until the module is ready. */
@@ -154,6 +159,7 @@ void InputHandlerTask(void *argument)
         /* Changes write immediately; unchanged images get a 10 ms latch probe.
          * Unknown/mismatching DO1 still invalidates outputs in this cycle. */
         s.outputs_ok = DigitalOutputs_Set(enable, indicators);
+        s.snapshot_sequence = previous.snapshot_sequence + 1u;
         xQueueOverwrite(safety_status, &s);
         SafetyIO_PublishButtonEvents(&s, &previous);
         previous = s;
@@ -164,12 +170,13 @@ void InputHandlerTask(void *argument)
             if (s.outputs_ok)
             {
                 initialized = true;
-                ESP_LOGI("InputHandler",
+                ESP_LOGD("InputHandler",
                          "Input/output task initialized; initial output write successful");
                 xEventGroupSetBits(handle_ThreadEventGroup, EVT_INPUT_TASK_READY);
             }
-            else
+            else if (!init_failure_reported)
             {
+                init_failure_reported = true;
                 ESP_LOGE("InputHandler", "Output initialization failed; startup remains inhibited");
             }
         }

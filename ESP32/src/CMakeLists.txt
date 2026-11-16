@@ -6,6 +6,9 @@ idf_component_register(
         DigitalOutputs.c
         Ethernet.c
         FaultSnapshot.c
+        FaultCodes.c
+        FaultRecorder.c
+        FaultDiagnosticsTask.c
         FanCalibration.c
         FrequencyModel.c
         HeartbeatTask.c
@@ -27,3 +30,6 @@ idf_component_register(
         V20Simulation.c
     INCLUDE_DIRS "../include"
     REQUIRES nvs_flash driver esp_timer esp_eth esp_netif esp_event esp_system app_update mbedtls)
+
+# Emit per-function frame sizes for stack audits (these exclude callees).
+target_compile_options(${COMPONENT_LIB} PRIVATE -fstack-usage)

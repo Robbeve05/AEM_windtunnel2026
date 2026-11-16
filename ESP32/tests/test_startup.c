@@ -22,6 +22,10 @@ static bool retry_output;
 static unsigned recovery_passes;
 static jmp_buf task_finished;
 
+/* Synthetic values only; host tests cannot measure the ESP32 heap. */
+size_t heap_caps_get_free_size(unsigned caps) { (void)caps; return 65536; }
+size_t heap_caps_get_largest_free_block(unsigned caps) { (void)caps; return 32768; }
+
 void SafetyIO_Init(void) { assert(hardware_stage == 0); hardware_stage = 1; }
 bool I2CBus_Init(void) { assert(hardware_stage == 1); hardware_stage = 2; return output_ok; }
 QueueHandle_t xQueueCreate(unsigned length, unsigned size)
@@ -40,20 +44,21 @@ EventGroupHandle_t xEventGroupCreate(void)
 BaseType_t xTaskCreatePinnedToCore(void (*task)(void*),const char *name,unsigned stack,
                                  void *argument,unsigned priority,TaskHandle_t *handle,int core)
 {
-    assert(queue_count == 8 && group_count == 4 && task_count < 7 && argument == NULL);
+    assert(queue_count == 8 && group_count == 4 && task_count < 8 && argument == NULL);
     assert(calibration_initialized);
     assert(commands && pitot_samples && pressure_taps && motor_requests && motor_status && telemetry && safety_status && pi_heartbeat);
     assert(events && handle_ButtonEventGroup && handle_ThreadEventGroup && handle_SystemEventGroup);
-    const unsigned stacks[] = {3072,4096,6144,8192,3072,8192,3072}, priorities[] = {5,3,4,2,1,1,1};
-    const int cores[] = {0,0,1,0,0,0,0};
-    void (*tasks[])(void*) = {InputHandlerTask,SensorTask,ControlTask,PiCommunicationTask,HeartbeatTask,OtaUpdateTask,OtaMarkValidTask};
-    const char *names[] = {"InputHandler","SensorTask","ControlTask","PiCommunication","Heartbeat","OTA","OTAValid"};
+    const unsigned stacks[] = {3072,4096,6144,8192,HEARTBEAT_STACK_BYTES,8192,3072,4096}, priorities[] = {5,3,4,2,1,1,1,1};
+    const int cores[] = {0,0,1,0,0,0,0,0};
+    void (*tasks[])(void*) = {InputHandlerTask,SensorTask,ControlTask,PiCommunicationTask,HeartbeatTask,OtaUpdateTask,OtaMarkValidTask,FaultDiagnosticsTask};
+    const char *names[] = {"InputHandler","SensorTask","ControlTask","PiCommunication","Heartbeat","OTA","OTAValid","FaultDiagnostics"};
     assert(stack == stacks[task_count] && priority == priorities[task_count] && core == cores[task_count]);
     assert(task == tasks[task_count] && strcmp(name,names[task_count]) == 0);
     if (handle) *handle = (void*)1;
     task_count++;
     return pdPASS;
 }
+void FaultDiagnosticsTask(void *p) { (void)p; }
 void HeartbeatTask(void *p) { (void)p; }
 void OtaUpdateTask(void *p) { (void)p; }
 void OtaMarkValidTask(void *p) { (void)p; }
@@ -115,7 +120,7 @@ bool SensorLib_TapsStep(PressureTapSample *s) { *s=(PressureTapSample){.sequence
 int main(void)
 {
     StartApplicationTasks();
-    assert(task_count == 7 && *handle_ThreadEventGroup == 0);
+    assert(task_count == 8 && *handle_ThreadEventGroup == 0);
     const unsigned sizes[] = {sizeof(SafetySnapshot),sizeof(PiHeartbeat),sizeof(PiCommand),
         sizeof(PitotSample),sizeof(PressureTapSample),sizeof(MotorRequest),sizeof(MotorStatus),sizeof(Telemetry)};
     for (unsigned i=0;i<8;i++) assert(queues[i].size == sizes[i]);

@@ -6,6 +6,7 @@ import math
 import re
 import time
 from urllib.parse import unquote
+from .fault_codes import parse_fault_record
 
 MAX_FRAME_BYTES = 12288  # Matches the existing ESP32 STATUS transmit buffer.
 
@@ -324,6 +325,7 @@ class ESP32Client:
         self._ping_lock = asyncio.Lock()
         self._status_queue = asyncio.Queue(maxsize=1)
         self._first_fault = None
+        self._fault_history = []
         self._stopped = False
 
     @property
@@ -361,7 +363,7 @@ class ESP32Client:
         return dict(state="UNKNOWN", fault="UNKNOWN", connected=False, stale=True,
                     tcp_connected=self._connected, connection_status=self.connection_status,
                     ethernet_link=None, ipv4_configured=None,
-                    pi_heartbeat_received=None, pi_heartbeat_fresh=None, first_fault=self._first_fault,
+                    pi_heartbeat_received=None, pi_heartbeat_fresh=None, first_fault=self._first_fault, fault_history=list(self._fault_history),
                     estop_pressed=None, reset_required=True, motor_ok=False, sensor_ok=False,
                     pv=None, sp=None, out=None, warning="Fan may still be rotating.")
 
@@ -434,12 +436,21 @@ class ESP32Client:
                         self._first_fault = None
                     if self._first_fault is not None:
                         data['first_fault'] = self._first_fault
+                    data['fault_history'] = list(self._fault_history)
+                    if self._fault_history:
+                        data['fault_record'] = self._fault_history[-1]
                     self._latest = data
                     self._last = time.monotonic()
                     # Socket input/ACKs must not wait for storage, plotting or UI locks.
                     if self._status_queue.full():
                         self._status_queue.get_nowait()
                     self._status_queue.put_nowait(data)
+            elif text.startswith("FAULT "):
+                record = parse_fault_record(text)
+                if record is not None and not any(item['seq'] == record['seq'] for item in self._fault_history):
+                    self._fault_history = (self._fault_history + [record])[-32:]
+                    self._latest['fault_record'] = record
+                    self._latest['fault_history'] = list(self._fault_history)
             elif text.startswith("FIRST_FAULT "):
                 fault = parse_first_fault(text)
                 if fault is not None:
@@ -486,6 +497,7 @@ class ESP32Client:
                 self._connected, self._last = True, 0
                 on_event("ESP32 Ethernet connected; awaiting STATUS.", "info")
                 self._first_fault = None
+                self._fault_history = []
                 self._status_queue = asyncio.Queue(maxsize=1)
                 reader = asyncio.create_task(self._read(on_status))
                 dispatcher = asyncio.create_task(self._dispatch_status(on_status))

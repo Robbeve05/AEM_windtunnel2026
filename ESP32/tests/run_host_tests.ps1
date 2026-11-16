@@ -12,11 +12,18 @@ $output = Join-Path $project '.pio\host-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $cases = @(
+    @{ Name = 'safety_handoff'; Sources = @('tests\test_safety_handoff.c', 'src\StateMachine.c', 'src\SafetyIO.c', 'src\StatusIndicators.c', 'src\TorqueModel.c', 'src\Regelaar.c', 'src\SetpointCurve.c', 'src\FaultSnapshot.c'); Flags = '/DSIMULATION_MODE=1 /DCONTROL_TYPE=0 /DHOST_QUEUE_LOCKS' },
+    @{ Name = 'fault_console'; Sources = @('tests\test_fault_console.c', 'src\StateMachine.c'); Flags = '' },
+    @{ Name = 'fault_recorder'; Sources = @('tests\test_fault_recorder.c', 'src\StateMachine.c'); Flags = '/DHOST_OUTPUT_LOCKS' },
+    @{ Name = 'heartbeat'; Sources = @('tests\test_heartbeat.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
+    @{ Name = 'heartbeat_idle'; Sources = @('tests\test_heartbeat.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DHEARTBEAT_DIAGNOSTIC_MODE=1' },
+    @{ Name = 'heartbeat_telemetry'; Sources = @('tests\test_heartbeat.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DHEARTBEAT_DIAGNOSTIC_MODE=2 /DHEARTBEAT_DIAGNOSTICS=1' },
+    @{ Name = 'startup_heartbeat_large'; Sources = @('tests\test_startup.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '/DSIMULATION_MODE=1 /DHEARTBEAT_STACK_BYTES=6144' },
     @{ Name = 'safety_events'; Sources = @('tests\test_safety_events.c', 'src\SafetyIO.c'); Flags = '/DHOST_GPIO_EVENTS /DSAFETY_IO_COMMISSIONED=1 /DSAFETY_RELAY_OK_ACTIVE_LEVEL=1 /DESTOP_PRESSED_ACTIVE_LEVEL=0 /DSTOP_BUTTON_OK_ACTIVE_LEVEL=1 /DSTART_BUTTON_ACTIVE_LEVEL=1 /DRESET_BUTTON_ACTIVE_LEVEL=1' },
     @{ Name = 'i2c_concurrency'; Sources = @('tests\test_i2c_concurrency.c', 'src\I2CBus.c', 'src\DigitalOutputs.c'); Flags = '/DHOST_OUTPUT_LOCKS /DSAFETY_IO_COMMISSIONED=1' },
     @{ Name = 'i2c100'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '/DSENSOR_I2C_HZ=100000' },
     @{ Name = 'i2c'; Sources = @('tests\test_i2c.c', 'src\I2CBus.c'); Flags = '' },
-    @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c', 'src\FaultSnapshot.c', 'src\StateMachine.c', 'src\StatusIndicators.c'); Flags = '' },
+    @{ Name = 'main_diagnostics'; Sources = @('tests\test_main_diagnostics.c'); Flags = '' },
     @{ Name = "fan_calibration"; Sources = @("tests\test_fan_calibration.c"); Flags = "" },
     @{ Name = 'indicators'; Sources = @('tests\test_indicators.c', 'src\StatusIndicators.c', 'src\StateMachine.c'); Flags = '' },
     @{ Name = 'wait_diagnostics'; Sources = @('tests\test_wait_diagnostics.c', 'src\StateMachine.c'); Flags = '' },
@@ -52,6 +59,9 @@ if ($Case.Count) {
 }
 $failed = @()
 foreach ($testCase in $cases) {
+    if ($testCase.Name -in @('control','control_frequency','control_pitot','manual_pitot_policy','startup','startup_heartbeat_large','fault_recorder','fault_console','safety_handoff')) {
+        $testCase.Sources += @('src\FaultCodes.c', 'src\FaultRecorder.c')
+    }
     $sources = ($testCase.Sources | ForEach-Object { '"' + (Join-Path $project $_) + '"' }) -join ' '
     $lines = @('@echo off', ('call "' + $vcvars + '" >nul'), 'if errorlevel 1 exit /b 1',
                ('pushd "' + $output + '"'), 'if errorlevel 1 exit /b 1')
