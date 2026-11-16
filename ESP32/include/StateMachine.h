@@ -51,7 +51,8 @@ typedef enum
     FAULT_DRIVE_INHIBIT,
     FAULT_CONFIGURATION,
     FAULT_START_TIMEOUT,
-    FAULT_INITIALIZATION
+    FAULT_INITIALIZATION,
+    FAULT_STARTUP_RESET_REQUIRED
 } FaultReason_t;
 /* Bits describe only predicates reached at an INTERLOCK decision. Dedicated
  * E-stop/relay/VFD/contactor faults retain their existing priority. */
