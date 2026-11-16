@@ -84,7 +84,8 @@ const char *FaultReason_Name(FaultReason_t f)
     static const char *names[] = {
         "NONE",          "EMERGENCY_STOP",  "SAFETY_FEEDBACK", "VFD",       "MODBUS",  "SENSOR",
         "PI_CONNECTION", "CONTROL_OVERRUN", "CLOCK_TIMEOUT",   "INTERLOCK", "INTERNAL",
-        "DRIVE_INHIBIT", "CONFIGURATION", "START_TIMEOUT", "INITIALIZATION"};
+        "DRIVE_INHIBIT", "CONFIGURATION", "START_TIMEOUT", "INITIALIZATION",
+        "STARTUP_RESET_REQUIRED"};
     return (unsigned)f < sizeof(names) / sizeof(names[0]) ? names[f] : "INTERNAL";
 }
 
@@ -315,7 +316,9 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     }
     if (m->reset_pending && (int32_t)(i->now_ms - m->reset_until_ms) > 0)
         m->reset_pending = false;
-    if (m->state == STATE_FAULT && m->fault == FAULT_EMERGENCY_STOP && m->reset_pending && fresh &&
+    if (m->state == STATE_FAULT &&
+        (m->fault == FAULT_EMERGENCY_STOP || m->fault == FAULT_STARTUP_RESET_REQUIRED) &&
+        m->reset_pending && fresh &&
         i->safety.outputs_ok && i->safety.relay_ok && i->safety.stop_ok &&
         !i->safety.estop_pressed && !i->safety.reset_pressed && i->urgent_fault == FAULT_NONE &&
         i->timing_fault == FAULT_NONE)
@@ -328,13 +331,10 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        /* INIT verifies controller/drive communications; optional operation-mode
-         * sensor readiness belongs in WAIT and later operational gates.
-         * An invalid AUTO Pitot must not force an operator to press E-stop
-         * to escape INIT. WAIT still cannot authorize START. */
-        if (fresh && i->v20_diagnostics_complete && i->v20_response_received &&
-            i->drive_communication_ok && i->safety.outputs_ok)
-            transition(m, STATE_WAIT, i->now_ms);
+        /* Startup is finished at the control-task initialization barrier.
+         * The operator must always acknowledge startup before WAIT/READY.
+         * Never require an E-stop cycle to unlock INIT. */
+        StateMachine_Fault(m, FAULT_STARTUP_RESET_REQUIRED, i->now_ms);
         break;
     case STATE_FAULT:
         if (m->reset_pending && healthy && stopped_process && i->safety.stop_ok &&
