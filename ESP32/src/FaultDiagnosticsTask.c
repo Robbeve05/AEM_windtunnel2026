@@ -24,6 +24,7 @@
 #include "FaultRecorder.h"
 #include "FaultCodeRegistry.h"
 #include "FaultSnapshot.h"
+#include "V20Modbus.h"
 #include "TaskData.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -85,6 +86,36 @@ static void PrintFaultEvidence(const FaultRecord *record)
            (unsigned)f->motor.status, (double)f->motor.actual_hz,
            (unsigned long)f->motor.errors, (unsigned long)f->motor.timeouts,
            (unsigned)f->motor.transaction.type, (unsigned)f->motor.transaction.result);
+    if (f->code == FAULT_MODBUS) {
+        const ModbusTransactionDiagnostics *t = &f->motor.transaction;
+        printf("FAULT_MODBUS operation=%s result=%s register=%u"
+               " tx_bytes=%u rx_bytes=%u expected_rx=%u pending=%u unconfirmed_write=%u"
+               " request_ms=%lu deadline_ms=%lu completed_ms=%lu first_rx_ms=%lu last_rx_ms=%lu\n",
+               V20Modbus_OperationName((V20Operation)t->type),
+               V20Modbus_ErrorName((V20CommError)t->result),
+               (unsigned)t->pdu_address, (unsigned)t->tx_bytes,
+               (unsigned)t->rx_bytes, (unsigned)t->expected_rx_bytes,
+               (unsigned)t->pending, (unsigned)t->write_unconfirmed,
+               (unsigned long)t->start_ms, (unsigned long)t->deadline_ms,
+               (unsigned long)t->completed_ms, (unsigned long)t->first_rx_ms,
+               (unsigned long)t->last_rx_ms);
+        printf("FAULT_MODBUS_TIMING enqueue_us=%lu max_service_gap_us=%lu"
+               " deadline_late_us=%lu uart_flags=0x%lx discarded_before_tx=%lu"
+               " retries=%lu recovered=%lu final_errors=%lu"
+               " last_success_age_ms=%lu write_deadline_misses=%lu\n",
+               (unsigned long)t->enqueue_us,
+               (unsigned long)t->max_service_gap_us,
+               (unsigned long)t->deadline_lateness_us,
+               (unsigned long)t->uart_error_flags,
+               (unsigned long)t->discarded_before_tx,
+               (unsigned long)f->motor.retries,
+               (unsigned long)f->motor.recovered_transactions,
+               (unsigned long)f->motor.final_comm_errors,
+               (unsigned long)f->motor.last_success_age_ms,
+               (unsigned long)f->motor.bus.write_deadline_misses);
+        /* A response timeout on a write cannot establish whether the drive
+         * accepted the command. Preserve the run lock and OFF2 response. */
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -117,13 +148,16 @@ static void PrintLiveStatus(bool *initialized, SystemState_t *last_state,
     (void)xQueuePeek(motor_status, &motor, 0);
     printf("LIVE state=%s mode=%s pi=%u sensor=%u safety=%u relay=%u outputs=%u"
            " v20_status=0x%04x v20_comm=%u hz_cmd=%.2f hz_actual=%.2f"
+           " mb_errors=%lu mb_timeouts=%lu mb_retries=%lu mb_final=%lu"
            " ctrl_us=%lu jitter_us=%lu missed=%lu\n",
            StateMachine_Name(state.state), state.mode == MODE_MANUAL ? "MANUAL" : "AUTO",
            (unsigned)state.pi_ok, (unsigned)state.sensor_ok,
            (unsigned)state.safety.valid, (unsigned)state.safety.relay_ok,
            (unsigned)state.safety.outputs_ok, (unsigned)motor.status,
            (unsigned)motor.communication_ok, (double)state.applied_hz,
-           (double)motor.actual_hz, (unsigned long)state.execution_us,
+           (double)motor.actual_hz, (unsigned long)motor.errors,
+           (unsigned long)motor.timeouts, (unsigned long)motor.retries,
+           (unsigned long)motor.final_comm_errors, (unsigned long)state.execution_us,
            (unsigned long)state.max_jitter_us, (unsigned long)state.missed_deadlines);
 }
 
