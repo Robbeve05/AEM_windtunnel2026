@@ -328,7 +328,11 @@ void StateMachine_Step(StateMachine *m, const MachineInputs *i)
     switch (m->state)
     {
     case STATE_INIT:
-        if (fresh && pitot_permits(i) && i->v20_diagnostics_complete && i->v20_response_received &&
+        /* INIT verifies controller/drive communications; optional operation-mode
+         * sensor readiness belongs in WAIT and later operational gates.
+         * An invalid AUTO Pitot must not force an operator to press E-stop
+         * to escape INIT. WAIT still cannot authorize START. */
+        if (fresh && i->v20_diagnostics_complete && i->v20_response_received &&
             i->drive_communication_ok && i->safety.outputs_ok)
             transition(m, STATE_WAIT, i->now_ms);
         break;
