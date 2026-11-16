@@ -106,9 +106,11 @@ static void test_fault_ack_gate(void)
     fake.status = 0x0239;
     MotorRequest r = request(false, 0);
     pump(&r, 30);
-    V20Modbus_RequestRecheck();
+    /* The physical RESET path must request the ACK while the V20 status
+     * remains valid, THEN defer the recheck until the STW7 low edge. */
     bool accepted = V20Modbus_RequestFaultAck();
     assert(accepted == (V20_FAULT_ACK_VERIFIED != 0));
+    V20Modbus_RequestRecheck();
     unsigned runs = fake.run_commands;
     pump(&r, 80);
     assert(fake.run_commands == runs && (fake.stw & 1u) == 0);
@@ -118,6 +120,7 @@ static void test_fault_ack_gate(void)
     {
         fake.status = 0x0239; pump(&r, 30);
         assert(V20Modbus_RequestFaultAck());
+        V20Modbus_RequestRecheck();
         step(&r, true, false); /* Safety loss cancels queued acknowledgment. */
         pump(&r, 50);
         assert(!status().drive_fault_free && !status().fault_ack_pending);
