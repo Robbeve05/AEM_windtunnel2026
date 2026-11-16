@@ -568,7 +568,7 @@
 /* Additional permission only: never enables RUN or changes drive parameters.
  * Enable solely after verifying STW7 fault acknowledgment on the installed V20. */
 #ifndef V20_FAULT_ACK_VERIFIED
-#define V20_FAULT_ACK_VERIFIED 0
+#define V20_FAULT_ACK_VERIFIED 1
 #endif
 #if V20_FAULT_ACK_VERIFIED != 0 && V20_FAULT_ACK_VERIFIED != 1
 #error V20_FAULT_ACK_VERIFIED must be zero or one
