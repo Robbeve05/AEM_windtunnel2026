@@ -138,6 +138,39 @@ static MachineInputs inputs(void)
         .stop_command_acknowledged=true};
 }
 
+static void test_startup_requires_physical_reset(void)
+{
+    StateMachine m;
+    MachineInputs i = inputs();
+    StateMachine_Init(&m, i.now_ms);
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT && m.fault == FAULT_STARTUP_RESET_REQUIRED);
+    /* Healthy feedback cannot automatically clear the startup reset latch. */
+    for (unsigned j=0; j<10; ++j) {
+        i.now_ms += 10;
+        i.safety.tick_ms = i.now_ms;
+        StateMachine_Step(&m, &i);
+        assert(m.state == STATE_FAULT);
+    }
+    i.reset = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_WAIT && m.reset_accepted && m.fault == FAULT_NONE);
+    /* No automatic motor START after the physical reset. */
+    assert(m.state != STATE_STARTING && m.state != STATE_RUNNING);
+
+    StateMachine_Init(&m, i.now_ms);
+    i.reset = false;
+    i.safety.estop_pressed = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT && m.fault == FAULT_EMERGENCY_STOP);
+    i.safety.estop_pressed = false;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_FAULT);
+    i.reset = true;
+    StateMachine_Step(&m, &i);
+    assert(m.state == STATE_WAIT && m.reset_accepted);
+}
+
 static void test_state_phases(void)
 {
     StateMachine m = {.state=STATE_WAIT};
@@ -206,6 +239,7 @@ int main(void)
     test_safe_stop_after_fault();
     test_enabled_feedback_and_delayed_reply();
     test_fault_ack_gate();
+    test_startup_requires_physical_reset();
     test_state_phases();
     test_model();
     puts("PASS STOP retries/run lock, delayed replies, fresh enabled/stop feedback, reboot, gated fault ACK, phases, independent drive model");
