@@ -91,6 +91,7 @@ typedef struct
     bool operation_seen, operation_lost;
     unsigned stop_attempts;
     unsigned fault_ack_phase; /* 0 idle, 1 pulse high requested, 2 low required */
+    bool recheck_after_fault_ack; /* Physical RESET: preserve complete ACK pulse before recheck. */
     int64_t last_stop_ack_us, last_run_ack_us, status_request_us;
     bool configured;
     bool armed;
@@ -498,6 +499,7 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
     }
     d.transport_error = true;
     d.fault_ack_phase = 0;
+    d.recheck_after_fault_ack = false;
     d.phase = PH_RECOVERY;
     d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
     d.rx_used = 0;
@@ -545,6 +547,7 @@ static void accept_exception(int64_t now_us, uint32_t exception_code)
             d.stop_attempts = 0;
         d.latched_fault = true;
         d.fault_ack_phase = 0;
+        d.recheck_after_fault_ack = false;
         d.pending_stop = true;
     }
 
@@ -802,6 +805,10 @@ static void accept_reply(int64_t now_us)
             {
                 d.fault_ack_phase = 0;
                 d.last_stop_ack_us = now_us;
+                if (d.recheck_after_fault_ack) {
+                    d.recheck_pending = true;
+                    d.recheck_after_fault_ack = false;
+                }
             }
         }
         else if (d.last_run_ack_us == 0)
@@ -926,6 +933,7 @@ static void restart_commissioning(void)
 {
     d.retry_operation = V20_OP_NONE;
     d.retry_attempt = 0;
+    d.recheck_after_fault_ack = false;
     d.verify_unknown_write = false;
     d.latched_fault = false;
     d.transport_error = false;
@@ -999,6 +1007,12 @@ void V20Modbus_RequestRecheck(void)
 {
     /* Never abort an in-flight RTU transaction; defer reinitialisation. */
     V20Modbus_Disarm();
+    if (d.fault_ack_phase != 0) {
+        /* A fresh RESET can require both fault ACK writes and a recheck.
+         * Reinitialising before the low edge would interrupt STW7. */
+        d.recheck_after_fault_ack = true;
+        return;
+    }
     d.recheck_pending = true;
 }
 
@@ -1010,7 +1024,8 @@ bool V20Modbus_RequestFaultAck(void)
     /* This API is called only from the accepted physical RESET path. No
      * parameter write is performed. Configuration permission defaults OFF. */
     if (!(SIMULATION_MODE || V20_RUN_COMMISSIONED) || !V20_FAULT_ACK_VERIFIED ||
-        !d.reference_config_valid || !d.status_valid || d.armed || d.demand_run ||
+        !d.uart_ok || !d.diagnostics_complete || !d.reference_config_valid ||
+        !d.status_valid || d.recheck_pending || d.armed || d.demand_run ||
         (d.status_word & V20_STATUS_FAULT_BIT) == 0 || d.fault_ack_phase != 0)
         return false;
     d.stop_attempts = 0;
@@ -1086,6 +1101,7 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
     if (!safety_ok && d.fault_ack_phase != 0)
     {
         d.fault_ack_phase = 0;
+        d.recheck_after_fault_ack = false;
         d.pending_stop = true;
     }
     if (d.phase == PH_RECOVERY)
