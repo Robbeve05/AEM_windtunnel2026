@@ -99,6 +99,10 @@
 // [bit/s, fixed] UART baud rate; a mismatch prevents communication with the
 // V20.
 #define MODBUS_BAUD 38400
+#define MODBUS_TASK_PERIOD_MS 2u
+#define MODBUS_TASK_STACK_BYTES 4096u
+#define MODBUS_TASK_SNAPSHOT_MAX_AGE_US 50000LL
+#define MODBUS_TASK_TX_DONE_TIMEOUT_MS 10u
 
 // [Fixed] UART parity; must match the drive or frames will be rejected.
 #define MODBUS_PARITY UART_PARITY_EVEN
