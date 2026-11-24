@@ -26,6 +26,7 @@
 // Application includes
 
 #include "AppConfig.h"
+#include "ModbusTask.h"
 #include "ApplicationTasks.h"
 #include "FanCalibration.h"
 #include "FaultRecorder.h"
@@ -159,6 +160,7 @@ static void CreateTasks(void)
     FaultRecorder_Reset();
     CreateTask(InputHandlerTask, "InputHandler", 3072, 5, &input_task_handle, 0);
     CreateTask(SensorTask, "SensorTask", 4096, 3, &sensor_task_handle, 0);
+    CreateTask(ModbusTask, "ModbusTask", 4096, 3, NULL, 1);
     CreateTask(ControlTask, "ControlTask", 6144, 4, &control_task_handle, 1);
     CreateTask(PiCommunicationTask, "PiCommunication", 8192, 2, &pi_task_handle, 0);
     CreateTask(HeartbeatTask, "Heartbeat", HEARTBEAT_STACK_BYTES, 1, &heartbeat_task_handle, 0);
@@ -182,5 +184,6 @@ void StartApplicationTasks(void)
     (void)FanCalibration_Init();
     CreateQueues();
     CreateEventGroups();
+    ESP_ERROR_CHECK(ModbusTask_CreateInterfaces() ? ESP_OK : ESP_ERR_NO_MEM);
     CreateTasks();
 }
