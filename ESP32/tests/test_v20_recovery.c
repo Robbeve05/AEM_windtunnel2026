@@ -100,6 +100,58 @@ static void test_enabled_feedback_and_delayed_reply(void)
     assert(!status().run_authorized && fake.run_commands == before);
 }
 
+/* Continuous late bytes must never postpone fault latching indefinitely.
+ * Once the wire is quiet, communication may recover but RUN stays locked. */
+static void test_continuous_noise_recovery(void)
+{
+    boot();
+    MotorRequest r = request(false, 0);
+    unsigned reads = fake.reads;
+    while (fake.reads == reads) step(&r, true, true);
+    fake.rx_size = fake.rx_offset = 0;
+    pump(&r, 8);
+    unsigned runs = fake.run_commands;
+    unsigned commands = fake.commands;
+    reads = fake.reads;
+    for (unsigned i = 0; i < 100; ++i)
+    {
+        fake.rx[0] = 0x55;
+        fake.rx_size = 1;
+        fake.rx_offset = 0;
+        step(&r, true, true);
+    }
+    assert(status().run_locked && !status().communication_ok);
+    assert(!V20Modbus_Arm());
+    assert(fake.commands == commands && fake.reads == reads);
+    pump(&r, 100);
+    assert(status().communication_ok && status().run_locked);
+    assert(fake.run_commands == runs && !V20Modbus_Arm());
+}
+
+/* Long-running loss of response must leave the scheduler responsive and
+ * must never revive the previous RUN intent on reconnection. */
+static void test_repeated_missing_responses(void)
+{
+    boot();
+    MotorRequest r = request(true, 50);
+    assert(V20Modbus_Arm());
+    run_until_command(&r);
+    unsigned runs = fake.run_commands;
+    for (unsigned i = 0; i < 1000; ++i)
+    {
+        fake.rx_size = fake.rx_offset = 0;
+        step(&r, true, true);
+    }
+    assert(status().run_locked && !status().run_authorized);
+    assert(!status().communication_ok);
+    assert(status().timeouts > 1);
+    assert(fake.run_commands <= runs + 1);
+    runs = fake.run_commands;
+    pump(&r, 100);
+    assert(status().communication_ok && status().run_locked);
+    assert(fake.run_commands == runs && !V20Modbus_Arm());
+}
+
 static void test_fault_ack_gate(void)
 {
     boot();
@@ -242,6 +294,8 @@ int main(void)
 {
     test_safe_stop_after_fault();
     test_enabled_feedback_and_delayed_reply();
+    test_continuous_noise_recovery();
+    test_repeated_missing_responses();
     test_fault_ack_gate();
     test_startup_reset_gate();
     test_state_phases();
