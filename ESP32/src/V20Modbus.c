@@ -669,6 +669,21 @@ static bool send_operation(V20Operation operation, bool run, float percent, int6
     d.rx_used = 0;
     d.tx_started_us = queued_us;
     d.phase = PH_WAIT_RESPONSE;
+#if !SIMULATION_MODE && defined(ESP_PLATFORM)
+    /* Owner task only; preserve original enqueue-based deadline. The UART
+     * completion event is diagnostic, not proof of physical bus integrity. */
+    const int64_t tx_wait_start = esp_timer_get_time();
+    TickType_t tx_wait_ticks = pdMS_TO_TICKS(MODBUS_TASK_TX_DONE_TIMEOUT_MS);
+    if (!tx_wait_ticks) tx_wait_ticks = 1;
+    const esp_err_t tx_done = uart_wait_tx_done(MODBUS_UART_PORT, tx_wait_ticks);
+    d.transaction.tx_done_wait_us = (uint32_t)(esp_timer_get_time() - tx_wait_start);
+    d.transaction.tx_done_observed = tx_done == ESP_OK;
+    d.transaction.tx_done_wait_failed = tx_done != ESP_OK;
+    if (tx_done != ESP_OK) {
+        fail_transaction(V20_COMM_UART_TX_FAILED, esp_timer_get_time(), 0, 0);
+        return false;
+    }
+#endif
     return true;
 }
 
