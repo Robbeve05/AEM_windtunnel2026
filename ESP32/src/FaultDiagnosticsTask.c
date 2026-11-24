@@ -113,6 +113,9 @@ static void PrintFaultEvidence(const FaultRecord *record)
                (unsigned long)f->motor.final_comm_errors,
                (unsigned long)f->motor.last_success_age_ms,
                (unsigned long)f->motor.bus.write_deadline_misses);
+        printf("FAULT_MODBUS_TX done=%u wait_failed=%u wait_us=%lu\n",
+               (unsigned)t->tx_done_observed, (unsigned)t->tx_done_wait_failed,
+               (unsigned long)t->tx_done_wait_us);
         /* A response timeout on a write cannot establish whether the drive
          * accepted the command. Preserve the run lock and OFF2 response. */
     }
