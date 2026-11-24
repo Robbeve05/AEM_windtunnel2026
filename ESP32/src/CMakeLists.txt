@@ -3,6 +3,7 @@ idf_component_register(
     SRCS
         ApplicationTasks.c
         ControlTask.c
+        ModbusTask.c
         DigitalOutputs.c
         Ethernet.c
         FaultSnapshot.c
