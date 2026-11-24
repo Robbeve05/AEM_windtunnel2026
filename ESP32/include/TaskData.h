@@ -74,6 +74,8 @@ typedef struct
     uint32_t id, type, start_ms, deadline_ms, completed_ms;
     uint32_t first_rx_ms, last_rx_ms, rtt_us, max_rtt_us, enqueue_us, max_service_gap_us;
     uint32_t deadline_lateness_us, uart_error_flags, discarded_before_tx;
+    uint32_t tx_done_wait_us;
+    bool tx_done_observed, tx_done_wait_failed;
     uint16_t pdu_address, register_count;
     uint8_t tx_bytes, rx_bytes, expected_rx_bytes, result;
     bool pending, write_unconfirmed;
