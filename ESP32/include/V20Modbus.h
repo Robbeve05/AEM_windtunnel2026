@@ -5,7 +5,7 @@
  * V20Modbus.h
  *
  * Non-blocking Siemens SINAMICS V20 Modbus RTU driver for ESP32-S3.
- * Motor control is serviced by ControlTask; no actuator task is required.
+ * Hardware driver state is owned by ModbusTask.
  *
  * Author: R.E. van Eekelen
  */
@@ -61,7 +61,7 @@ typedef enum
 bool V20Modbus_Init(void);
 
 /*
- * Advance at most one part of an RTU transaction; call once per 10 ms loop.
+ * Advance at most one part of an RTU transaction; call from its sole owner task.
  * Does not wait for a Modbus response or delay the calling task.
  * safety_ok MUST come from validated physical safety/operational feedback.
  * The request comes from the existing one-element motor_requests queue.
