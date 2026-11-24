@@ -6,8 +6,8 @@
  *
  * Siemens SINAMICS V20: Modbus RTU protocol + UART/RS-485 transport.
  *
- * This entire module is serviced within ControlTask (Core 1, 10 ms).
- * No vTaskDelay(), blocking UART receive, or actuator FreeRTOS task.
+ * This module is owned exclusively by ModbusTask in hardware firmware.
+ * Host tests may service it directly.
  *
  * IMPORTANT: This is an operational motor interface, NOT a safety function.
  * A separately validated hardware safety circuit must inhibit motor torque
@@ -1406,6 +1406,12 @@ bool V20Modbus_StartConfirmed(int64_t start_entered_us)
 
 ///////////////////////////////////////////////////////////////////////////////
 // V20Modbus_Simulate()
+
+void V20Modbus_GetProofTimes(int64_t *start_us, int64_t *stop_us)
+{
+    *start_us = V20Modbus_StartConfirmed(0) ? d.last_run_ack_us : 0;
+    *stop_us = V20Modbus_StopConfirmed(0, STOP_CONFIRM_HZ) ? d.last_stop_ack_us : 0;
+}
 
 bool V20Modbus_Simulate(const char *name, bool active)
 {
