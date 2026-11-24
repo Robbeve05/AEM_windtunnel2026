@@ -98,7 +98,7 @@
 
 // [bit/s, fixed] UART baud rate; a mismatch prevents communication with the
 // V20.
-#define MODBUS_BAUD 115200
+#define MODBUS_BAUD 38400
 
 // [Fixed] UART parity; must match the drive or frames will be rejected.
 #define MODBUS_PARITY UART_PARITY_EVEN
