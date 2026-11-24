@@ -109,22 +109,23 @@ void ModbusTask(void *argument)
             safety.commissioned && safety.relay_ok && !safety.estop_pressed &&
             safety.outputs_ok && SafetyIO_Fault() == FAULT_NONE;
         bool fresh = have_req && (TickType_t)(xTaskGetTickCount() - req.tick) < pdMS_TO_TICKS(50);
-        if (a.disarm || !safe || !fresh || req.coast) {
+        if (a.disarm || !safe || !fresh || req.coast || !safety.stop_ok) {
             pending_arm = false;
-            V20Modbus_Disarm();
+            if (a.disarm) V20Modbus_Disarm();
         }
+        if (!safety.stop_ok) req.run = false;
         if (a.reset && safe && fresh && !req.run) {
             rejected = false;
             V20Modbus_RequestRecheck();
             (void)V20Modbus_RequestFaultAck();
         }
-        if (a.arm && !a.reset && safe && fresh && !rejected) {
+        if (a.arm && !a.reset && safe && fresh && safety.stop_ok && !req.coast && !rejected) {
             pending_arm = true;
             arm_epoch = a.epoch;
             arm_us = a.arm_us;
         }
         if (pending_arm) {
-            if (!safe || !fresh || req.coast || esp_timer_get_time() - arm_us >= 50000) {
+            if (!safe || !fresh || req.coast || !safety.stop_ok || esp_timer_get_time() - arm_us >= 50000) {
                 pending_arm = false;
                 rejected = true;
                 V20Modbus_Disarm();
@@ -135,7 +136,6 @@ void ModbusTask(void *argument)
         }
         if (rejected) {
             req.run = false;
-            V20Modbus_Disarm();
         }
         if (initialized) V20Modbus_Service(fresh ? &req : NULL, safe);
         V20Modbus_GetStatus(&owner_snapshot.motor);
@@ -144,11 +144,8 @@ void ModbusTask(void *argument)
             owner_snapshot.motor.ok = false;
             owner_snapshot.motor.communication_ok = false;
         }
-        /* Proof timestamps must refer to the actual acknowledged write, not
-         * the snapshot time. Query with current epoch start via owner API. */
-        owner_snapshot.start_proof_us = V20Modbus_StartConfirmed(arm_us) ? arm_us : 0;
-        owner_snapshot.stop_proof_us = V20Modbus_StopConfirmed(0, STOP_CONFIRM_HZ) ?
-            (int64_t)owner_snapshot.motor.last_valid_process_data_ms * 1000 : 0;
+        V20Modbus_GetProofTimes(&owner_snapshot.start_proof_us, &owner_snapshot.stop_proof_us);
+        if (rejected) owner_snapshot.start_proof_us = owner_snapshot.stop_proof_us = 0;
         owner_snapshot.published_us = esp_timer_get_time();
         xQueueOverwrite(snapshots, &owner_snapshot);
         xQueueOverwrite(motor_status, &owner_snapshot.motor);
