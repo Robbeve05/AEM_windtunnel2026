@@ -129,6 +129,7 @@ typedef struct
     int64_t last_command_us;
     int64_t tx_started_us;
     int64_t bus_quiet_until_us;
+    int64_t recovery_deadline_us; /* Absolute limit for healthy recovery, not permission to TX on a noisy bus. */
     uint8_t tx[V20_MAX_FRAME];
     uint8_t rx[V20_MAX_FRAME];
     size_t rx_used;
@@ -473,6 +474,7 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
         d.retry_operation = d.active_operation;
         d.retry_attempt = 1;
         d.phase = PH_RECOVERY;
+        d.recovery_deadline_us = now_us + 2 * (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
         d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
         d.rx_used = 0;
         d.active_operation = V20_OP_NONE;
@@ -499,6 +501,7 @@ static void fail_transaction(V20CommError error, int64_t now_us, uint16_t actual
     d.transport_error = true;
     d.fault_ack_phase = 0;
     d.phase = PH_RECOVERY;
+    d.recovery_deadline_us = now_us + 2 * (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
     d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
     d.rx_used = 0;
     d.active_operation = V20_OP_NONE;
@@ -953,6 +956,7 @@ static void restart_commissioning(void)
     d.active_operation = V20_OP_NONE;
     d.rx_used = 0;
     d.phase = PH_IDLE;
+    d.recovery_deadline_us = 0;
     d.last_command_us = esp_timer_get_time();
 }
 
@@ -967,7 +971,7 @@ bool V20Modbus_Arm(void)
     const int64_t now_us = esp_timer_get_time();
     const bool good = d.uart_ok && d.diagnostics_complete && d.reference_config_valid &&
                       (!V20_WATCHDOG_REGISTER_MAPPING_CONFIRMED || d.watchdog_config_valid) &&
-                      !d.latched_fault && !d.operation_lost && !d.recheck_pending && d.status_valid &&
+                      !d.latched_fault && !d.transport_error && !d.operation_lost && !d.recheck_pending && d.status_valid &&
                       d.drive_fault_free && d.drive_ready &&
                       now_us - d.last_status_us < (int64_t)MOTOR_STATUS_TIMEOUT_MS * US_PER_MS;
     if (!good)
@@ -1106,14 +1110,35 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
 #if !SIMULATION_MODE
         uint8_t discard[V20_MAX_FRAME];
         const int received = uart_read_bytes(MODBUS_UART_PORT, discard, sizeof(discard), 0);
-        if (received > 0)
+        if (received != 0 || uart_errors)
         {
-            d.late_replies++;
+            if (received > 0) d.late_replies++;
             d.bus_quiet_until_us = now_us + (int64_t)V20_LATE_REPLY_QUARANTINE_MS * US_PER_MS;
         }
 #endif
+        /* Never transmit on a continuously noisy bus. Bound the time spent
+         * treating recovery as potentially successful; keep draining after
+         * latching the fault until a genuine quiet interval is observed. */
+        if (d.recovery_deadline_us && now_us >= d.recovery_deadline_us &&
+            now_us < d.bus_quiet_until_us)
+        {
+            if (!d.latched_fault)
+            {
+                d.errors++;
+                d.final_comm_errors++;
+                record_error(V20_COMM_TIMEOUT, 0, 0);
+            }
+            d.retry_operation = V20_OP_NONE;
+            d.retry_attempt = 0;
+            d.armed = d.demand_run = false;
+            d.latched_fault = d.transport_error = true;
+            d.fault_ack_phase = 0;
+            d.pending_stop = true;
+            d.recovery_deadline_us = 0;
+        }
         if (now_us < d.bus_quiet_until_us)
             return;
+        d.recovery_deadline_us = 0;
         d.phase = PH_IDLE;
     }
     if (d.phase == PH_WAIT_RESPONSE)
@@ -1135,8 +1160,11 @@ void V20Modbus_Service(const MotorRequest *request, bool safety_ok)
         d.errors++;
         d.final_comm_errors++;
         record_error(V20_COMM_STALE_RESPONSE, 0, 0);
-        d.armed = false;
-        d.latched_fault = d.diagnostics_complete;
+        d.armed = d.demand_run = false;
+        d.latched_fault = d.latched_fault || d.diagnostics_complete;
+        d.transport_error = true;
+        d.fault_ack_phase = 0;
+        d.pending_stop = true;
     }
     if (now_us < d.bus_quiet_until_us)
         return;
