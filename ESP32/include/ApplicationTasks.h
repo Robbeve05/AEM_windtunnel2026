@@ -33,7 +33,8 @@
 #define EVT_INPUT_TASK_READY (1U << 0)
 #define EVT_SENSOR_TASK_READY (1U << 1)
 #define EVT_PI_TASK_READY (1U << 2)
-#define EVT_ALL_TASKS_READY (EVT_INPUT_TASK_READY | EVT_SENSOR_TASK_READY | EVT_PI_TASK_READY)
+#define EVT_MODBUS_TASK_READY (1U << 3)
+#define EVT_ALL_TASKS_READY (EVT_INPUT_TASK_READY | EVT_SENSOR_TASK_READY | EVT_PI_TASK_READY | EVT_MODBUS_TASK_READY)
 
 /* Advisory only: queues and freshness checks remain authoritative. */
 #define EVT_NEW_COMMAND (1U << 0)
