@@ -91,6 +91,8 @@ void V20Modbus_RequestRecheck(void);
  * checked inside the driver. ON remains zero throughout the bounded pulse. */
 bool V20Modbus_RequestFaultAck(void);
 bool V20Modbus_StartConfirmed(int64_t start_entered_us);
+/* Owner-only proof timestamps; zero means no current confirmation. */
+void V20Modbus_GetProofTimes(int64_t *start_us, int64_t *stop_us);
 /* Simulation-only fault/permission injection; real firmware always rejects. */
 bool V20Modbus_Simulate(const char *name, bool active);
 
