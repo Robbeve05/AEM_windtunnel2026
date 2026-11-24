@@ -33,7 +33,7 @@ bool ModbusTask_CreateInterfaces(void)
 static bool read_snapshot(Snapshot *s)
 {
     return snapshots && xQueuePeek(snapshots, s, 0) == pdTRUE &&
-        esp_timer_get_time() - s->published_us < 50000;
+        esp_timer_get_time() - s->published_us < MODBUS_TASK_SNAPSHOT_MAX_AGE_US;
 }
 void ModbusTask_GetStatus(MotorStatus *status)
 {
@@ -86,7 +86,7 @@ void ModbusTask(void *argument)
     bool initialized = false, pending_arm = false, rejected = false;
     uint32_t arm_epoch = 0;
     int64_t arm_us = 0, last_init_us = -1000000;
-    const TickType_t period = pdMS_TO_TICKS(2) ? pdMS_TO_TICKS(2) : 1;
+    const TickType_t period = pdMS_TO_TICKS(MODBUS_TASK_PERIOD_MS) ? pdMS_TO_TICKS(MODBUS_TASK_PERIOD_MS) : 1;
     ESP_LOGI("ModbusTask", "baud=%d service_ticks=%u", MODBUS_BAUD, (unsigned)period);
     for (;;) {
         int64_t now = esp_timer_get_time();
@@ -113,7 +113,7 @@ void ModbusTask(void *argument)
             pending_arm = false;
             if (a.disarm) V20Modbus_Disarm();
         }
-        if (!safety.stop_ok) req.run = false;
+        if (!safety.stop_ok || req.coast) req.run = false;
         if (a.reset && safe && fresh && !req.run) {
             rejected = false;
             V20Modbus_RequestRecheck();
@@ -125,7 +125,7 @@ void ModbusTask(void *argument)
             arm_us = a.arm_us;
         }
         if (pending_arm) {
-            if (!safe || !fresh || req.coast || !safety.stop_ok || esp_timer_get_time() - arm_us >= 50000) {
+            if (!safe || !fresh || req.coast || !safety.stop_ok || esp_timer_get_time() - arm_us >= MODBUS_TASK_SNAPSHOT_MAX_AGE_US) {
                 pending_arm = false;
                 rejected = true;
                 V20Modbus_Disarm();
@@ -136,6 +136,16 @@ void ModbusTask(void *argument)
         }
         if (rejected) {
             req.run = false;
+        }
+        /* Recheck cancellation and current demand after any preemption. */
+        MotorRequest latest = {0};
+        portENTER_CRITICAL(&action_lock);
+        bool cancelled = actions.disarm || actions.reset;
+        portEXIT_CRITICAL(&action_lock);
+        if (cancelled || xQueuePeek(motor_requests, &latest, 0) != pdTRUE ||
+            latest.epoch != req.epoch || !latest.run || latest.coast) {
+            req.run = false;
+            if (cancelled) { pending_arm = false; V20Modbus_Disarm(); }
         }
         if (initialized) V20Modbus_Service(fresh ? &req : NULL, safe);
         V20Modbus_GetStatus(&owner_snapshot.motor);
